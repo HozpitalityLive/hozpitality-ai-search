@@ -5,28 +5,41 @@ import torch
 
 from fastapi import FastAPI
 from pydantic import BaseModel
-from transformers import AutoTokenizer, AutoModelForCausalLM
+
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
 app = FastAPI()
 
-print("Loading model...")
+print("Loading Mistral 7B...")
 
-model_id = "microsoft/Phi-3-mini-4k-instruct"
+model_id = "mistralai/Mistral-7B-Instruct-v0.2"
+
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.float16,
+    bnb_4bit_use_double_quant=True
+)
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype=torch.float32,
-    device_map="cpu"
+    device_map="auto",
+    quantization_config=bnb_config
 )
 
-print("Model loaded")
+print("Model Loaded Successfully")
 
 
 TYPE_MAPPING = [
-    "job", "article", "useraccount",
-    "faq", "company", "event", "supplier", "product"
+    "job",
+    "article",
+    "useraccount",
+    "faq",
+    "company",
+    "event",
+    "supplier",
+    "product"
 ]
 
 
@@ -41,61 +54,62 @@ class FormatRequest(BaseModel):
     suggested_query: str
 
 
+def ask_llm(prompt):
+
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=200,
+            temperature=0.2,
+            do_sample=True
+        )
+
+    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+    return text
+
+
 
 def generate_ai_response(query):
 
     prompt = f"""
-Hozpitality Portal Expert Query: "{query}"
+You are AI assistant of Hozpitality.com.
 
-Rules:
-1. Identify intent: FAQ, SEARCH, CHAT.
-2. Identify type from: {TYPE_MAPPING}
-3. Provide professional intro
-4. Suggested query must be:
-"Would you like to know more about [Topic]?"
+User query:
+"{query}"
 
-Respond ONLY JSON:
+Tasks:
+
+1 Detect intent:
+FAQ
+SEARCH
+CHAT
+
+2 Detect content type from list:
+{TYPE_MAPPING}
+
+3 Extract search keywords
+
+4 Write short professional intro
+
+5 Create suggested follow-up question.
+
+Return ONLY JSON:
 
 {{
- "intent":"",
- "keywords":"",
- "type":"",
- "intro":"",
- "suggested_query":""
+"intent":"",
+"keywords":"",
+"type":"",
+"intro":"",
+"suggested_query":""
 }}
 """
 
     try:
 
-        print("STEP 1: Tokenizing")
-
-        inputs = tokenizer(
-            prompt,
-            return_tensors="pt"
-        ).to(model.device)
-
-        print("STEP 2: Generating")
-
-        start = time.time()
-
-        with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=150,
-                do_sample=False,
-                eos_token_id=tokenizer.eos_token_id
-            )
-
-        print("Generation time:", time.time() - start)
-
-        print("STEP 3: Decoding")
-
-        text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-        print("MODEL OUTPUT:")
-        print(text)
-
-        print("STEP 4: Extracting JSON")
+        text = ask_llm(prompt)
 
         matches = re.findall(r'\{[^{}]*\}', text)
 
@@ -103,18 +117,11 @@ Respond ONLY JSON:
             try:
                 data = json.loads(m)
 
-                if (
-                    isinstance(data, dict)
-                    and data.get("intent")
-                    and data.get("type")
-                ):
-                    print("Valid JSON Found:", data)
+                if data.get("intent") and data.get("type"):
                     return data
 
-            except Exception:
+            except:
                 continue
-
-        print("STEP 5: JSON not found, returning fallback")
 
     except Exception as e:
         print("LLM ERROR:", str(e))
@@ -123,7 +130,7 @@ Respond ONLY JSON:
         "intent": "SEARCH",
         "keywords": query,
         "type": "article",
-        "intro": f"{query} is an important topic within the hospitality industry.",
+        "intro": f"{query} is an important topic in the hospitality industry.",
         "suggested_query": f"Would you like to know more about {query}?"
     }
 
@@ -132,17 +139,28 @@ Respond ONLY JSON:
 def generate_html_response(query, intro, results, suggested_query):
 
     prompt = f"""
-You are the official AI assistant of Hozpitality.
+You are AI assistant of Hozpitality.
 
-Create a professional chat response in HTML.
+Create professional HTML response.
 
 Rules:
-- Use simple HTML only: <p>, <ul>, <li>, <strong>, <a>
-- Do not use markdown
-- Start with intro paragraph
-- Then list results
-- End with suggested question
-- Return ONLY HTML
+
+Use only HTML tags:
+<p>
+<ul>
+<li>
+<strong>
+<a>
+
+Structure:
+
+Intro paragraph
+
+Then list results
+
+Then suggested question
+
+Return ONLY HTML.
 
 User Query:
 {query}
@@ -153,20 +171,11 @@ Intro:
 Results:
 {json.dumps(results)}
 
-Suggested Query:
+Suggested Question:
 {suggested_query}
 """
 
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=200,
-            do_sample=False
-        )
-
-    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    text = ask_llm(prompt)
 
     html_match = re.search(r'<p>.*', text, re.DOTALL)
 
@@ -176,18 +185,15 @@ Suggested Query:
     return f"<p>{intro}</p>"
 
 
-
 @app.get("/")
 def home():
-    return {"message": "Hozpitality AI Assistant running"}
+    return {"message": "Hozpitality AI running"}
 
 
 @app.post("/intent")
 def detect_intent(data: Query):
 
-    result = generate_ai_response(data.query)
-
-    return result
+    return generate_ai_response(data.query)
 
 
 @app.post("/format")

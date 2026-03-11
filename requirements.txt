@@ -1,6 +1,7 @@
 fastapi
 uvicorn
+torch
 transformers
 accelerate
-torch
+bitsandbytes
 sentencepiece
