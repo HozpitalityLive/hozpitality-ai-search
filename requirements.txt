@@ -1,7 +1,15 @@
 fastapi
-uvicorn
+uvicorn[standard]
+
 torch
 transformers
 accelerate
 bitsandbytes
 sentencepiece
+
+pydantic
+numpy
+scipy
+
+# optional performance engine
+vllm

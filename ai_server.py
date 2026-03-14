@@ -1,6 +1,5 @@
 import json
 import re
-import time
 import torch
 
 from fastapi import FastAPI
@@ -10,9 +9,11 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
 app = FastAPI()
 
-print("Loading Mistral 7B...")
+torch.set_grad_enabled(False)
 
-model_id = "mistralai/Mistral-7B-Instruct-v0.2"
+MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2"
+
+print("Loading model...")
 
 bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
@@ -20,15 +21,20 @@ bnb_config = BitsAndBytesConfig(
     bnb_4bit_use_double_quant=True
 )
 
-tokenizer = AutoTokenizer.from_pretrained(model_id)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+tokenizer.pad_token = tokenizer.eos_token
 
 model = AutoModelForCausalLM.from_pretrained(
-    model_id,
-    device_map="auto",
-    quantization_config=bnb_config
+    MODEL_ID,
+    quantization_config=bnb_config,
+    device_map={"": 0},
+    torch_dtype=torch.float16
 )
 
-print("Model Loaded Successfully")
+model.config.use_cache = True
+model.eval()
+
+print("Model ready on GPU")
 
 
 TYPE_MAPPING = [
@@ -43,8 +49,9 @@ TYPE_MAPPING = [
 ]
 
 
-class Query(BaseModel):
+class IntentRequest(BaseModel):
     query: str
+    last_suggestion: str | None = None
 
 
 class FormatRequest(BaseModel):
@@ -54,156 +61,121 @@ class FormatRequest(BaseModel):
     suggested_query: str
 
 
-def ask_llm(prompt):
+def generate(prompt, tokens=120):
 
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
 
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=200,
-            temperature=0.2,
-            do_sample=True
+            max_new_tokens=tokens,
+            temperature=0.1,
+            do_sample=True,
+            top_p=0.9,
+            pad_token_id=tokenizer.eos_token_id
         )
 
-    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    return text
+    return decoded[len(prompt):]
 
 
+def safe_json(text):
 
-def generate_ai_response(query):
+    matches = re.findall(r"\{.*?\}", text, re.S)
+
+    for m in matches:
+        try:
+            return json.loads(m)
+        except:
+            continue
+
+    return None
+
+
+def detect_intent(query, last_suggestion=None):
 
     prompt = f"""
-You are AI assistant of Hozpitality.com.
+Classify hospitality search query.
 
-User query:
-"{query}"
+Query: "{query}"
 
-Tasks:
-
-1 Detect intent:
-FAQ
-SEARCH
-CHAT
-
-2 Detect content type from list:
-{TYPE_MAPPING}
-
-3 Extract search keywords
-
-4 Write short professional intro
-
-5 Create suggested follow-up question.
-
-Return ONLY JSON:
+Return JSON only:
 
 {{
-"intent":"",
-"keywords":"",
-"type":"",
-"intro":"",
-"suggested_query":""
+"intent":"FAQ|SEARCH|CHAT",
+"keywords":"...",
+"type":"{','.join(TYPE_MAPPING)}",
+"intro":"...",
+"suggested_query":"..."
 }}
 """
 
-    try:
+    text = generate(prompt)
 
-        text = ask_llm(prompt)
+    data = safe_json(text)
 
-        matches = re.findall(r'\{[^{}]*\}', text)
-
-        for m in matches:
-            try:
-                data = json.loads(m)
-
-                if data.get("intent") and data.get("type"):
-                    return data
-
-            except:
-                continue
-
-    except Exception as e:
-        print("LLM ERROR:", str(e))
+    if data:
+        return data
 
     return {
         "intent": "SEARCH",
-        "keywords": query,
+        "keywords": query.lower(),
         "type": "article",
-        "intro": f"{query} is an important topic in the hospitality industry.",
+        "intro": "Hospitality industry information.",
         "suggested_query": f"Would you like to know more about {query}?"
     }
 
 
-
-def generate_html_response(query, intro, results, suggested_query):
+def format_html(query, intro, results, suggested):
 
     prompt = f"""
-You are AI assistant of Hozpitality.
-
-Create professional HTML response.
-
-Rules:
-
-Use only HTML tags:
-<p>
-<ul>
-<li>
-<strong>
-<a>
-
-Structure:
-
-Intro paragraph
-
-Then list results
-
-Then suggested question
-
-Return ONLY HTML.
-
-User Query:
-{query}
+Create HTML response.
 
 Intro:
 {intro}
 
-Results:
+Results JSON:
 {json.dumps(results)}
 
-Suggested Question:
-{suggested_query}
+Suggested question:
+{suggested}
+
+Allowed HTML tags:
+<p><ul><li><strong><a>
+
+Return HTML only.
 """
 
-    text = ask_llm(prompt)
+    text = generate(prompt, 160)
 
-    html_match = re.search(r'<p>.*', text, re.DOTALL)
+    match = re.search(r"<p>.*", text, re.S)
 
-    if html_match:
-        return html_match.group()
+    if match:
+        return match.group()
 
     return f"<p>{intro}</p>"
 
 
 @app.get("/")
-def home():
-    return {"message": "Hozpitality AI running"}
+def health():
+    return {"status": "ok"}
 
 
 @app.post("/intent")
-def detect_intent(data: Query):
+def intent(req: IntentRequest):
 
-    return generate_ai_response(data.query)
+    return detect_intent(req.query, req.last_suggestion)
 
 
 @app.post("/format")
-def format_chat(data: FormatRequest):
+def format(req: FormatRequest):
 
-    html = generate_html_response(
-        data.query,
-        data.intro,
-        data.results,
-        data.suggested_query
+    html = format_html(
+        req.query,
+        req.intro,
+        req.results,
+        req.suggested_query
     )
 
     return {"html": html}
