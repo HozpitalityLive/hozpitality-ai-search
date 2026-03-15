@@ -189,6 +189,10 @@ app = FastAPI()
 LLM_URL = "http://127.0.0.1:8080/completion"
 
 
+# -----------------------------
+# REQUEST MODELS
+# -----------------------------
+
 class IntentRequest(BaseModel):
     query: str
 
@@ -201,7 +205,11 @@ class HtmlRequest(BaseModel):
     results: list
 
 
-def generate(prompt, tokens=200):
+# -----------------------------
+# LLM GENERATION FUNCTION
+# -----------------------------
+
+def generate(prompt, tokens=300):
 
     payload = {
         "prompt": f"[INST] {prompt} [/INST]",
@@ -211,7 +219,10 @@ def generate(prompt, tokens=200):
     }
 
     try:
+
         r = requests.post(LLM_URL, json=payload, timeout=60)
+
+        print("LLM status:", r.status_code)
 
         if r.status_code != 200:
             print("LLM ERROR:", r.text)
@@ -222,9 +233,14 @@ def generate(prompt, tokens=200):
         return data.get("content", "").strip()
 
     except Exception as e:
+
         print("LLM request failed:", e)
         return ""
 
+
+# -----------------------------
+# SAFE JSON PARSER
+# -----------------------------
 
 def safe_json(text):
 
@@ -234,12 +250,16 @@ def safe_json(text):
     text = text.replace("```json", "").replace("```", "")
 
     try:
+
         start = text.index("{")
         end = text.rindex("}") + 1
+
         return json.loads(text[start:end])
+
     except Exception as e:
+
         print("JSON parse error:", e)
-        print(text)
+        print("RAW OUTPUT:", text)
 
     return None
 
@@ -273,7 +293,9 @@ Return JSON:
 }}
 """
 
-    text = generate(prompt,120)
+    text = generate(prompt, 120)
+
+    print("INTENT RAW:", text)
 
     data = safe_json(text)
 
@@ -281,9 +303,9 @@ Return JSON:
         return data
 
     return {
-        "intent":"SEARCH",
-        "type":"article",
-        "keywords":query.lower()
+        "intent": "SEARCH",
+        "type": "article",
+        "keywords": query.lower()
     }
 
 
@@ -305,8 +327,7 @@ User query:
 {query}
 
 Write:
-
-1 Short professional intro
+1 Short professional introduction
 2 Suggest 3 follow-up questions
 
 Return JSON:
@@ -317,7 +338,9 @@ Return JSON:
 }}
 """
 
-    text = generate(prompt,200)
+    text = generate(prompt, 200)
+
+    print("SUMMARY RAW:", text)
 
     data = safe_json(text)
 
@@ -325,8 +348,8 @@ Return JSON:
         return data
 
     return {
-        "intro":"Here are some relevant hospitality results.",
-        "suggestions":[]
+        "intro": "Here are some relevant hospitality results.",
+        "suggestions": []
     }
 
 
@@ -336,50 +359,69 @@ def summary(req: SummaryRequest):
 
 
 # ------------------------------------------------
-# HTML API
+# HTML GENERATION API
 # ------------------------------------------------
 
 def generate_html(results):
 
+    # limit results to 5
+    results = results[:5]
+
     prompt = f"""
-You are formatting search results for a hospitality platform.
+You are formatting hospitality search results.
 
 Results JSON:
 {json.dumps(results, indent=2)}
 
 Task:
-Generate HTML for the TOP 5 results.
+
+Convert the results into HTML.
 
 Rules:
-- Use only title and url
+
+- Use ONLY title and url from results
 - Do NOT invent data
-- Each result must be clickable
+- Do NOT use placeholders like {{ }}
+- Insert the real URL inside <a href="">
+- Show maximum 5 results
 
-Allowed HTML:
-<p><ul><li><strong><a>
+HTML format example:
 
-Example:
+<p>Here are some job results:</p>
 
 <ul>
-<li><strong><a href="/jobs/1">Housekeeping Attendant</a></strong></li>
-<li><strong><a href="/jobs/2">Room Attendant</a></strong></li>
+<li>
+<strong>
+<a href="/jobs/123">Housekeeping Attendant</a>
+</strong>
+</li>
+
+<li>
+<strong>
+<a href="/jobs/456">Room Attendant</a>
+</strong>
+</li>
 </ul>
 
 Return JSON:
 
 {{
-"html":"html string"
+"html":"generated html"
 }}
 """
 
-    text = generate(prompt,500)
+    text = generate(prompt, 500)
+
+    print("HTML RAW:", text)
 
     data = safe_json(text)
 
     if data:
         return data
 
-    return {"html":"<p>No results found.</p>"}
+    return {
+        "html": "<p>No results found.</p>"
+    }
 
 
 @app.post("/html")
@@ -387,6 +429,10 @@ def html(req: HtmlRequest):
     return generate_html(req.results)
 
 
+# ------------------------------------------------
+# HEALTH CHECK
+# ------------------------------------------------
+
 @app.get("/")
 def health():
-    return {"status":"ok"}
+    return {"status": "ok"}
