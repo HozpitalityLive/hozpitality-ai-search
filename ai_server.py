@@ -180,7 +180,6 @@
 
 
 import json
-import re
 import requests
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -192,15 +191,17 @@ LLM_URL = "http://127.0.0.1:8080/completion"
 
 class IntentRequest(BaseModel):
     query: str
-    last_suggestion: str | None = None
 
 
-class FormatRequest(BaseModel):
+class SummaryRequest(BaseModel):
     query: str
+
+
+class HtmlRequest(BaseModel):
     results: list
 
 
-def generate(prompt, tokens=160):
+def generate(prompt, tokens=200):
 
     payload = {
         "prompt": f"[INST] {prompt} [/INST]",
@@ -210,37 +211,42 @@ def generate(prompt, tokens=160):
     }
 
     try:
-        response = requests.post(LLM_URL, json=payload, timeout=60)
+        r = requests.post(LLM_URL, json=payload, timeout=60)
 
-        print("LLM status:", response.status_code)
-
-        if response.status_code != 200:
-            print("LLM ERROR:", response.text)
+        if r.status_code != 200:
+            print("LLM ERROR:", r.text)
             return ""
 
-        data = response.json()
+        data = r.json()
 
-        return data.get("content","").strip()
+        return data.get("content", "").strip()
 
     except Exception as e:
-        print("LLM request failed:", str(e))
+        print("LLM request failed:", e)
         return ""
 
 
 def safe_json(text):
 
+    if not text:
+        return None
+
+    text = text.replace("```json", "").replace("```", "")
+
     try:
-        start = text.find("{")
-        end = text.rfind("}") + 1
-
-        if start != -1 and end != -1:
-            return json.loads(text[start:end])
-
-    except:
-        pass
+        start = text.index("{")
+        end = text.rindex("}") + 1
+        return json.loads(text[start:end])
+    except Exception as e:
+        print("JSON parse error:", e)
+        print(text)
 
     return None
 
+
+# ------------------------------------------------
+# INTENT API
+# ------------------------------------------------
 
 def detect_intent(query):
 
@@ -268,69 +274,6 @@ Return JSON:
 """
 
     text = generate(prompt,120)
-    data = safe_json(text)
-
-    if data:
-        return data
-
-    return {
-        "intent": "SEARCH",
-        "type": "article",
-        "keywords": query.lower()
-    }
-
-
-def build_response(query, results):
-
-    prompt = f"""
-You are an AI assistant for a hospitality platform.
-
-User query:
-{query}
-
-Search results JSON:
-{json.dumps(results, indent=2)}
-
-Instructions:
-
-1. Write a short professional introduction about the results.
-2. Generate an HTML list of the results.
-3. Each result must contain a clickable link using the provided "url".
-4. Use the provided "title" as the link text.
-5. Do NOT invent URLs or titles.
-6. Show maximum 5 results.
-7. Format like a professional search answer similar to ChatGPT or Google.
-
-Allowed HTML tags:
-<p><ul><li><strong><a>
-
-Example HTML format:
-
-<p>Here are some hospitality jobs related to your search:</p>
-
-<ul>
-<li><strong><a href="/jobs/123">Job title</a></strong></li>
-<li><strong><a href="/jobs/456">Another job title</a></strong></li>
-</ul>
-
-Return ONLY valid JSON:
-
-{{
-"intro":"short intro",
-"suggestions":[
-"question1",
-"question2",
-"question3"
-],
-"html":"generated html"
-}}
-"""
-
-    text = generate(prompt, 800)
-
-    print("\n========= RAW LLM OUTPUT =========")
-    print(text)
-    print("==================================\n")
 
     data = safe_json(text)
 
@@ -338,15 +281,10 @@ Return ONLY valid JSON:
         return data
 
     return {
-        "intro": "Hospitality industry information.",
-        "suggestions": [],
-        "html": "<p>Hospitality industry information.</p>"
+        "intent":"SEARCH",
+        "type":"article",
+        "keywords":query.lower()
     }
-
-
-@app.get("/")
-def health():
-    return {"status": "ok"}
 
 
 @app.post("/intent")
@@ -354,6 +292,101 @@ def intent(req: IntentRequest):
     return detect_intent(req.query)
 
 
-@app.post("/format")
-def format(req: FormatRequest):
-    return build_response(req.query, req.results)
+# ------------------------------------------------
+# SUMMARY API
+# ------------------------------------------------
+
+def generate_summary(query):
+
+    prompt = f"""
+You are an AI assistant for a hospitality search platform.
+
+User query:
+{query}
+
+Write:
+
+1 Short professional intro
+2 Suggest 3 follow-up questions
+
+Return JSON:
+
+{{
+"intro":"text",
+"suggestions":["q1","q2","q3"]
+}}
+"""
+
+    text = generate(prompt,200)
+
+    data = safe_json(text)
+
+    if data:
+        return data
+
+    return {
+        "intro":"Here are some relevant hospitality results.",
+        "suggestions":[]
+    }
+
+
+@app.post("/summary")
+def summary(req: SummaryRequest):
+    return generate_summary(req.query)
+
+
+# ------------------------------------------------
+# HTML API
+# ------------------------------------------------
+
+def generate_html(results):
+
+    prompt = f"""
+You are formatting search results for a hospitality platform.
+
+Results JSON:
+{json.dumps(results, indent=2)}
+
+Task:
+Generate HTML for the TOP 5 results.
+
+Rules:
+- Use only title and url
+- Do NOT invent data
+- Each result must be clickable
+
+Allowed HTML:
+<p><ul><li><strong><a>
+
+Example:
+
+<ul>
+<li><strong><a href="/jobs/1">Housekeeping Attendant</a></strong></li>
+<li><strong><a href="/jobs/2">Room Attendant</a></strong></li>
+</ul>
+
+Return JSON:
+
+{{
+"html":"html string"
+}}
+"""
+
+    text = generate(prompt,500)
+
+    data = safe_json(text)
+
+    if data:
+        return data
+
+    return {"html":"<p>No results found.</p>"}
+
+
+@app.post("/html")
+def html(req: HtmlRequest):
+    return generate_html(req.results)
+
+
+@app.get("/")
+def health():
+    return {"status":"ok"}
