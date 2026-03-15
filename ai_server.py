@@ -209,21 +209,35 @@ def generate(prompt, tokens=160):
         "top_p": 0.9
     }
 
-    response = requests.post(LLM_URL, json=payload, timeout=60)
-    data = response.json()
+    try:
+        response = requests.post(LLM_URL, json=payload, timeout=60)
 
-    return data["content"].strip()
+        print("LLM status:", response.status_code)
+
+        if response.status_code != 200:
+            print("LLM ERROR:", response.text)
+            return ""
+
+        data = response.json()
+
+        return data.get("content","").strip()
+
+    except Exception as e:
+        print("LLM request failed:", str(e))
+        return ""
 
 
 def safe_json(text):
 
-    matches = re.findall(r"\{.*?\}", text, re.S)
+    try:
+        start = text.find("{")
+        end = text.rfind("}") + 1
 
-    for m in matches:
-        try:
-            return json.loads(m)
-        except:
-            continue
+        if start != -1 and end != -1:
+            return json.loads(text[start:end])
+
+    except:
+        pass
 
     return None
 
