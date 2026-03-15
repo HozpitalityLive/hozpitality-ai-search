@@ -1,15 +1,8 @@
 fastapi
 uvicorn[standard]
 
-torch
-transformers
-accelerate
-bitsandbytes
-sentencepiece
-
+requests
 pydantic
+
 numpy
 scipy
-
-# optional performance engine
-vllm
