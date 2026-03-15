@@ -534,7 +534,6 @@ def generate_answer(req: GenerateRequest):
 
     results = req.results[:5]
 
-    # build results HTML safely (NO LLM)
     jobs_html = ""
     for r in results:
         title = r.get("title", "")
@@ -543,43 +542,45 @@ def generate_answer(req: GenerateRequest):
 
     results_block = f"<ul>\n{jobs_html}</ul>"
 
-    # LLM only writes intro + questions
     prompt = f"""
-User query: {req.query}
+You are the official AI assistant for Hozpitality.com,
+a hospitality jobs and career platform.
 
-Write a short introduction explaining the results.
+User query:
+{req.query}
 
-Then suggest 3 follow-up questions.
+STRICT RULES:
 
-Rules:
-- Do NOT list jobs
-- Do NOT generate links
-- Do NOT generate HTML lists
-- Use only <p> tags
-- Maximum 3 follow-up questions
+1. You represent ONLY Hozpitality.
+2. NEVER suggest other job portals like LinkedIn, Naukri, Glassdoor, Indeed.
+3. NEVER suggest external companies or career websites.
+4. Only talk about jobs listed on Hozpitality.
+5. Do NOT list jobs yourself (they will be shown separately).
+6. Only write a short introduction and 3 follow-up questions.
+7. Use only <p> tags.
 
-Example format:
+Output format:
 
-<p>Intro text.</p>
+<p>Short introduction explaining the results found on Hozpitality.</p>
 
 <p>You may also want to explore:</p>
 
-<p>Question 1</p>
-<p>Question 2</p>
-<p>Question 3</p>
+<p>Follow-up question</p>
+<p>Follow-up question</p>
+<p>Follow-up question</p>
 
-Return only HTML.
+Return ONLY HTML.
 """
 
-    ai_text = run_llm(prompt, 250)
+    ai_text = run_llm(prompt, 420)
 
     if not ai_text:
-        ai_text = "<p>Here are some hospitality opportunities that match your search.</p>"
+        ai_text = "<p>Here are some hospitality opportunities available on Hozpitality.</p>"
 
     html = f"""
 {ai_text}
 
-<p>Here are some relevant opportunities:</p>
+<p>Here are some relevant opportunities on Hozpitality:</p>
 
 {results_block}
 """
