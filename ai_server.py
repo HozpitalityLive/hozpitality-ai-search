@@ -327,6 +327,11 @@ Return ONLY valid JSON:
 """
 
     text = generate(prompt, 220)
+
+    print("\n========= RAW LLM OUTPUT =========")
+    print(text)
+    print("==================================\n")
+
     data = safe_json(text)
 
     if data:
