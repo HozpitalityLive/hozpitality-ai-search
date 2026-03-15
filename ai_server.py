@@ -459,8 +459,14 @@ Return JSON:
 @app.post("/generate")
 def generate_answer(req: GenerateRequest):
 
-    # limit results sent to LLM
     results = req.results[:5]
+
+    # Build real HTML list for the LLM to reuse
+    jobs_html = ""
+    for r in results:
+        title = r.get("title", "")
+        url = r.get("url", "#")
+        jobs_html += f'<li><a href="{url}">{title}</a></li>\n'
 
     prompt = f"""
 You are an AI assistant for a hospitality platform.
@@ -468,33 +474,31 @@ You are an AI assistant for a hospitality platform.
 User query:
 {req.query}
 
-Search results JSON:
-{json.dumps(results, indent=2)}
+Below are the REAL search results.
 
-Your task:
-Generate the FINAL HTML response for the user.
+You MUST use these results exactly and DO NOT change job titles.
 
-STRICT RULES:
+Results:
 
-1. Use ONLY the job titles and URLs from the JSON results.
-2. NEVER generate template syntax like:
-   {{ }}
-   {{% %}}
-3. NEVER write loops.
-4. NEVER invent job titles or URLs.
-5. Maximum 5 results.
-6. Use ONLY these HTML tags:
-<p>, <ul>, <li>, <a>
+<ul>
+{jobs_html}
+</ul>
 
-HTML format example:
+Instructions:
 
-<p>Intro explaining the results.</p>
+1. Do NOT invent job titles.
+2. Do NOT modify URLs.
+3. Do NOT create template syntax like {{}} or {{% %}}.
+4. Use the exact results shown above.
+
+Output HTML format:
+
+<p>Short introduction explaining the results.</p>
 
 <p>Here are some relevant opportunities:</p>
 
 <ul>
-<li><a href="/jobs/example-url">Example Job Title</a></li>
-<li><a href="/jobs/example-url2">Example Job Title</a></li>
+{jobs_html}
 </ul>
 
 <p>You may also want to explore:</p>
@@ -508,15 +512,19 @@ HTML format example:
 Return ONLY HTML.
 """
 
-    html = run_llm(prompt, 700)
+    html = run_llm(prompt, 500)
 
-    # fallback if model fails
     if not html:
-        html = "<p>No relevant hospitality information found.</p>"
+        html = f"""
+<p>Here are some relevant hospitality opportunities:</p>
+<ul>
+{jobs_html}
+</ul>
+"""
 
-    # safety cleanup (remove template syntax if model outputs it)
-    html = html.replace("{%", "").replace("%}", "")
+    # cleanup safety
     html = html.replace("{{", "").replace("}}", "")
+    html = html.replace("{%", "").replace("%}", "")
 
     return {"html": html}
 
