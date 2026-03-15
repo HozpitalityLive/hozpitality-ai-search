@@ -468,34 +468,55 @@ User query:
 Search results:
 {json.dumps(req.results, indent=2)}
 
-Rules:
+Your task is to generate a helpful response in HTML.
 
-Return ONLY HTML.
+Response structure:
 
-Use these tags only:
-<p>, <ul>, <li>, <a>
+1. Start with a short professional introduction related to the user query.
 
-Never invent data.
+2. Then display results.
+
+3. After the results, suggest 2–3 follow-up questions related to the results.
+
+HTML Rules:
+- Return ONLY HTML
+- Use only these tags: <p>, <ul>, <li>, <a>
+- Never invent data
+- Use URLs exactly from the results JSON
 
 Formatting rules:
 
-Multiple jobs:
-<p>Intro sentence</p>
+If multiple jobs:
+<p>Intro explanation</p>
+<p>Here are some relevant opportunities:</p>
+
 <ul>
 <li><a href="URL">Job Title</a></li>
 </ul>
 
-Single job:
+If single job:
 <p><a href="URL">Job Title</a> explanation.</p>
 
-Profile:
+If profile:
 <p><a href="URL">Profile Name</a> professional summary.</p>
 
-Article:
+If article:
 <p><a href="URL">Article Title</a> short summary.</p>
+
+After results add follow-up questions like:
+
+<p>You may also want to explore:</p>
+
+<ul>
+<li>Question</li>
+<li>Question</li>
+<li>Question</li>
+</ul>
 
 If no results:
 <p>No relevant hospitality information found.</p>
+
+Return ONLY HTML.
 """
 
     html = run_llm(prompt, 500)
