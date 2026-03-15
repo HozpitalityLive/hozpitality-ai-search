@@ -18,7 +18,8 @@ print("Loading model...")
 bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_4bit_compute_dtype=torch.float16,
-    bnb_4bit_use_double_quant=True
+    bnb_4bit_use_double_quant=True,
+    llm_int8_enable_fp32_cpu_offload=True
 )
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
@@ -28,7 +29,8 @@ model = AutoModelForCausalLM.from_pretrained(
     MODEL_ID,
     quantization_config=bnb_config,
     device_map="auto",
-    torch_dtype=torch.float16
+    dtype=torch.float16,
+    offload_folder="offload"
 )
 
 model.eval()
