@@ -456,75 +456,133 @@ Return JSON:
         "html": "<p>No results found.</p>"
     }
 
+# @app.post("/generate")
+# def generate_answer(req: GenerateRequest):
+
+#     results = req.results[:5]
+
+#     # Build real HTML list for the LLM to reuse
+#     jobs_html = ""
+#     for r in results:
+#         title = r.get("title", "")
+#         url = r.get("url", "#")
+#         jobs_html += f'<li><a href="{url}">{title}</a></li>\n'
+
+#     prompt = f"""
+# You are an AI assistant for a hospitality platform.
+
+# User query:
+# {req.query}
+
+# Below are the REAL search results.
+
+# You MUST use these results exactly and DO NOT change job titles.
+
+# Results:
+
+# <ul>
+# {jobs_html}
+# </ul>
+
+# Instructions:
+
+# 1. Do NOT invent job titles.
+# 2. Do NOT modify URLs.
+# 3. Do NOT create template syntax like {{}} or {{% %}}.
+# 4. Use the exact results shown above.
+
+# Output HTML format:
+
+# <p>Short introduction explaining the results.</p>
+
+# <p>Here are some relevant opportunities:</p>
+
+# <ul>
+# {jobs_html}
+# </ul>
+
+# <p>You may also want to explore:</p>
+
+# <ul>
+# <li>Follow-up question</li>
+# <li>Follow-up question</li>
+# <li>Follow-up question</li>
+# </ul>
+
+# Return ONLY HTML.
+# """
+
+#     html = run_llm(prompt, 500)
+
+#     if not html:
+#         html = f"""
+# <p>Here are some relevant hospitality opportunities:</p>
+# <ul>
+# {jobs_html}
+# </ul>
+# """
+
+#     # cleanup safety
+#     html = html.replace("{{", "").replace("}}", "")
+#     html = html.replace("{%", "").replace("%}", "")
+
+#     return {"html": html}
+
+
 @app.post("/generate")
 def generate_answer(req: GenerateRequest):
 
     results = req.results[:5]
 
-    # Build real HTML list for the LLM to reuse
+    # build results HTML safely (NO LLM)
     jobs_html = ""
     for r in results:
         title = r.get("title", "")
         url = r.get("url", "#")
         jobs_html += f'<li><a href="{url}">{title}</a></li>\n'
 
+    results_block = f"<ul>\n{jobs_html}</ul>"
+
+    # LLM only writes intro + questions
     prompt = f"""
-You are an AI assistant for a hospitality platform.
+User query: {req.query}
 
-User query:
-{req.query}
+Write a short introduction explaining the results.
 
-Below are the REAL search results.
+Then suggest 3 follow-up questions.
 
-You MUST use these results exactly and DO NOT change job titles.
+Rules:
+- Do NOT list jobs
+- Do NOT generate links
+- Do NOT generate HTML lists
+- Use only <p> tags
+- Maximum 3 follow-up questions
 
-Results:
+Example format:
 
-<ul>
-{jobs_html}
-</ul>
-
-Instructions:
-
-1. Do NOT invent job titles.
-2. Do NOT modify URLs.
-3. Do NOT create template syntax like {{}} or {{% %}}.
-4. Use the exact results shown above.
-
-Output HTML format:
-
-<p>Short introduction explaining the results.</p>
-
-<p>Here are some relevant opportunities:</p>
-
-<ul>
-{jobs_html}
-</ul>
+<p>Intro text.</p>
 
 <p>You may also want to explore:</p>
 
-<ul>
-<li>Follow-up question</li>
-<li>Follow-up question</li>
-<li>Follow-up question</li>
-</ul>
+<p>Question 1</p>
+<p>Question 2</p>
+<p>Question 3</p>
 
-Return ONLY HTML.
+Return only HTML.
 """
 
-    html = run_llm(prompt, 500)
+    ai_text = run_llm(prompt, 250)
 
-    if not html:
-        html = f"""
-<p>Here are some relevant hospitality opportunities:</p>
-<ul>
-{jobs_html}
-</ul>
+    if not ai_text:
+        ai_text = "<p>Here are some hospitality opportunities that match your search.</p>"
+
+    html = f"""
+{ai_text}
+
+<p>Here are some relevant opportunities:</p>
+
+{results_block}
 """
-
-    # cleanup safety
-    html = html.replace("{{", "").replace("}}", "")
-    html = html.replace("{%", "").replace("%}", "")
 
     return {"html": html}
 
