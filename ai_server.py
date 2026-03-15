@@ -519,7 +519,7 @@ If no results:
 Return ONLY HTML.
 """
 
-    html = run_llm(prompt, 500)
+    html = run_llm(prompt, 800)
 
     if not html:
         html = "<p>Hospitality information.</p>"
