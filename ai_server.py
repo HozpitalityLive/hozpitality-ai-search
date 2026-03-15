@@ -326,7 +326,7 @@ Return ONLY valid JSON:
 }}
 """
 
-    text = generate(prompt, 10000)
+    text = generate(prompt, 800)
 
     print("\n========= RAW LLM OUTPUT =========")
     print(text)
