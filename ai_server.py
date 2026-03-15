@@ -204,6 +204,7 @@ class SummaryRequest(BaseModel):
 class HtmlRequest(BaseModel):
     results: list
 
+
 class GenerateRequest(BaseModel):
     query: str
     results: list
@@ -241,6 +242,34 @@ def generate(prompt, tokens=300):
         print("LLM request failed:", e)
         return ""
 
+
+def run_llm(prompt, tokens=400):
+
+    payload = {
+        "prompt": f"[INST] {prompt} [/INST]",
+        "n_predict": tokens,
+        "temperature": 0.2,
+        "top_p": 0.9
+    }
+
+    try:
+
+        r = requests.post(LLM_URL, json=payload, timeout=60)
+
+        print("LLM status:", r.status_code)
+
+        if r.status_code != 200:
+            print("LLM ERROR:", r.text)
+            return ""
+
+        data = r.json()
+
+        return data.get("content", "").strip()
+
+    except Exception as e:
+
+        print("LLM request failed:", e)
+        return ""
 
 # -----------------------------
 # SAFE JSON PARSER
@@ -436,34 +465,43 @@ You are an AI assistant for a hospitality platform.
 User query:
 {req.query}
 
-Search results JSON:
+Search results:
 {json.dumps(req.results, indent=2)}
 
 Rules:
 
-- Return ONLY HTML
-- Use <p>, <ul>, <li>, <a>
-- Do not invent data
-- Use URL from results
-- If multiple jobs -> list
-- If single job -> explain in paragraph
-- If profile -> describe profile
-- If article -> short summary with link
-- If no results -> explain politely
+Return ONLY HTML.
 
-Example format:
+Use these tags only:
+<p>, <ul>, <li>, <a>
 
-<p>Here are some hospitality jobs:</p>
+Never invent data.
 
+Formatting rules:
+
+Multiple jobs:
+<p>Intro sentence</p>
 <ul>
-<li><a href="/jobs/123">Housekeeping Attendant</a></li>
-<li><a href="/jobs/456">Front Office Executive</a></li>
+<li><a href="URL">Job Title</a></li>
 </ul>
 
-Return ONLY HTML.
+Single job:
+<p><a href="URL">Job Title</a> explanation.</p>
+
+Profile:
+<p><a href="URL">Profile Name</a> professional summary.</p>
+
+Article:
+<p><a href="URL">Article Title</a> short summary.</p>
+
+If no results:
+<p>No relevant hospitality information found.</p>
 """
 
-    html = generate(prompt, 500)
+    html = run_llm(prompt, 500)
+
+    if not html:
+        html = "<p>Hospitality information.</p>"
 
     return {"html": html}
 
@@ -471,13 +509,6 @@ Return ONLY HTML.
 @app.post("/html")
 def html(req: HtmlRequest):
     return generate_html(req.results)
-
-
-@app.post("/generate")
-def generate(req: GenerateRequest):
-    return generate_answer(req)
-
-
 
 
 
