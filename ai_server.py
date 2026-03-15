@@ -204,6 +204,10 @@ class SummaryRequest(BaseModel):
 class HtmlRequest(BaseModel):
     results: list
 
+class GenerateRequest(BaseModel):
+    query: str
+    results: list
+
 
 # -----------------------------
 # LLM GENERATION FUNCTION
@@ -423,10 +427,59 @@ Return JSON:
         "html": "<p>No results found.</p>"
     }
 
+@app.post("/generate")
+def generate_answer(req: GenerateRequest):
+
+    prompt = f"""
+You are an AI assistant for a hospitality platform.
+
+User query:
+{req.query}
+
+Search results JSON:
+{json.dumps(req.results, indent=2)}
+
+Rules:
+
+- Return ONLY HTML
+- Use <p>, <ul>, <li>, <a>
+- Do not invent data
+- Use URL from results
+- If multiple jobs -> list
+- If single job -> explain in paragraph
+- If profile -> describe profile
+- If article -> short summary with link
+- If no results -> explain politely
+
+Example format:
+
+<p>Here are some hospitality jobs:</p>
+
+<ul>
+<li><a href="/jobs/123">Housekeeping Attendant</a></li>
+<li><a href="/jobs/456">Front Office Executive</a></li>
+</ul>
+
+Return ONLY HTML.
+"""
+
+    html = generate(prompt, 500)
+
+    return {"html": html}
+
 
 @app.post("/html")
 def html(req: HtmlRequest):
     return generate_html(req.results)
+
+
+@app.post("/generate")
+def generate(req: GenerateRequest):
+    return generate_answer(req)
+
+
+
+
 
 
 # ------------------------------------------------
