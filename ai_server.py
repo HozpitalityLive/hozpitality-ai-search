@@ -283,30 +283,50 @@ Return JSON:
 def build_response(query, results):
 
     prompt = f"""
+You are an AI assistant for a hospitality platform.
+
 User query:
 {query}
 
 Search results JSON:
-{json.dumps(results)}
+{json.dumps(results, indent=2)}
 
-Tasks:
-1 Write short professional intro
-2 Suggest 3 follow-up questions
-3 Format final answer in HTML
+Instructions:
 
-Allowed HTML:
+1. Write a short professional introduction about the results.
+2. Generate an HTML list of the results.
+3. Each result must contain a clickable link using the provided "url".
+4. Use the provided "title" as the link text.
+5. Do NOT invent URLs or titles.
+6. Show maximum 5 results.
+7. Format like a professional search answer similar to ChatGPT or Google.
+
+Allowed HTML tags:
 <p><ul><li><strong><a>
 
-Return JSON:
+Example HTML format:
+
+<p>Here are some hospitality jobs related to your search:</p>
+
+<ul>
+<li><strong><a href="/jobs/123">Job title</a></strong></li>
+<li><strong><a href="/jobs/456">Another job title</a></strong></li>
+</ul>
+
+Return ONLY valid JSON:
 
 {{
-"intro":"...",
-"suggestions":["...","...","..."],
-"html":"..."
+"intro":"short intro",
+"suggestions":[
+"question1",
+"question2",
+"question3"
+],
+"html":"generated html"
 }}
 """
 
-    text = generate(prompt,220)
+    text = generate(prompt, 220)
     data = safe_json(text)
 
     if data:
