@@ -4,8 +4,8 @@ import torch
 
 from fastapi import FastAPI
 from pydantic import BaseModel
-
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+
 
 app = FastAPI()
 
@@ -27,26 +27,13 @@ tokenizer.pad_token = tokenizer.eos_token
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_ID,
     quantization_config=bnb_config,
-    device_map={"": 0},
+    device_map="auto",
     torch_dtype=torch.float16
 )
 
-model.config.use_cache = True
 model.eval()
 
-print("Model ready on GPU")
-
-
-TYPE_MAPPING = [
-    "job",
-    "article",
-    "useraccount",
-    "faq",
-    "company",
-    "event",
-    "supplier",
-    "product"
-]
+print("Model ready")
 
 
 class IntentRequest(BaseModel):
@@ -56,28 +43,27 @@ class IntentRequest(BaseModel):
 
 class FormatRequest(BaseModel):
     query: str
-    intro: str
     results: list
-    suggested_query: str
 
 
-def generate(prompt, tokens=120):
+def generate(prompt, tokens=160):
 
-    inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
             max_new_tokens=tokens,
-            temperature=0.1,
+            temperature=0.2,
             do_sample=True,
             top_p=0.9,
+            repetition_penalty=1.1,
             pad_token_id=tokenizer.eos_token_id
         )
 
     decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    return decoded[len(prompt):]
+    return decoded[len(prompt):].strip()
 
 
 def safe_json(text):
@@ -93,25 +79,33 @@ def safe_json(text):
     return None
 
 
-def detect_intent(query, last_suggestion=None):
+
+def detect_intent(query):
 
     prompt = f"""
-Classify hospitality search query.
+You are an AI assistant for a hospitality platform.
 
-Query: "{query}"
+User Query:
+"{query}"
 
-Return JSON only:
+Categories:
+job, article, useraccount, faq, company, event, supplier, product
+
+Tasks:
+1 Detect intent: SEARCH, FAQ or CHAT
+2 Extract keywords
+3 Choose category
+
+Return JSON:
 
 {{
-"intent":"FAQ|SEARCH|CHAT",
-"keywords":"...",
-"type":"{','.join(TYPE_MAPPING)}",
-"intro":"...",
-"suggested_query":"..."
+"intent":"SEARCH|FAQ|CHAT",
+"type":"job|article|useraccount|faq|company|event|supplier|product",
+"keywords":"..."
 }}
 """
 
-    text = generate(prompt)
+    text = generate(prompt,120)
 
     data = safe_json(text)
 
@@ -119,63 +113,65 @@ Return JSON only:
         return data
 
     return {
-        "intent": "SEARCH",
-        "keywords": query.lower(),
-        "type": "article",
-        "intro": "Hospitality industry information.",
-        "suggested_query": f"Would you like to know more about {query}?"
+        "intent":"SEARCH",
+        "type":"article",
+        "keywords":query.lower()
     }
 
 
-def format_html(query, intro, results, suggested):
+
+def build_response(query, results):
 
     prompt = f"""
-Create HTML response.
+User query:
+{query}
 
-Intro:
-{intro}
-
-Results JSON:
+Search results JSON:
 {json.dumps(results)}
 
-Suggested question:
-{suggested}
+Tasks:
+1 Write short professional intro
+2 Suggest 3 follow-up questions
+3 Format final answer in HTML
 
-Allowed HTML tags:
+Allowed HTML:
 <p><ul><li><strong><a>
 
-Return HTML only.
+Return JSON:
+
+{{
+"intro":"...",
+"suggestions":["...","...","..."],
+"html":"..."
+}}
 """
 
-    text = generate(prompt, 160)
+    text = generate(prompt,220)
 
-    match = re.search(r"<p>.*", text, re.S)
+    data = safe_json(text)
 
-    if match:
-        return match.group()
+    if data:
+        return data
 
-    return f"<p>{intro}</p>"
+    return {
+        "intro":"Hospitality industry information.",
+        "suggestions":[],
+        "html":"<p>Hospitality industry information.</p>"
+    }
 
 
 @app.get("/")
 def health():
-    return {"status": "ok"}
+    return {"status":"ok"}
 
 
 @app.post("/intent")
 def intent(req: IntentRequest):
 
-    return detect_intent(req.query, req.last_suggestion)
+    return detect_intent(req.query)
 
 
 @app.post("/format")
 def format(req: FormatRequest):
 
-    html = format_html(
-        req.query,
-        req.intro,
-        req.results,
-        req.suggested_query
-    )
-
-    return {"html": html}
+    return build_response(req.query, req.results)
