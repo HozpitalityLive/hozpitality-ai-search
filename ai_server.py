@@ -459,70 +459,64 @@ Return JSON:
 @app.post("/generate")
 def generate_answer(req: GenerateRequest):
 
+    # limit results sent to LLM
+    results = req.results[:5]
+
     prompt = f"""
 You are an AI assistant for a hospitality platform.
 
 User query:
 {req.query}
 
-Search results:
-{json.dumps(req.results, indent=2)}
+Search results JSON:
+{json.dumps(results, indent=2)}
 
-Your task is to generate a helpful response in HTML.
+Your task:
+Generate the FINAL HTML response for the user.
 
-Response structure:
+STRICT RULES:
 
-1. Start with a short professional introduction related to the user query.
+1. Use ONLY the job titles and URLs from the JSON results.
+2. NEVER generate template syntax like:
+   {{ }}
+   {{% %}}
+3. NEVER write loops.
+4. NEVER invent job titles or URLs.
+5. Maximum 5 results.
+6. Use ONLY these HTML tags:
+<p>, <ul>, <li>, <a>
 
-2. Then display results.
+HTML format example:
 
-3. After the results, suggest 2–3 follow-up questions related to the results.
+<p>Intro explaining the results.</p>
 
-HTML Rules:
-- Return ONLY HTML
-- Use only these tags: <p>, <ul>, <li>, <a>
-- Never invent data
-- Use URLs exactly from the results JSON
-
-Formatting rules:
-
-If multiple jobs:
-<p>Intro explanation</p>
 <p>Here are some relevant opportunities:</p>
 
 <ul>
-<li><a href="URL">Job Title</a></li>
+<li><a href="/jobs/example-url">Example Job Title</a></li>
+<li><a href="/jobs/example-url2">Example Job Title</a></li>
 </ul>
-
-If single job:
-<p><a href="URL">Job Title</a> explanation.</p>
-
-If profile:
-<p><a href="URL">Profile Name</a> professional summary.</p>
-
-If article:
-<p><a href="URL">Article Title</a> short summary.</p>
-
-After results add follow-up questions like:
 
 <p>You may also want to explore:</p>
 
 <ul>
-<li>Question</li>
-<li>Question</li>
-<li>Question</li>
+<li>Follow-up question</li>
+<li>Follow-up question</li>
+<li>Follow-up question</li>
 </ul>
-
-If no results:
-<p>No relevant hospitality information found.</p>
 
 Return ONLY HTML.
 """
 
-    html = run_llm(prompt, 800)
+    html = run_llm(prompt, 700)
 
+    # fallback if model fails
     if not html:
-        html = "<p>Hospitality information.</p>"
+        html = "<p>No relevant hospitality information found.</p>"
+
+    # safety cleanup (remove template syntax if model outputs it)
+    html = html.replace("{%", "").replace("%}", "")
+    html = html.replace("{{", "").replace("}}", "")
 
     return {"html": html}
 
