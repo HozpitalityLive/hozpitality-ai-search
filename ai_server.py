@@ -14,6 +14,7 @@ class IntentRequest(BaseModel):
 
 class SummaryRequest(BaseModel):
     query: str
+    titles: list = []
 
 
 def generate(prompt, tokens=200):
@@ -67,28 +68,45 @@ You are an AI intent classifier for a hospitality platform.
 User query:
 {query}
 
-Categories:
-job, article, useraccount, faq, company, event, supplier, product
+Tasks:
+1. Detect intent (SEARCH, FAQ, CHAT)
+2. Detect content type (job, article, useraccount, faq, company, event, supplier, product)
+3. Rewrite the query removing stop words like: in, the, for, at, near, jobs, job
+4. Extract location if present (city, state, or country)
 
-Rules:
-- If the user searches for jobs, careers, hiring, vacancies → type = job
-- If the query contains job titles (chef, waiter, manager, bartender etc) → type = job
-- If the query contains location + job → type = job
-- If user asks a question → intent = FAQ
-- Otherwise → SEARCH
+Examples:
 
-Return ONLY JSON.
-
-Example:
-
+Query: chef jobs in mumbai
+Output:
 {{
 "intent":"SEARCH",
 "type":"job",
-"keywords":"chef jobs mumbai"
+"keywords":"chef",
+"location":"mumbai"
 }}
+
+Query: hotel manager jobs in dubai
+Output:
+{{
+"intent":"SEARCH",
+"type":"job",
+"keywords":"hotel manager",
+"location":"dubai"
+}}
+
+Query: hospitality news
+Output:
+{{
+"intent":"SEARCH",
+"type":"article",
+"keywords":"hospitality news",
+"location":""
+}}
+
+Return JSON only.
 """
 
-    text = generate(prompt, 120)
+    text = generate(prompt, 140)
 
     data = safe_json(text)
 
@@ -98,7 +116,8 @@ Example:
     return {
         "intent": "SEARCH",
         "type": "job",
-        "keywords": query.lower()
+        "keywords": query.lower(),
+        "location": ""
     }
 
 
@@ -107,40 +126,47 @@ def intent(req: IntentRequest):
     return detect_intent(req.query)
 
 
-def generate_summary(query):
+def generate_summary(query, titles):
 
     prompt = f"""
-You are the official AI assistant for Hozpitality.com.
+You are the AI assistant for Hozpitality.com.
 
 User search:
 {query}
 
-Write HTML.
+Top search result titles:
+{titles}
+
+Write:
+
+1 short introduction about the results.
 
 Rules:
-- First write ONE intro paragraph
-- Then write suggestions
-- Use <p> tags only
+- Maximum 4 lines
+- Use ONE <p> tag
 - Do not list jobs
+- Mention hospitality careers if relevant
 
-Example:
+Then write suggestions.
 
-<p>Here are some hospitality opportunities related to chef jobs in Mumbai.</p>
+Format:
+
+<p>intro text</p>
 
 <p>You may also want to explore:</p>
-<p>Chef jobs in Dubai</p>
-<p>Hotel chef careers in India</p>
-<p>Sous chef positions in luxury hotels</p>
+<p>Question</p>
+<p>Question</p>
+<p>Question</p>
 
 Return JSON:
 
 {{
-"intro_html":"<p>intro text</p>",
-"suggestions_html":"<p>suggestion block</p>"
+"intro_html":"<p>text</p>",
+"suggestions_html":"<p>suggestions</p>"
 }}
 """
 
-    text = generate(prompt, 220)
+    text = generate(prompt, 180)
 
     data = safe_json(text)
 
@@ -148,7 +174,7 @@ Return JSON:
         return data
 
     return {
-        "intro_html": "<p>Here are some relevant hospitality opportunities.</p>",
+        "intro_html": "<p>Explore hospitality opportunities related to your search on Hozpitality.</p>",
         "suggestions_html": ""
     }
 
