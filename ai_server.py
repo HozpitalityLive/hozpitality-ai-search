@@ -181,7 +181,7 @@ Return JSON:
 
 @app.post("/summary")
 def summary(req: SummaryRequest):
-    return generate_summary(req.query)
+    return generate_summary(req.query , req.titles)
 
 
 @app.get("/")
