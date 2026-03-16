@@ -164,11 +164,6 @@ def intent(req: IntentRequest):
 
 def generate_summary(query, titles):
 
-    print("\n========== SUMMARY REQUEST ==========")
-    print("QUERY:", query)
-    print("TITLES:", titles)
-    print("=====================================\n")
-
     prompt = f"""
 You are the AI assistant for Hozpitality.com.
 
@@ -180,52 +175,42 @@ Top search result titles:
 
 Write:
 
-1 short introduction about the results.
+1 short introduction paragraph about the search results.
 
 Rules:
 - Maximum 4 lines
-- Use ONE <p> tag
+- Use <p> tag
 - Do not list jobs
-- Mention hospitality careers if relevant
 
 Then write suggestions.
 
-Format:
+Format exactly like this:
 
 <p>intro text</p>
 
 <p>You may also want to explore:</p>
-<p>Question</p>
-<p>Question</p>
-<p>Question</p>
-
-Return JSON:
-
-{{
-"intro_html":"<p>text</p>",
-"suggestions_html":"<p>suggestions</p>"
-}}
+<p>Suggestion</p>
+<p>Suggestion</p>
+<p>Suggestion</p>
 """
 
     text = generate(prompt, 180)
 
-    print("\nSUMMARY RAW OUTPUT:")
-    print(text)
+    print("SUMMARY RAW:", text)
 
-    data = safe_json(text)
+    if not text:
+        return "", ""
 
-    print("\nSUMMARY PARSED DATA:")
-    print(data)
+    parts = text.split("You may also want to explore:")
 
-    if data:
-        return data
+    if len(parts) > 1:
+        intro_html = parts[0].strip()
+        suggestions_html = "<p>You may also want to explore:</p>" + parts[1]
+    else:
+        intro_html = text
+        suggestions_html = ""
 
-    print("SUMMARY FALLBACK TRIGGERED")
-
-    return {
-        "intro_html": "<p>Explore hospitality opportunities related to your search on Hozpitality.</p>",
-        "suggestions_html": ""
-    }
+    return intro_html, suggestions_html
 
 
 @app.post("/summary")
