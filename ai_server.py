@@ -16,6 +16,10 @@ class SummaryRequest(BaseModel):
     query: str
     titles: list = []
 
+class KeywordGenRequest(BaseModel):
+    title: str
+    content: str
+
 
 def generate(prompt, tokens=200):
 
@@ -211,6 +215,13 @@ Format exactly like this:
         suggestions_html = ""
 
     return intro_html, suggestions_html
+
+
+@app.post("/generate_keywords")
+def generate_keywords(req: KeywordGenRequest):
+    prompt = f"Generate 10 relevant SEO keywords for hospitality content. Return comma-separated list.\nTitle: {req.title}\nContent: {req.content[:500]}"
+    keywords_text = generate(prompt, tokens=100)
+    return {"keywords": [k.strip() for k in keywords_text.split(",") if k.strip()]}
 
 
 @app.post("/summary")
