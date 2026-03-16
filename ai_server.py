@@ -65,6 +65,11 @@ User Query:
 Categories:
 job, article, useraccount, faq, company, event, supplier, product
 
+Tasks:
+1 Detect intent: SEARCH, FAQ or CHAT
+2 Extract keywords
+3 Choose category
+
 Return JSON:
 
 {{
@@ -75,6 +80,8 @@ Return JSON:
 """
 
     text = generate(prompt, 120)
+
+    print("INTENT RAW:", text)
 
     data = safe_json(text)
 
