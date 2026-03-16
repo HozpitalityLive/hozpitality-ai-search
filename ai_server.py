@@ -26,23 +26,49 @@ def generate(prompt, tokens=200):
         "top_p": 0.9
     }
 
+    print("\n================ LLM REQUEST ================")
+    print("PROMPT:")
+    print(prompt)
+    print("TOKENS:", tokens)
+    print("=============================================\n")
+
     try:
+
         r = requests.post(LLM_URL, json=payload, timeout=60)
 
+        print("LLM STATUS:", r.status_code)
+
         if r.status_code != 200:
+            print("LLM ERROR:", r.text)
             return ""
 
         data = r.json()
 
-        return data.get("content", "").strip()
+        print("\n============= LLM RAW RESPONSE =============")
+        print(data)
+        print("============================================\n")
 
-    except Exception:
+        content = data.get("content", "").strip()
+
+        print("LLM CONTENT:", content)
+
+        return content
+
+    except Exception as e:
+
+        print("LLM REQUEST FAILED:", e)
+
         return ""
 
 
 def safe_json(text):
 
+    print("\n----- SAFE JSON INPUT -----")
+    print(text)
+    print("---------------------------")
+
     if not text:
+        print("JSON ERROR: empty text")
         return None
 
     text = text.replace("```json", "").replace("```", "").strip()
@@ -52,11 +78,21 @@ def safe_json(text):
     match = re.search(r"\{.*\}", text, re.DOTALL)
 
     if not match:
+        print("JSON ERROR: no JSON object found")
         return None
 
     try:
-        return json.loads(match.group())
-    except:
+
+        parsed = json.loads(match.group())
+
+        print("JSON PARSED:", parsed)
+
+        return parsed
+
+    except Exception as e:
+
+        print("JSON PARSE ERROR:", e)
+
         return None
 
 
@@ -128,6 +164,11 @@ def intent(req: IntentRequest):
 
 def generate_summary(query, titles):
 
+    print("\n========== SUMMARY REQUEST ==========")
+    print("QUERY:", query)
+    print("TITLES:", titles)
+    print("=====================================\n")
+
     prompt = f"""
 You are the AI assistant for Hozpitality.com.
 
@@ -168,13 +209,18 @@ Return JSON:
 
     text = generate(prompt, 180)
 
+    print("\nSUMMARY RAW OUTPUT:")
+    print(text)
+
     data = safe_json(text)
 
-    print("SUMMARY RAW:", text)
-    print("SUMMARY DATA:", data)
+    print("\nSUMMARY PARSED DATA:")
+    print(data)
 
     if data:
         return data
+
+    print("SUMMARY FALLBACK TRIGGERED")
 
     return {
         "intro_html": "<p>Explore hospitality opportunities related to your search on Hozpitality.</p>",
