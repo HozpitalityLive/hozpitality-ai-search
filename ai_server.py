@@ -170,6 +170,9 @@ Return JSON:
 
     data = safe_json(text)
 
+    print("SUMMARY RAW:", text)
+    print("SUMMARY DATA:", data)
+
     if data:
         return data
 
