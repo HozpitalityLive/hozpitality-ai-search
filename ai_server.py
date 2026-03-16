@@ -44,12 +44,17 @@ def safe_json(text):
     if not text:
         return None
 
-    text = text.replace("```json", "").replace("```", "")
+    text = text.replace("```json", "").replace("```", "").strip()
+
+    import re
+
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+
+    if not match:
+        return None
 
     try:
-        start = text.index("{")
-        end = text.rindex("}") + 1
-        return json.loads(text[start:end])
+        return json.loads(match.group())
     except:
         return None
 
@@ -57,31 +62,33 @@ def safe_json(text):
 def detect_intent(query):
 
     prompt = f"""
-You are an AI assistant for a hospitality platform.
+You are an AI intent classifier for a hospitality platform.
 
-User Query:
-"{query}"
+User query:
+{query}
 
 Categories:
 job, article, useraccount, faq, company, event, supplier, product
 
-Tasks:
-1 Detect intent: SEARCH, FAQ or CHAT
-2 Extract keywords
-3 Choose category
+Rules:
+- If the user searches for jobs, careers, hiring, vacancies → type = job
+- If the query contains job titles (chef, waiter, manager, bartender etc) → type = job
+- If the query contains location + job → type = job
+- If user asks a question → intent = FAQ
+- Otherwise → SEARCH
 
-Return JSON:
+Return ONLY JSON.
+
+Example:
 
 {{
-"intent":"SEARCH|FAQ|CHAT",
-"type":"job|article|useraccount|faq|company|event|supplier|product",
-"keywords":"..."
+"intent":"SEARCH",
+"type":"job",
+"keywords":"chef jobs mumbai"
 }}
 """
 
     text = generate(prompt, 120)
-
-    print("INTENT RAW:", text)
 
     data = safe_json(text)
 
@@ -90,7 +97,7 @@ Return JSON:
 
     return {
         "intent": "SEARCH",
-        "type": "article",
+        "type": "job",
         "keywords": query.lower()
     }
 
@@ -105,34 +112,35 @@ def generate_summary(query):
     prompt = f"""
 You are the official AI assistant for Hozpitality.com.
 
-User query:
+User search:
 {query}
 
-Write HTML only.
+Write HTML.
 
 Rules:
-- Intro must be inside <p>
-- Suggestions must use <p> tags
-- Do not include job listings
+- First write ONE intro paragraph
+- Then write suggestions
+- Use <p> tags only
+- Do not list jobs
 
-Format example:
+Example:
 
-<p>Short introduction text</p>
+<p>Here are some hospitality opportunities related to chef jobs in Mumbai.</p>
 
 <p>You may also want to explore:</p>
-<p>Question 1</p>
-<p>Question 2</p>
-<p>Question 3</p>
+<p>Chef jobs in Dubai</p>
+<p>Hotel chef careers in India</p>
+<p>Sous chef positions in luxury hotels</p>
 
 Return JSON:
 
 {{
-"intro_html":"<p>text</p>",
-"suggestions_html":"<p>text</p>"
+"intro_html":"<p>intro text</p>",
+"suggestions_html":"<p>suggestion block</p>"
 }}
 """
 
-    text = generate(prompt, 200)
+    text = generate(prompt, 220)
 
     data = safe_json(text)
 
