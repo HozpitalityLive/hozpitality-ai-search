@@ -8,6 +8,10 @@ app = FastAPI()
 LLM_URL = "http://127.0.0.1:8080/completion"
 
 
+class KeywordGenRequest(BaseModel):
+    title: str
+    content: str
+
 class IntentRequest(BaseModel):
     query: str
 
@@ -85,58 +89,113 @@ def run_llm(prompt, tokens=400):
         return ""
 
 
-def safe_json(text):
+# def safe_json(text):
 
+#     if not text:
+#         return None
+
+#     text = text.replace("```json", "").replace("```", "")
+
+#     try:
+
+#         start = text.index("{")
+#         end = text.rindex("}") + 1
+
+#         return json.loads(text[start:end])
+
+#     except Exception as e:
+
+#         print("JSON parse error:", e)
+#         print("RAW OUTPUT:", text)
+
+#     return None
+
+import re
+
+def safe_json(text):
     if not text:
         return None
-
-    text = text.replace("```json", "").replace("```", "")
-
     try:
-
-        start = text.index("{")
-        end = text.rindex("}") + 1
-
-        return json.loads(text[start:end])
-
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        return json.loads(text)
     except Exception as e:
-
-        print("JSON parse error:", e)
+        print(f"JSON parse error: {e}")
         print("RAW OUTPUT:", text)
+        return None
 
-    return None
 
+# def detect_intent(query):
 
+#     prompt = f"""
+# You are an AI assistant for a hospitality platform.
+
+# User Query:
+# "{query}"
+
+# Categories:
+# job, article, useraccount, faq, company, event, supplier, product
+
+# Tasks:
+# 1 Detect intent: SEARCH, FAQ or CHAT
+# 2 Extract keywords
+# 3 Choose category
+
+# Return JSON:
+
+# {{
+# "intent":"SEARCH|FAQ|CHAT",
+# "type":"job|article|useraccount|faq|company|event|supplier|product",
+# "keywords":"..."
+# }}
+# """
+
+#     text = generate(prompt, 120)
+
+#     print("INTENT RAW:", text)
+
+#     data = safe_json(text)
+
+#     if data:
+#         return data
+
+#     return {
+#         "intent": "SEARCH",
+#         "type": "article",
+#         "keywords": query.lower()
+#     }
 
 def detect_intent(query):
+    categories = ['job', 'article', 'useraccount', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
 
     prompt = f"""
-You are an AI assistant for a hospitality platform.
+Hospitality Portal Expert. 
+User Query: "{query}"
+Available Categories: {categories}
 
-User Query:
-"{query}"
+STRICT RULES:
+0. TYPO CORRECTION: Fix minor typos (e.g., 'kitchn' -> 'kitchen', 'dishwashr' -> 'dishwasher'). Normalize to industry terms.
+1. INTENT LOGIC:
+   - COMPANY RULE: If query contains "what is", "define", or "hozpitality", intent MUST be 'SEARCH' and type MUST be 'company'.
+   - PROFILE RULE: If query starts with "who is" or "who's", intent MUST be 'SEARCH' and type MUST be 'useraccount'.
+   - FAQ RULE: If procedural (steps, how to), intent MUST be 'FAQ' and type MUST be 'faq'.
+   - Default: Intent 'SEARCH', type 'article'.
+2. KEYWORD EXTRACTION:
+   - Output keywords in LOWERCASE only.
+   - REMOVE category words from keywords (e.g., if type is 'job', remove 'job' or 'jobs' from keywords).
+   - For FAQ: Extract only the core topic (e.g., 'registration').
 
-Categories:
-job, article, useraccount, faq, company, event, supplier, product
-
-Tasks:
-1 Detect intent: SEARCH, FAQ or CHAT
-2 Extract keywords
-3 Choose category
-
-Return JSON:
-
+Return JSON only:
 {{
-"intent":"SEARCH|FAQ|CHAT",
-"type":"job|article|useraccount|faq|company|event|supplier|product",
-"keywords":"..."
+"intent": "SEARCH|FAQ|CHAT",
+"type": "job|article|useraccount|faq|company|event|supplier|product|awards",
+"keywords": "..."
 }}
 """
 
-    text = generate(prompt, 120)
-
+    text = generate(prompt, 50) 
     print("INTENT RAW:", text)
-
     data = safe_json(text)
 
     if data:
@@ -147,7 +206,6 @@ Return JSON:
         "type": "article",
         "keywords": query.lower()
     }
-
 
 @app.post("/intent")
 def intent(req: IntentRequest):
@@ -175,7 +233,7 @@ Return JSON:
 }}
 """
 
-    text = generate(prompt, 200)
+    text = generate(prompt, 500)
 
     print("SUMMARY RAW:", text)
 
@@ -194,6 +252,23 @@ Return JSON:
 def summary(req: SummaryRequest):
     return generate_summary(req.query)
 
+@app.post("/generate_keywords")
+def generate_keywords(req: KeywordGenRequest):
+
+    print(f"DEBUG: LLM ko bheja jane wala Data:")
+    print(f"Title: {req.title}")
+    print(f"Content: {req.content}")
+
+    prompt = f"""Generate 21 relevant SEO keywords for the hospitality industry based on the following. 
+        Return ONLY a comma-separated list. Do not use numbers, bullet points, or any prefixes.
+        Focus on the Title for core role and Content for location/details.
+        
+        Title: {req.title}
+        Content: {req.content}"""
+
+    keywords_text = generate(prompt, tokens=150)
+    
+    return {"keywords": [k.strip() for k in keywords_text.split(",") if k.strip()]}
 
 def generate_html(results):
 
