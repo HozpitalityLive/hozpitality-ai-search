@@ -8,27 +8,17 @@ app = FastAPI()
 LLM_URL = "http://127.0.0.1:8080/completion"
 
 
-class KeywordGenRequest(BaseModel):
-    title: str
-    content: str
-
 class IntentRequest(BaseModel):
     query: str
 
 
 class SummaryRequest(BaseModel):
     query: str
+    titles: list = []
 
-
-class HtmlRequest(BaseModel):
-    results: list
-
-
-class GenerateRequest(BaseModel):
-    query: str
-    results: list
-
-
+class KeywordGenRequest(BaseModel):
+    title: str
+    content: str
 
 
 def generate(prompt, tokens=300):
@@ -40,11 +30,17 @@ def generate(prompt, tokens=300):
         "top_p": 0.9
     }
 
+    print("\n================ LLM REQUEST ================")
+    print("PROMPT:")
+    print(prompt)
+    print("TOKENS:", tokens)
+    print("=============================================\n")
+
     try:
 
         r = requests.post(LLM_URL, json=payload, timeout=60)
 
-        print("LLM status:", r.status_code)
+        print("LLM STATUS:", r.status_code)
 
         if r.status_code != 200:
             print("LLM ERROR:", r.text)
@@ -52,124 +48,64 @@ def generate(prompt, tokens=300):
 
         data = r.json()
 
-        return data.get("content", "").strip()
+        print("\n============= LLM RAW RESPONSE =============")
+        print(data)
+        print("============================================\n")
+
+        content = data.get("content", "").strip()
+
+        print("LLM CONTENT:", content)
+
+        return content
 
     except Exception as e:
 
-        print("LLM request failed:", e)
+        print("LLM REQUEST FAILED:", e)
+
         return ""
 
-
-def run_llm(prompt, tokens=400):
-
-    payload = {
-        "prompt": f"[INST] {prompt} [/INST]",
-        "n_predict": tokens,
-        "temperature": 0.2,
-        "top_p": 0.9
-    }
-
-    try:
-
-        r = requests.post(LLM_URL, json=payload, timeout=60)
-
-        print("LLM status:", r.status_code)
-
-        if r.status_code != 200:
-            print("LLM ERROR:", r.text)
-            return ""
-
-        data = r.json()
-
-        return data.get("content", "").strip()
-
-    except Exception as e:
-
-        print("LLM request failed:", e)
-        return ""
-
-
-# def safe_json(text):
-
-#     if not text:
-#         return None
-
-#     text = text.replace("```json", "").replace("```", "")
-
-#     try:
-
-#         start = text.index("{")
-#         end = text.rindex("}") + 1
-
-#         return json.loads(text[start:end])
-
-#     except Exception as e:
-
-#         print("JSON parse error:", e)
-#         print("RAW OUTPUT:", text)
-
-#     return None
-
-import re
 
 def safe_json(text):
+
+    print("\n----- SAFE JSON INPUT -----")
+    print(text)
+    print("---------------------------")
+
     if not text:
+        print("JSON ERROR: empty text")
         return None
+
+    text = text.replace("```json", "").replace("```", "").strip()
+
+    import re
+
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+
+    if not match:
+        print("JSON ERROR: no JSON object found")
+        return None
+
     try:
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            return json.loads(match.group())
-        return json.loads(text)
+
+        parsed = json.loads(match.group())
+
+        print("JSON PARSED:", parsed)
+
+        return parsed
+
     except Exception as e:
-        print(f"JSON parse error: {e}")
-        print("RAW OUTPUT:", text)
+
+        print("JSON PARSE ERROR:", e)
+
         return None
 
 
-# def detect_intent(query):
-
-#     prompt = f"""
-# You are an AI assistant for a hospitality platform.
-
-# User Query:
-# "{query}"
-
-# Categories:
-# job, article, useraccount, faq, company, event, supplier, product
-
-# Tasks:
-# 1 Detect intent: SEARCH, FAQ or CHAT
-# 2 Extract keywords
-# 3 Choose category
-
-# Return JSON:
-
-# {{
-# "intent":"SEARCH|FAQ|CHAT",
-# "type":"job|article|useraccount|faq|company|event|supplier|product",
-# "keywords":"..."
-# }}
-# """
-
-#     text = generate(prompt, 120)
-
-#     print("INTENT RAW:", text)
-
-#     data = safe_json(text)
-
-#     if data:
-#         return data
-
-#     return {
-#         "intent": "SEARCH",
-#         "type": "article",
-#         "keywords": query.lower()
-#     }
 
 def detect_intent(query):
     categories = ['job', 'article', 'useraccount', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
 
     prompt = f"""
+You are an AI intent classifier for a hospitality platform.
 Hospitality Portal Expert. 
 User Query: "{query}"
 Available Categories: {categories}
@@ -186,16 +122,49 @@ STRICT RULES:
    - REMOVE category words from keywords (e.g., if type is 'job', remove 'job' or 'jobs' from keywords).
    - For FAQ: Extract only the core topic (e.g., 'registration').
 
-Return JSON only:
+User query:
+{query}
+
+Tasks:
+1. Detect intent (SEARCH, FAQ, CHAT)
+2. Detect content type (job, article, useraccount, faq, company, event, supplier, product)
+3. Rewrite the query removing stop words like: in, the, for, at, near, jobs, job
+4. Extract location if present (city, state, or country)
+
+Examples:
+
+Query: chef jobs in mumbai
+Output:
 {{
-"intent": "SEARCH|FAQ|CHAT",
-"type": "job|article|useraccount|faq|company|event|supplier|product|awards",
-"keywords": "..."
+"intent":"SEARCH",
+"type":"job",
+"keywords":"chef",
+"location":"mumbai"
 }}
+
+Query: hotel manager jobs in dubai
+Output:
+{{
+"intent":"SEARCH",
+"type":"job",
+"keywords":"hotel manager",
+"location":"dubai"
+}}
+
+Query: hospitality news
+Output:
+{{
+"intent":"SEARCH",
+"type":"article",
+"keywords":"hospitality news",
+"location":""
+}}
+
+Return JSON only.
 """
 
-    text = generate(prompt, 50) 
-    print("INTENT RAW:", text)
+    text = generate(prompt, 140)
+
     data = safe_json(text)
 
     if data:
@@ -203,54 +172,67 @@ Return JSON only:
 
     return {
         "intent": "SEARCH",
-        "type": "article",
-        "keywords": query.lower()
+        "type": "job",
+        "keywords": query.lower(),
+        "location": ""
     }
+
 
 @app.post("/intent")
 def intent(req: IntentRequest):
     return detect_intent(req.query)
 
 
-
-def generate_summary(query):
+def generate_summary(query, titles):
 
     prompt = f"""
-You are an AI assistant for a hospitality search platform.
+You are the AI assistant for Hozpitality.com.
 
-User query:
+User search:
 {query}
 
+Top search result titles:
+{titles}
+
 Write:
-1 Short professional introduction
-2 Suggest 3 follow-up questions
 
-Return JSON:
+1 short introduction paragraph about the search results.
 
-{{
-"intro":"text",
-"suggestions":["q1","q2","q3"]
-}}
+Rules:
+- Maximum 4 lines
+- Use <p> tag
+- Do not list jobs
+
+Then write suggestions.
+
+Format exactly like this:
+
+<p>intro text</p>
+
+<p>You may also want to explore:</p>
+<p>Suggestion</p>
+<p>Suggestion</p>
+<p>Suggestion</p>
 """
 
-    text = generate(prompt, 500)
+    text = generate(prompt, 180)
 
     print("SUMMARY RAW:", text)
 
-    data = safe_json(text)
+    if not text:
+        return "", ""
 
-    if data:
-        return data
+    parts = text.split("You may also want to explore:")
 
-    return {
-        "intro": "Here are some relevant hospitality results.",
-        "suggestions": []
-    }
+    if len(parts) > 1:
+        intro_html = parts[0].strip()
+        suggestions_html = "<p>You may also want to explore:</p>" + parts[1]
+    else:
+        intro_html = text
+        suggestions_html = ""
 
+    return intro_html, suggestions_html
 
-@app.post("/summary")
-def summary(req: SummaryRequest):
-    return generate_summary(req.query)
 
 @app.post("/generate_keywords")
 def generate_keywords(req: KeywordGenRequest):
@@ -270,150 +252,10 @@ def generate_keywords(req: KeywordGenRequest):
     
     return {"keywords": [k.strip() for k in keywords_text.split(",") if k.strip()]}
 
-def generate_html(results):
 
-    results = results[:5]
-
-    prompt = f"""
-You are formatting hospitality search results.
-
-Results JSON:
-{json.dumps(results, indent=2)}
-
-Task:
-
-Convert the results into HTML.
-
-Rules:
-
-- Use ONLY title and url from results
-- Do NOT invent data
-- Do NOT use placeholders like {{ }}
-- Insert the real URL inside <a href="">
-- Show maximum 5 results
-
-HTML format example:
-
-<p>Here are some job results:</p>
-
-<ul>
-<li>
-<strong>
-<a href="/jobs/123">Housekeeping Attendant</a>
-</strong>
-</li>
-
-<li>
-<strong>
-<a href="/jobs/456">Room Attendant</a>
-</strong>
-</li>
-</ul>
-
-Return JSON:
-
-{{
-"html":"generated html"
-}}
-"""
-
-    text = generate(prompt, 500)
-
-    print("HTML RAW:", text)
-
-    data = safe_json(text)
-
-    if data:
-        return data
-
-    return {
-        "html": "<p>No results found.</p>"
-    }
-
-@app.post("/generate")
-def generate_answer(req: GenerateRequest):
-
-    results = req.results[:5]
-
-    jobs_html = ""
-    for r in results:
-        title = r.get("title", "")
-        url = r.get("url", "#")
-        jobs_html += f'<li><a href="{url}">{title}</a></li>\n'
-
-    results_block = f"<ul>\n{jobs_html}</ul>"
-
-    intro_prompt = f"""
-You are the official AI assistant for Hozpitality.com.
-
-User query:
-{req.query}
-
-Write ONE short introduction paragraph about the search results.
-
-Rules:
-- Maximum 4 lines
-- Do NOT list jobs
-- Do NOT ask questions
-- Use only <p> tag
-
-Return only HTML.
-"""
-
-    intro_html = run_llm(intro_prompt, 120)
-
-    if not intro_html:
-        intro_html = "<p>Here are some hospitality opportunities that match your search on Hozpitality.</p>"
-
-
-    follow_prompt = f"""
-User searched for:
-{req.query}
-
-Write 3 short follow-up questions related to hospitality jobs.
-
-Rules:
-- Use <p> tags only
-- Do NOT mention other job portals
-- Do NOT list jobs
-
-Example:
-
-<p>You may also want to explore:</p>
-<p>Question</p>
-<p>Question</p>
-<p>Question</p>
-
-Return only HTML.
-"""
-
-    follow_html = run_llm(follow_prompt, 420)
-
-    if not follow_html:
-        follow_html = """
-<p>You may also want to explore:</p>
-<p>Would you like to see similar hospitality jobs in other locations?</p>
-<p>Are you interested in management or entry-level roles?</p>
-<p>Would you like to explore jobs from top hotel brands?</p>
-"""
-
-
-    html = f"""
-{intro_html}
-
-<p>Here are some relevant opportunities on Hozpitality:</p>
-
-{results_block}
-
-{follow_html}
-"""
-
-    return {"html": html}
-
-
-@app.post("/html")
-def html(req: HtmlRequest):
-    return generate_html(req.results)
+@app.post("/summary")
+def summary(req: SummaryRequest):
+    return generate_summary(req.query , req.titles)
 
 
 @app.get("/")
