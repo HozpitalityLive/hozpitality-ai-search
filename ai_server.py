@@ -21,7 +21,7 @@ class KeywordGenRequest(BaseModel):
     content: str
 
 
-def generate(prompt, tokens=200):
+def generate(prompt, tokens=300):
 
     payload = {
         "prompt": f"[INST] {prompt} [/INST]",
