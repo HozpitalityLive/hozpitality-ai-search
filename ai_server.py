@@ -219,8 +219,20 @@ Format exactly like this:
 
 @app.post("/generate_keywords")
 def generate_keywords(req: KeywordGenRequest):
-    prompt = f"Generate 10 relevant SEO keywords for hospitality content. Return comma-separated list.\nTitle: {req.title}\nContent: {req.content[:500]}"
-    keywords_text = generate(prompt, tokens=100)
+
+    print(f"DEBUG: LLM ko bheja jane wala Data:")
+    print(f"Title: {req.title}")
+    print(f"Content: {req.content}")
+
+    prompt = f"""Generate 21 relevant SEO keywords for the hospitality industry based on the following. 
+        Return ONLY a comma-separated list. Do not use numbers, bullet points, or any prefixes.
+        Focus on the Title for core role and Content for location/details.
+        
+        Title: {req.title}
+        Content: {req.content}"""
+
+    keywords_text = generate(prompt, tokens=150)
+    
     return {"keywords": [k.strip() for k in keywords_text.split(",") if k.strip()]}
 
 
