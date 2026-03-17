@@ -100,10 +100,27 @@ def safe_json(text):
         return None
 
 
+
 def detect_intent(query):
+    categories = ['job', 'article', 'useraccount', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
 
     prompt = f"""
 You are an AI intent classifier for a hospitality platform.
+Hospitality Portal Expert. 
+User Query: "{query}"
+Available Categories: {categories}
+
+STRICT RULES:
+0. TYPO CORRECTION: Fix minor typos (e.g., 'kitchn' -> 'kitchen', 'dishwashr' -> 'dishwasher'). Normalize to industry terms.
+1. INTENT LOGIC:
+   - COMPANY RULE: If query contains "what is", "define", or "hozpitality", intent MUST be 'SEARCH' and type MUST be 'company'.
+   - PROFILE RULE: If query starts with "who is" or "who's", intent MUST be 'SEARCH' and type MUST be 'useraccount'.
+   - FAQ RULE: If procedural (steps, how to), intent MUST be 'FAQ' and type MUST be 'faq'.
+   - Default: Intent 'SEARCH', type 'article'.
+2. KEYWORD EXTRACTION:
+   - Output keywords in LOWERCASE only.
+   - REMOVE category words from keywords (e.g., if type is 'job', remove 'job' or 'jobs' from keywords).
+   - For FAQ: Extract only the core topic (e.g., 'registration').
 
 User query:
 {query}
