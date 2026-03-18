@@ -99,10 +99,10 @@ def safe_json(text):
 
         return None
 
-
+import re
 
 def detect_intent(query):
-    categories = ['job', 'article', 'useraccount', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
+    categories = ['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
 
     prompt = f"""
 You are an AI intent classifier for a hospitality platform.
@@ -111,83 +111,89 @@ User Query: "{query}"
 Available Categories: {categories}
 
 STRICT RULES:
-0. TYPO CORRECTION: Fix minor typos (e.g., 'kitchn' -> 'kitchen', 'dishwashr' -> 'dishwasher'). Normalize to industry terms.
-1. INTENT LOGIC:
+0. TYPO CORRECTION: Fix minor typos (e.g., 'kitchn' -> 'kitchen'). Normalize to industry terms.
+
+1. INTENT LOGIC (CRITICAL):
+   - PROFILE RULE: If the query is a person's name (e.g., 'Yuni Hunter', 'Raj Bhatt') OR starts with "who is" or "who's", intent MUST be 'SEARCH' and type MUST be 'professional'.
+   - FAQ RULE: If the query is procedural, asks "how to", "steps to", or "process of", intent MUST be 'FAQ' AND type MUST be 'faq'.
    - COMPANY RULE: If query contains "what is", "define", or "hozpitality", intent MUST be 'SEARCH' and type MUST be 'company'.
-   - PROFILE RULE: If query starts with "who is" or "who's", intent MUST be 'SEARCH' and type MUST be 'useraccount'.
-   - FAQ RULE: If procedural (steps, how to), intent MUST be 'FAQ' and type MUST be 'faq'.
    - Default: Intent 'SEARCH', type 'article'.
+
 2. KEYWORD EXTRACTION:
    - Output keywords in LOWERCASE only.
-   - REMOVE category words from keywords (e.g., if type is 'job', remove 'job' or 'jobs' from keywords).
-   - For FAQ: Extract only the core topic (e.g., 'registration').
+   - For FAQ: Extract only the core topic (e.g., 'account deletion').
+   - For SEARCH: REMOVE category words like 'jobs', 'articles' from keywords.
 
 User query:
 {query}
 
 Tasks:
 1. Detect intent (SEARCH, FAQ, CHAT)
-2. Detect content type (job, article, useraccount, faq, company, event, supplier, product)
-3. Rewrite the query removing stop words like: in, the, for, at, near, jobs, job
-4. Extract location if present (city, state, or country)
+2. Detect content type (Ensure 'professional' for names, 'faq' for procedures)
+3. Rewrite the query removing stop words.
+4. Extract location if present.
 
 Examples:
 
-Query: chef jobs in mumbai
+Query: Yuni Hunter
 Output:
 {{
 "intent":"SEARCH",
-"type":"job",
-"keywords":"chef",
-"location":"mumbai"
+"type":"professional",
+"keywords":"yuni hunter",
+"location":""
 }}
 
-Query: hotel manager jobs in dubai
+Query: how to delete my account
 Output:
 {{
-"intent":"SEARCH",
-"type":"job",
-"keywords":"hotel manager",
-"location":"dubai"
-}}
-
-Query: hospitality news
-Output:
-{{
-"intent":"SEARCH",
-"type":"article",
-"keywords":"hospitality news",
+"intent":"FAQ",
+"type":"faq",
+"keywords":"account deletion",
 "location":""
 }}
 
 Return JSON only.
-
-IMPORTANT:
-- "keywords" MUST be a SINGLE STRING (not a list)
-- Example:
-  "keywords": "chef"
-- DO NOT return:
-  "keywords": ["chef"]
 """
 
     text = generate(prompt, 140)
 
-    data = safe_json(text)
+    def extract_json(text):
+        try:
+            match = re.search(r'\{.*\}', text, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+            return None
+        except Exception:
+            return None
 
-    if data:
-        keywords = data.get("keywords", "")
+    data = extract_json(text) if text else None
+
+    if data and isinstance(data, dict):
+        intent = data.get("intent", "SEARCH")
+        dtype = data.get("type", "article")
+        keywords = data.get("keywords", query.lower())
+
         if isinstance(keywords, list):
-            keywords = " ".join(keywords)
-        data["keywords"] = keywords
-        return data
+            keywords = " ".join(map(str, keywords))
 
+        if intent == "FAQ":
+            dtype = "faq"
+
+        return {
+            "intent": intent,
+            "type": dtype,
+            "keywords": str(keywords).lower(),
+            "location": data.get("location", "")
+        }
+
+    # Final Fallback
     return {
         "intent": "SEARCH",
         "type": "job",
         "keywords": query.lower(),
         "location": ""
     }
-
 
 @app.post("/intent")
 def intent(req: IntentRequest):
@@ -245,24 +251,59 @@ Format exactly like this:
     return intro_html, suggestions_html
 
 
+# @app.post("/generate_keywords")
+# def generate_keywords(req: KeywordGenRequest):
+
+#     print(f"DEBUG: LLM ko bheja jane wala Data:")
+#     print(f"Title: {req.title}")
+#     print(f"Content: {req.content}")
+
+#     prompt = f"""Generate 21 relevant SEO keywords for the hospitality industry based on the following. 
+#         Return ONLY a comma-separated list. Do not use numbers, bullet points, or any prefixes.
+#         Focus on the Title for core role and Content for location/details.
+        
+#         Title: {req.title}
+#         Content: {req.content}"""
+
+#     keywords_text = generate(prompt, tokens=150)
+    
+#     return {"keywords": [k.strip() for k in keywords_text.split(",") if k.strip()]}
+
 @app.post("/generate_keywords")
 def generate_keywords(req: KeywordGenRequest):
 
-    print(f"DEBUG: LLM ko bheja jane wala Data:")
-    print(f"Title: {req.title}")
-    print(f"Content: {req.content}")
+    print(f"DEBUG: Generating for Type: {req.title} | Data: {req.content}")
 
-    prompt = f"""Generate 21 relevant SEO keywords for the hospitality industry based on the following. 
-        Return ONLY a comma-separated list. Do not use numbers, bullet points, or any prefixes.
-        Focus on the Title for core role and Content for location/details.
-        
-        Title: {req.title}
-        Content: {req.content}"""
+    prompt = f"""
+    You are an AI SEO Specialist. Your task is to generate exactly 21 highly relevant, professional keywords.
+    
+    CONTEXT:
+    - Entity Type: {req.title} (This defines the domain, e.g., Job, Product, Supplier, Article)
+    - Input Data: {req.content} (This contains the specific details)
 
+    STRICT GUIDELINES:
+    1. STRICT RELEVANCE: Keywords must ONLY relate to the specific 'Entity Type' and 'Input Data'. 
+       - If it's a 'Furniture Product', DO NOT include 'kitchen', 'food', or 'hotel management'.
+       - If it's a 'Job', focus on skills, role, and industry.
+       - If it's an 'Article', focus on the topic and category.
+    2. NO GENERIC FILLERS: Avoid words like 'hospitality', 'service', or 'global' unless they are explicitly in the Input Data.
+    3. NO HALLUCINATIONS: Do not assume related categories. Stay within the boundary of the provided content.
+    4. FORMAT: Return ONLY a comma-separated list of strings. No bullets, no numbering, no introductory text.
+
+    Data for Keyword Generation:
+    {req.content}
+
+    Keywords:"""
+
+    # LLM Call
     keywords_text = generate(prompt, tokens=150)
     
-    return {"keywords": [k.strip() for k in keywords_text.split(",") if k.strip()]}
+    if not keywords_text:
+        return {"keywords": []}
 
+    raw_keywords = [k.strip() for k in keywords_text.split(",") if k.strip()]
+    
+    return {"keywords": raw_keywords[:21]}
 
 @app.post("/summary")
 def summary(req: SummaryRequest):
