@@ -161,6 +161,13 @@ Output:
 }}
 
 Return JSON only.
+
+IMPORTANT:
+- "keywords" MUST be a SINGLE STRING (not a list)
+- Example:
+  "keywords": "chef"
+- DO NOT return:
+  "keywords": ["chef"]
 """
 
     text = generate(prompt, 140)
@@ -168,6 +175,10 @@ Return JSON only.
     data = safe_json(text)
 
     if data:
+        keywords = data.get("keywords", "")
+        if isinstance(keywords, list):
+            keywords = " ".join(keywords)
+        data["keywords"] = keywords
         return data
 
     return {
