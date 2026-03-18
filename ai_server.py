@@ -255,7 +255,12 @@ def generate_keywords(req: KeywordGenRequest):
 
 @app.post("/summary")
 def summary(req: SummaryRequest):
-    return generate_summary(req.query , req.titles)
+    intro_html, suggestions_html = generate_summary(req.query, req.titles)
+
+    return {
+        "intro_html": intro_html,
+        "suggestions_html": suggestions_html
+    }
 
 
 @app.get("/")
