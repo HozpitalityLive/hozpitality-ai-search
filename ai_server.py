@@ -111,18 +111,23 @@ User Query: "{query}"
 Available Categories: {categories}
 
 STRICT RULES:
-0. TYPO CORRECTION: Fix minor typos (e.g., 'kitchn' -> 'kitchen'). Normalize to industry terms.
+0. TYPO CORRECTION: Fix minor typos (e.g., 'kitchn' -> 'kitchen', 'dishwashr' -> 'dishwasher'). Normalize to industry terms.
 
 1. INTENT LOGIC (CRITICAL):
-   - PROFILE RULE: If the query is a person's name (e.g., 'Yuni Hunter', 'Raj Bhatt') OR starts with "who is" or "who's", intent MUST be 'SEARCH' and type MUST be 'professional'.
-   - FAQ RULE: If the query is procedural, asks "how to", "steps to", or "process of", intent MUST be 'FAQ' AND type MUST be 'faq'.
-   - COMPANY RULE: If query contains "what is", "define", or "hozpitality", intent MUST be 'SEARCH' and type MUST be 'company'.
-   - Default: Intent 'SEARCH', type 'article'.
+    - PROFILE RULE: If the query is a person's name (e.g., 'Yuni Hunter', 'Raj Bhatt') OR starts with "who is" or "who's", intent MUST be 'SEARCH' and type MUST be 'professional'.
+    
+    - FAQ RULE: If the query is procedural, asks "how to", "how do i", "how can i", "steps to", or "process of", intent MUST be 'FAQ' AND type MUST be 'faq'. (Example: "How to apply" is ALWAYS FAQ).
+    
+    - COMPANY RULE: If query contains "what is", "define", or "hozpitality", intent MUST be 'SEARCH' and type MUST be 'company'.
+    - Default: Intent 'SEARCH', type 'article'.
 
-2. KEYWORD EXTRACTION:
-   - Output keywords in LOWERCASE only.
-   - For FAQ: Extract only the core topic (e.g., 'account deletion').
-   - For SEARCH: REMOVE category words like 'jobs', 'articles' from keywords.
+2. KEYWORD EXTRACTION (STRICT):
+    - Output keywords in LOWERCASE only.
+    - REMOVE category words from keywords if they are used as 'type' (e.g., if type is 'job', REMOVE 'jobs', 'job', 'openings', 'opening', 'vacancies' from keywords).
+    
+    - For FAQ: Extract only the core topic (e.g., 'account deletion'). REMOVE filler words like "how to", "how do i", "apply", "job" from FAQ keywords.
+    
+    - For SEARCH: REMOVE category words like 'articles', 'article', 'events' from keywords if they match the 'type'.
 
 User query:
 {query}
@@ -144,6 +149,25 @@ Output:
 "location":""
 }}
 
+# UPDATED: Added explicit "How to apply" example to guide the model
+Query: How to apply for a job on Hozpitality?
+Output:
+{{
+"intent":"FAQ",
+"type":"faq",
+"keywords":"job application",
+"location":""
+}}
+
+Query: waiter job openings in Dubai
+Output:
+{{
+"intent":"SEARCH",
+"type":"job",
+"keywords":"waiter",
+"location":"dubai"
+}}
+
 Query: how to delete my account
 Output:
 {{
@@ -160,6 +184,8 @@ Return JSON only.
 
     def extract_json(text):
         try:
+            import re
+            import json
             match = re.search(r'\{.*\}', text, re.DOTALL)
             if match:
                 return json.loads(match.group())
