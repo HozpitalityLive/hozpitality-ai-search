@@ -114,9 +114,8 @@ STRICT RULES:
 0. TYPO CORRECTION: Fix minor typos (e.g., 'kitchn' -> 'kitchen', 'dishwashr' -> 'dishwasher'). Normalize to industry terms.
 
 1. INTENT LOGIC (CRITICAL):
+    - FAQ RULE (TOP PRIORITY): If the query starts with "how to", "how do i", "how can i", "steps to", or "process", intent MUST be 'FAQ' and type MUST be 'faq'. DO NOT classify as 'job' even if 'job' or 'apply' is mentioned.
     - PROFILE RULE: If the query is a person's name (e.g., 'Yuni Hunter', 'Raj Bhatt') OR starts with "who is" or "who's", intent MUST be 'SEARCH' and type MUST be 'professional'.
-    
-    - FAQ RULE: If the query is procedural, asks "how to", "how do i", "how can i", "steps to", or "process of", intent MUST be 'FAQ' AND type MUST be 'faq'. (Example: "How to apply" is ALWAYS FAQ).
     
     - COMPANY RULE: If query contains "what is", "define", or "hozpitality", intent MUST be 'SEARCH' and type MUST be 'company'.
     - Default: Intent 'SEARCH', type 'article'.
