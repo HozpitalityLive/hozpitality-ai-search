@@ -144,7 +144,6 @@ Output:
 "location":""
 }}
 
-# UPDATED: Added explicit "How to apply" example to guide the model
 Query: How to apply for a job on Hozpitality?
 Output:
 {{
@@ -170,6 +169,16 @@ Output:
 "type":"faq",
 "keywords":"account deletion",
 "location":""
+}}
+
+
+Query: Jivesh Kumar professional dubai united arab emirates
+Output:
+{{
+"intent":"SEARCH",
+"type":"professional",
+"keywords":"jivesh kumar",
+"location":"dubai"
 }}
 
 Return JSON only.
