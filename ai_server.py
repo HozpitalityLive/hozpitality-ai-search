@@ -270,7 +270,7 @@ TYPE GUIDELINES:
 IMPORTANT:
 - Ensure valid JSON output
 - Do NOT cut response
-- Always return exactly 5 suggestions
+- Always return randomly 1-5 suggestions not more than 5
 
 OUTPUT FORMAT:
 
