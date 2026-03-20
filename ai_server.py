@@ -239,32 +239,29 @@ TASK:
 
 1. Write a short intro (max 4 lines)
    - Use HTML (<p>, <b>, <u>)
-   - Highlight important terms
+   - Highlight key relevant terms
 
-2. Generate 5 follow-up questions.
+2. Generate 5 follow-up suggestions.
 
 STRICT RULES:
 - MUST be based ONLY on provided results
-- MUST be short (max 6 words)
-- MUST be relevant to hospitality jobs
-- NO generic suggestions like "resume tips"
+- MUST be short (max 6 words each)
+- MUST match the intent type ({intent_type})
+- MUST be directly useful to the user
+- NO generic suggestions
 - NO punctuation at end
-- Each must be unique
+- Each suggestion must be unique
 
-GOOD:
-- how to apply on hozpitality
-- jobs outside my country
-- is hozpitality free
-
-BAD:
-- resume tips
-- career advice
-- interview preparation
+TYPE GUIDELINES:
+- If type = faq → generate question-style suggestions
+- If type = job → generate job search related suggestions
+- If type = company → generate company-related queries
+- If type = article → generate topic exploration queries
 
 IMPORTANT:
 - Ensure valid JSON output
 - Do NOT cut response
-- Complete all 5 suggestions
+- Always return exactly 5 suggestions
 
 OUTPUT FORMAT:
 
@@ -279,6 +276,29 @@ OUTPUT FORMAT:
   ]
 }}
 """
+
+    text = generate(prompt, 220)
+
+    print("SUMMARY RAW:", text)
+
+    data = safe_json(text)
+
+    if not data:
+        return "", []
+
+    intro = data.get("intro", "").strip()
+    suggestions = data.get("suggestions", [])
+
+    if not isinstance(suggestions, list):
+        suggestions = []
+
+    # Clean + enforce limits
+    suggestions = [
+        str(s).strip().lower()[:60]
+        for s in suggestions if s
+    ][:5]
+
+    return intro, suggestions
 
     text = generate(prompt, 220)
 
