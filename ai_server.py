@@ -66,37 +66,30 @@ def generate(prompt, tokens=300):
 
 
 def safe_json(text):
-
-    print("\n----- SAFE JSON INPUT -----")
-    print(text)
-    print("---------------------------")
+    import json, re
 
     if not text:
-        print("JSON ERROR: empty text")
         return None
 
     text = text.replace("```json", "").replace("```", "").strip()
 
-    import re
+    try:
+        return json.loads(text)
+    except:
+        pass
 
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-
+    match = re.search(r"\{.*", text, re.DOTALL)
     if not match:
-        print("JSON ERROR: no JSON object found")
         return None
 
+    partial = match.group()
+
     try:
-
-        parsed = json.loads(match.group())
-
-        print("JSON PARSED:", parsed)
-
-        return parsed
-
-    except Exception as e:
-
-        print("JSON PARSE ERROR:", e)
-
+        partial = partial.rstrip(", \n")
+        if not partial.endswith("}"):
+            partial += '"}'  
+        return json.loads(partial)
+    except:
         return None
 
 import re
@@ -246,10 +239,17 @@ TASK:
      - <u> optional emphasis
    - Max 3 highlights
 
+
 2. Generate 5 follow-up search suggestions.
+   - MAX 6 words each
    - Plain text only
-   - No HTML
-   - No numbering
+   - No punctuation at end
+   - No long phrases
+
+IMPORTANT:
+    - Ensure valid JSON is completed
+    - Do NOT cut output mid-sentence
+    - Keep response within token limit
 
 OUTPUT FORMAT (STRICT JSON ONLY):
 
@@ -265,7 +265,7 @@ OUTPUT FORMAT (STRICT JSON ONLY):
 }}
 """
 
-    text = generate(prompt, 180)
+    text = generate(prompt, 300)
 
     print("SUMMARY RAW:", text)
 
