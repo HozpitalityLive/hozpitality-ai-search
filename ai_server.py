@@ -254,7 +254,7 @@ TASK:
 
 STRICT RULES:
 - MUST be based ONLY on provided results
-- MUST be short (max 6 words each)
+- MUST be short (max 10 words each)
 - MUST match the intent type ({intent_type})
 - MUST be directly useful to the user
 - NO generic suggestions
@@ -286,7 +286,7 @@ OUTPUT FORMAT:
 }}
 """
 
-    text = generate(prompt, 220)
+    text = generate(prompt, 320)
 
     print("SUMMARY RAW:", text)
 
@@ -301,30 +301,10 @@ OUTPUT FORMAT:
     if not isinstance(suggestions, list):
         suggestions = []
 
-    # Clean + enforce limits
     suggestions = [
         str(s).strip().lower()[:60]
         for s in suggestions if s
     ][:5]
-
-    return intro, suggestions
-
-    text = generate(prompt, 220)
-
-    print("SUMMARY RAW:", text)
-
-    data = safe_json(text)
-
-    if not data:
-        return "", []
-
-    intro = data.get("intro", "").strip()
-    suggestions = data.get("suggestions", [])
-
-    if not isinstance(suggestions, list):
-        suggestions = []
-
-    suggestions = [str(s).strip()[:60] for s in suggestions if s][:5]
 
     return intro, suggestions
 
