@@ -12,9 +12,12 @@ class IntentRequest(BaseModel):
     query: str
 
 
+
 class SummaryRequest(BaseModel):
     query: str
-    titles: list = []
+    context: list = []
+    type: str = ""
+
 
 class KeywordGenRequest(BaseModel):
     title: str
@@ -218,40 +221,52 @@ def intent(req: IntentRequest):
     return detect_intent(req.query)
 
 
-def generate_summary(query, titles):
+def generate_summary(query, context, intent_type):
 
     prompt = f"""
 You are the AI assistant for Hozpitality.com.
 
-User search:
+User Query:
 {query}
 
-Top search result titles:
-{titles}
+Intent Type:
+{intent_type}
+
+Search Results Context:
+{context}
 
 TASK:
 
-1. Write a short introduction about the search results.
-   - Max 4 lines
-   - Use clean HTML formatting:
-     - <p> for paragraph
-     - <b> for important keywords
-     - <u> optional emphasis
-   - Max 3 highlights
+1. Write a short intro (max 4 lines)
+   - Use HTML (<p>, <b>, <u>)
+   - Highlight important terms
 
+2. Generate 5 follow-up questions.
 
-2. Generate 5 follow-up search suggestions.
-   - MAX 6 words each
-   - Plain text only
-   - No punctuation at end
-   - No long phrases
+STRICT RULES:
+- MUST be based ONLY on provided results
+- MUST be short (max 6 words)
+- MUST be relevant to hospitality jobs
+- NO generic suggestions like "resume tips"
+- NO punctuation at end
+- Each must be unique
+
+GOOD:
+- how to apply on hozpitality
+- jobs outside my country
+- is hozpitality free
+
+BAD:
+- resume tips
+- career advice
+- interview preparation
 
 IMPORTANT:
-    - Ensure valid JSON is completed
-    - Do NOT cut output mid-sentence
-    - Keep response within token limit
+- Ensure valid JSON output
+- Do NOT cut response
+- Complete all 5 suggestions
 
-OUTPUT FORMAT (STRICT JSON ONLY):
+OUTPUT FORMAT:
 
 {{
   "intro": "<p>text</p>",
@@ -265,7 +280,7 @@ OUTPUT FORMAT (STRICT JSON ONLY):
 }}
 """
 
-    text = generate(prompt, 300)
+    text = generate(prompt, 220)
 
     print("SUMMARY RAW:", text)
 
@@ -280,7 +295,7 @@ OUTPUT FORMAT (STRICT JSON ONLY):
     if not isinstance(suggestions, list):
         suggestions = []
 
-    suggestions = [str(s).strip() for s in suggestions if s]
+    suggestions = [str(s).strip()[:60] for s in suggestions if s][:5]
 
     return intro, suggestions
 
@@ -339,9 +354,14 @@ def generate_keywords(req: KeywordGenRequest):
     
     return {"keywords": raw_keywords[:21]}
 
+
 @app.post("/summary")
 def summary(req: SummaryRequest):
-    intro, suggestions = generate_summary(req.query, req.titles)
+    intro, suggestions = generate_summary(
+        req.query,
+        req.context,
+        req.type
+    )
 
     return {
         "intro": intro,
