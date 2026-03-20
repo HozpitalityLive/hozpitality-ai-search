@@ -236,44 +236,53 @@ User search:
 Top search result titles:
 {titles}
 
-Write:
+TASK:
 
-1 short introduction paragraph about the search results.
+1. Write a short introduction about the search results.
+   - Max 4 lines
+   - Use clean HTML formatting:
+     - <p> for paragraph
+     - <b> for important keywords
+     - <u> optional emphasis
+   - Max 3 highlights
 
-Rules:
-- Maximum 4 lines
-- Use <p> tag
-- Do not list jobs
+2. Generate 5 follow-up search suggestions.
+   - Plain text only
+   - No HTML
+   - No numbering
 
-Then write suggestions.
+OUTPUT FORMAT (STRICT JSON ONLY):
 
-Format exactly like this:
-
-<p>intro text</p>
-
-<p>You may also want to explore:</p>
-<p>Suggestion</p>
-<p>Suggestion</p>
-<p>Suggestion</p>
+{{
+  "intro": "<p>text</p>",
+  "suggestions": [
+    "suggestion 1",
+    "suggestion 2",
+    "suggestion 3",
+    "suggestion 4",
+    "suggestion 5"
+  ]
+}}
 """
 
     text = generate(prompt, 180)
 
     print("SUMMARY RAW:", text)
 
-    if not text:
-        return "", ""
+    data = safe_json(text)
 
-    parts = text.split("You may also want to explore:")
+    if not data:
+        return "", []
 
-    if len(parts) > 1:
-        intro_html = parts[0].strip()
-        suggestions_html = "<p>You may also want to explore:</p>" + parts[1]
-    else:
-        intro_html = text
-        suggestions_html = ""
+    intro = data.get("intro", "").strip()
+    suggestions = data.get("suggestions", [])
 
-    return intro_html, suggestions_html
+    if not isinstance(suggestions, list):
+        suggestions = []
+
+    suggestions = [str(s).strip() for s in suggestions if s]
+
+    return intro, suggestions
 
 
 # @app.post("/generate_keywords")
@@ -332,11 +341,11 @@ def generate_keywords(req: KeywordGenRequest):
 
 @app.post("/summary")
 def summary(req: SummaryRequest):
-    intro_html, suggestions_html = generate_summary(req.query, req.titles)
+    intro, suggestions = generate_summary(req.query, req.titles)
 
     return {
-        "intro_html": intro_html,
-        "suggestions_html": suggestions_html
+        "intro": intro,
+        "suggestions": suggestions
     }
 
 
