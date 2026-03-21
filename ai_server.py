@@ -36,21 +36,32 @@ def release_db(conn):
     db_pool.putconn(conn)
 
 def safe_db_execute(query):
+    print("\n[DB] Executing Query:\n", query)
+
     conn = None
     cur = None
     try:
         conn = get_db()
+        print("[DB] Connection acquired")
+
         cur = conn.cursor()
         cur.execute(query)
-        return cur.fetchall()
+
+        rows = cur.fetchall()
+        print(f"[DB] Rows fetched: {len(rows)}")
+
+        return rows
+
     except Exception as e:
-        print("DB ERROR:", e)
+        print("❌ DB ERROR:", e)
         return []
+
     finally:
         if cur:
             cur.close()
         if conn:
             release_db(conn)
+            print("[DB] Connection released")
 
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
@@ -63,20 +74,26 @@ vector_data = []
 def build_vector_index():
     global vector_index, vector_data
 
+    print("\n[FAISS] Building vector index...")
+
     rows = safe_db_execute("""
         SELECT id, title, category_text, ai_keywords
         FROM master_search_index
         WHERE is_live = TRUE
     """)
 
+    print(f"[FAISS] Rows received: {len(rows)}")
+
     embeddings = []
     vector_data = []
 
-    for r in rows:
+    for i, r in enumerate(rows):
         text = f"{r[1]} {r[2]} {r[3]}"
-        emb = get_embedding(text)
+        print(f"[FAISS] Processing row {i}: {r[1]}")
 
+        emb = get_embedding(text)
         embeddings.append(emb)
+
         vector_data.append({
             "id": r[0],
             "title": r[1],
@@ -85,10 +102,11 @@ def build_vector_index():
         })
 
     if not embeddings:
-        print("⚠️ No embeddings found")
+        print("⚠️ No embeddings found — check DB data or query")
         return
 
     vectors = np.array(embeddings)
+    print("[FAISS] Vector shape:", vectors.shape)
 
     vector_index = faiss.IndexFlatL2(vectors.shape[1])
     vector_index.add(vectors)
@@ -96,11 +114,19 @@ def build_vector_index():
     print("✅ FAISS READY:", len(vector_data))
 
 def semantic_search(query, k=5):
+    print(f"\n[SEARCH] Semantic search for: {query}")
+
     if vector_index is None:
+        print("⚠️ FAISS index is not initialized")
         return []
 
     q_vec = np.array([get_embedding(query)])
-    _, indices = vector_index.search(q_vec, k)
+    print("[SEARCH] Query embedding shape:", q_vec.shape)
+
+    distances, indices = vector_index.search(q_vec, k)
+
+    print("[SEARCH] Indices:", indices)
+    print("[SEARCH] Distances:", distances)
 
     return [vector_data[i] for i in indices[0] if i < len(vector_data)]
 
@@ -116,8 +142,13 @@ def fetch_db_context():
     return [{"title": r[0], "category": r[1], "keywords": r[2]} for r in rows]
 
 def hybrid_search(query):
+    print("\n[HYBRID] Running hybrid search")
+
     sem = semantic_search(query)
     db = fetch_db_context()
+
+    print(f"[HYBRID] Semantic results: {len(sem)}")
+    print(f"[HYBRID] DB fallback results: {len(db)}")
 
     combined = {}
 
@@ -130,7 +161,11 @@ def hybrid_search(query):
         else:
             combined[r["title"]] = {"data": r, "score": 0.3}
 
-    return [x["data"] for x in sorted(combined.values(), key=lambda x: x["score"], reverse=True)[:5]]
+    final = sorted(combined.values(), key=lambda x: x["score"], reverse=True)[:5]
+
+    print(f"[HYBRID] Final results: {len(final)}")
+
+    return [x["data"] for x in final]
 
 def safe_json_parse(text):
     try:
@@ -173,25 +208,36 @@ Return JSON:
 }}
 """
 
+    print("\n[LLM] Sending request")
+    print("[LLM] Query:", query)
+    print("[LLM] Context:", context)
+    print("[LLM] History:", history)
+
     try:
         r = requests.post(LLM_URL, json={
-            "prompt": f"[INST] {prompt} [/INST]",
+            "prompt": f"[INST] {query} [/INST]",
             "n_predict": 140,
             "temperature": 0.3
         }, timeout=8)
 
+        print("[LLM] Status Code:", r.status_code)
+
         text = r.json().get("content", "")
+        print("[LLM] Raw Response:", text)
 
         data = safe_json_parse(text)
 
         if data:
+            print("[LLM] Parsed JSON:", data)
             return data
+        else:
+            print("⚠️ JSON parsing failed")
 
     except Exception as e:
-        print("LLM ERROR:", e)
+        print("❌ LLM ERROR:", e)
 
     return {
-        "answer": f"I couldn’t fully process that, but here’s a quick response:\n\n{query}",
+        "answer": f"Fallback response for: {query}",
         "action": None
     }
 
@@ -209,14 +255,21 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 def chat(req: ChatRequest):
 
+    print("\n========== NEW REQUEST ==========")
+    print("[API] Incoming query:", req.query)
+
     query = req.query.strip()
 
     context = req.context if req.context else hybrid_search(query)
+
+    print("[API] Context selected:", len(context))
 
     context_text = build_context(context)
     history_text = build_history(req.history)
 
     ai = generate_full_ai(query, context_text, history_text)
+
+    print("[API] Final response:", ai)
 
     return {
         "answer": ai.get("answer"),
