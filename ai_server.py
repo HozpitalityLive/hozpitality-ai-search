@@ -1,383 +1,263 @@
-import json
 import requests
+import psycopg2
+import numpy as np
+import faiss
+import json
+import re
+import os
+
 from fastapi import FastAPI
 from pydantic import BaseModel
+from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+from psycopg2.pool import SimpleConnectionPool
+
+# =========================
+# LOAD ENV
+# =========================
+load_dotenv()
+
+DB_CONFIG = {
+    "dbname": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
+    "host": os.getenv("DB_HOST"),
+    "port": os.getenv("DB_PORT"),
+}
+
+LLM_URL = os.getenv("LLM_URL")
 
 app = FastAPI()
 
-LLM_URL = "http://127.0.0.1:8080/completion"
+# =========================
+# DB POOL
+# =========================
+db_pool = SimpleConnectionPool(1, 10, **DB_CONFIG)
 
+def get_db():
+    return db_pool.getconn()
 
-class IntentRequest(BaseModel):
-    query: str
+def release_db(conn):
+    db_pool.putconn(conn)
 
-
-
-class SummaryRequest(BaseModel):
-    query: str
-    context: list = []
-    type: str = ""
-
-
-class KeywordGenRequest(BaseModel):
-    title: str
-    content: str
-
-
-def generate(prompt, tokens=300):
-
-    payload = {
-        "prompt": f"[INST] {prompt} [/INST]",
-        "n_predict": tokens,
-        "temperature": 0.2,
-        "top_p": 0.9
-    }
-
-    print("\n================ LLM REQUEST ================")
-    print("PROMPT:")
-    print(prompt)
-    print("TOKENS:", tokens)
-    print("=============================================\n")
-
+# =========================
+# SAFE DB EXECUTION
+# =========================
+def safe_db_execute(query):
+    conn = None
+    cur = None
     try:
-
-        r = requests.post(LLM_URL, json=payload, timeout=60)
-
-        print("LLM STATUS:", r.status_code)
-
-        if r.status_code != 200:
-            print("LLM ERROR:", r.text)
-            return ""
-
-        data = r.json()
-
-        print("\n============= LLM RAW RESPONSE =============")
-        print(data)
-        print("============================================\n")
-
-        content = data.get("content", "").strip()
-
-        print("LLM CONTENT:", content)
-
-        return content
-
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(query)
+        return cur.fetchall()
     except Exception as e:
+        print("DB ERROR:", e)
+        return []
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            release_db(conn)
 
-        print("LLM REQUEST FAILED:", e)
+# =========================
+# EMBEDDINGS
+# =========================
+model = SentenceTransformer('all-MiniLM-L6-v2')
 
-        return ""
+def get_embedding(text):
+    return model.encode(text).astype("float32")
 
+# =========================
+# FAISS
+# =========================
+vector_index = None
+vector_data = []
 
-def safe_json(text):
-    import json, re
+def build_vector_index():
+    global vector_index, vector_data
 
-    if not text:
-        return None
+    rows = safe_db_execute("""
+        SELECT id, title, category_text, ai_keywords
+        FROM master_search_index
+        WHERE is_live = TRUE
+    """)
 
-    text = text.replace("```json", "").replace("```", "").strip()
+    embeddings = []
+    vector_data = []
 
+    for r in rows:
+        text = f"{r[1]} {r[2]} {r[3]}"
+        emb = get_embedding(text)
+
+        embeddings.append(emb)
+        vector_data.append({
+            "id": r[0],
+            "title": r[1],
+            "category": r[2],
+            "keywords": r[3]
+        })
+
+    if not embeddings:
+        print("⚠️ No embeddings found")
+        return
+
+    vectors = np.array(embeddings)
+
+    vector_index = faiss.IndexFlatL2(vectors.shape[1])
+    vector_index.add(vectors)
+
+    print("✅ FAISS READY:", len(vector_data))
+
+# =========================
+# SEARCH
+# =========================
+def semantic_search(query, k=5):
+    if vector_index is None:
+        return []
+
+    q_vec = np.array([get_embedding(query)])
+    _, indices = vector_index.search(q_vec, k)
+
+    return [vector_data[i] for i in indices[0] if i < len(vector_data)]
+
+def fetch_db_context():
+    rows = safe_db_execute("""
+        SELECT title, category_text, ai_keywords
+        FROM master_search_index
+        WHERE is_live = TRUE
+        ORDER BY id DESC
+        LIMIT 5
+    """)
+
+    return [{"title": r[0], "category": r[1], "keywords": r[2]} for r in rows]
+
+def hybrid_search(query):
+    sem = semantic_search(query)
+    db = fetch_db_context()
+
+    combined = {}
+
+    for r in sem:
+        combined[r["title"]] = {"data": r, "score": 0.7}
+
+    for r in db:
+        if r["title"] in combined:
+            combined[r["title"]]["score"] += 0.3
+        else:
+            combined[r["title"]] = {"data": r, "score": 0.3}
+
+    return [x["data"] for x in sorted(combined.values(), key=lambda x: x["score"], reverse=True)[:5]]
+
+# =========================
+# SAFE JSON PARSER
+# =========================
+def safe_json_parse(text):
     try:
         return json.loads(text)
     except:
         pass
 
-    match = re.search(r"\{.*", text, re.DOTALL)
-    if not match:
-        return None
-
-    partial = match.group()
-
-    try:
-        partial = partial.rstrip(", \n")
-        if not partial.endswith("}"):
-            partial += '"}'  
-        return json.loads(partial)
-    except:
-        return None
-
-import re
-
-def detect_intent(query):
-    categories = ['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
-
-    prompt = f"""
-You are an AI intent classifier for a hospitality platform.
-Hospitality Portal Expert. 
-User Query: "{query}"
-Available Categories: {categories}
-
-STRICT RULES:
-0. TYPO CORRECTION: Fix minor typos (e.g., 'kitchn' -> 'kitchen', 'dishwashr' -> 'dishwasher'). Normalize to industry terms.
-
-1. INTENT LOGIC (CRITICAL):
-    - FAQ RULE (TOP PRIORITY): If the query starts with "how to", "how do i", "how can i", "steps to", or "process", intent MUST be 'FAQ' and type MUST be 'faq'. DO NOT classify as 'job' even if 'job' or 'apply' is mentioned.
-    - PROFILE RULE: If the query is a person's name (e.g., 'Yuni Hunter', 'Raj Bhatt') OR starts with "who is" or "who's", intent MUST be 'SEARCH' and type MUST be 'professional'.
-    
-    - COMPANY RULE: If query contains "what is", "define", or "hozpitality", intent MUST be 'SEARCH' and type MUST be 'company'.
-    - Default: Intent 'SEARCH', type 'article'.
-
-2. KEYWORD EXTRACTION (STRICT):
-    - Output keywords in LOWERCASE only.
-    - REMOVE category words from keywords if they are used as 'type' (e.g., if type is 'job', REMOVE 'jobs', 'job', 'openings', 'opening', 'vacancies' from keywords).
-    
-    - For FAQ: Extract only the core topic (e.g., 'account deletion'). REMOVE filler words like "how to", "how do i", "apply", "job" from FAQ keywords.
-    
-    - For SEARCH: REMOVE category words like 'articles', 'article', 'events' from keywords if they match the 'type'.
-
-User query:
-{query}
-
-Tasks:
-1. Detect intent (SEARCH, FAQ, CHAT)
-2. Detect content type (Ensure 'professional' for names, 'faq' for procedures)
-3. Rewrite the query removing stop words.
-4. Extract location if present.
-
-Examples:
-
-Query: Yuni Hunter
-Output:
-{{
-"intent":"SEARCH",
-"type":"professional",
-"keywords":"yuni hunter",
-"location":""
-}}
-
-Query: How to apply for a job on Hozpitality?
-Output:
-{{
-"intent":"FAQ",
-"type":"faq",
-"keywords":"job application",
-"location":""
-}}
-
-Query: waiter job openings in Dubai
-Output:
-{{
-"intent":"SEARCH",
-"type":"job",
-"keywords":"waiter",
-"location":"dubai"
-}}
-
-Query: how to delete my account
-Output:
-{{
-"intent":"FAQ",
-"type":"faq",
-"keywords":"account deletion",
-"location":""
-}}
-
-
-Query: Jivesh Kumar professional dubai united arab emirates
-Output:
-{{
-"intent":"SEARCH",
-"type":"professional",
-"keywords":"jivesh kumar",
-"location":"dubai"
-}}
-
-Return JSON only.
-"""
-
-    text = generate(prompt, 140)
-
-    def extract_json(text):
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
         try:
-            import re
-            import json
-            match = re.search(r'\{.*\}', text, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-            return None
-        except Exception:
-            return None
+            return json.loads(match.group())
+        except:
+            pass
 
-    data = extract_json(text) if text else None
+    return None
 
-    if data and isinstance(data, dict):
-        intent = data.get("intent", "SEARCH")
-        dtype = data.get("type", "article")
-        keywords = data.get("keywords", query.lower())
-
-        if isinstance(keywords, list):
-            keywords = " ".join(map(str, keywords))
-
-        if intent == "FAQ":
-            dtype = "faq"
-
-        return {
-            "intent": intent,
-            "type": dtype,
-            "keywords": str(keywords).lower(),
-            "location": data.get("location", "")
-        }
-
-    # Final Fallback
-    return {
-        "intent": "SEARCH",
-        "type": "job",
-        "keywords": query.lower(),
-        "location": ""
-    }
-
-@app.post("/intent")
-def intent(req: IntentRequest):
-    return detect_intent(req.query)
-
-
-def generate_summary(query, context, intent_type):
+# =========================
+# SINGLE LLM CALL
+# =========================
+def generate_full_ai(query, context, history):
 
     prompt = f"""
-You are the AI assistant for Hozpitality.com.
+You are an AI assistant.
 
 User Query:
 {query}
 
-Intent Type:
-{intent_type}
-
-Search Results Context:
+Context:
 {context}
 
+History:
+{history}
+
 TASK:
+1. Understand intent
+2. Detect action (apply_job, vote_award, nominate_award, none)
+3. Answer clearly
 
-1. Write a short intro (max 4 lines)
-   - Use HTML (<p>, <b>, <u>)
-   - Highlight key relevant terms
-
-2. Generate 5 follow-up suggestions.
-
-STRICT RULES:
-- MUST be based ONLY on provided results
-- MUST be short (max 10 words each)
-- MUST match the intent type ({intent_type})
-- MUST be directly useful to the user
-- NO generic suggestions
-- NO punctuation at end
-- Each suggestion must be unique
-
-TYPE GUIDELINES:
-- If type = faq → generate question-style suggestions
-- If type = job → generate job search related suggestions
-- If type = company → generate company-related queries
-- If type = article → generate topic exploration queries
-
-IMPORTANT:
-- Ensure valid JSON output
-- Do NOT cut response
-- Always return randomly 1-3 suggestions not more than 3
-
-OUTPUT FORMAT:
-
+Return JSON:
 {{
-  "intro": "<p>text</p>",
-  "suggestions": [
-    "suggestion 1",
-    "suggestion 2",
-    "suggestion 3",
-    "suggestion 4",
-    "suggestion 5"
-  ]
+ "answer": "...",
+ "action": "..."
 }}
 """
 
-    text = generate(prompt, 320)
+    try:
+        r = requests.post(LLM_URL, json={
+            "prompt": f"[INST] {prompt} [/INST]",
+            "n_predict": 140,
+            "temperature": 0.3
+        }, timeout=8)
 
-    print("SUMMARY RAW:", text)
+        text = r.json().get("content", "")
 
-    data = safe_json(text)
+        data = safe_json_parse(text)
 
-    if not data:
-        return "", []
+        if data:
+            return data
 
-    intro = data.get("intro", "").strip()
-    suggestions = data.get("suggestions", [])
+    except Exception as e:
+        print("LLM ERROR:", e)
 
-    if not isinstance(suggestions, list):
-        suggestions = []
-
-    suggestions = [
-        str(s).strip().lower()[:60]
-        for s in suggestions if s
-    ][:5]
-
-    return intro, suggestions
-
-
-# @app.post("/generate_keywords")
-# def generate_keywords(req: KeywordGenRequest):
-
-#     print(f"DEBUG: LLM ko bheja jane wala Data:")
-#     print(f"Title: {req.title}")
-#     print(f"Content: {req.content}")
-
-#     prompt = f"""Generate 21 relevant SEO keywords for the hospitality industry based on the following. 
-#         Return ONLY a comma-separated list. Do not use numbers, bullet points, or any prefixes.
-#         Focus on the Title for core role and Content for location/details.
-        
-#         Title: {req.title}
-#         Content: {req.content}"""
-
-#     keywords_text = generate(prompt, tokens=150)
-    
-#     return {"keywords": [k.strip() for k in keywords_text.split(",") if k.strip()]}
-
-@app.post("/generate_keywords")
-def generate_keywords(req: KeywordGenRequest):
-
-    print(f"DEBUG: Generating for Type: {req.title} | Data: {req.content}")
-
-    prompt = f"""
-    You are an AI SEO Specialist. Your task is to generate exactly 21 highly relevant, professional keywords.
-    
-    CONTEXT:
-    - Entity Type: {req.title} (This defines the domain, e.g., Job, Product, Supplier, Article)
-    - Input Data: {req.content} (This contains the specific details)
-
-    STRICT GUIDELINES:
-    1. STRICT RELEVANCE: Keywords must ONLY relate to the specific 'Entity Type' and 'Input Data'. 
-       - If it's a 'Furniture Product', DO NOT include 'kitchen', 'food', or 'hotel management'.
-       - If it's a 'Job', focus on skills, role, and industry.
-       - If it's an 'Article', focus on the topic and category.
-    2. NO GENERIC FILLERS: Avoid words like 'hospitality', 'service', or 'global' unless they are explicitly in the Input Data.
-    3. NO HALLUCINATIONS: Do not assume related categories. Stay within the boundary of the provided content.
-    4. FORMAT: Return ONLY a comma-separated list of strings. No bullets, no numbering, no introductory text.
-
-    Data for Keyword Generation:
-    {req.content}
-
-    Keywords:"""
-
-    # LLM Call
-    keywords_text = generate(prompt, tokens=150)
-    
-    if not keywords_text:
-        return {"keywords": []}
-
-    raw_keywords = [k.strip() for k in keywords_text.split(",") if k.strip()]
-    
-    return {"keywords": raw_keywords[:21]}
-
-
-@app.post("/summary")
-def summary(req: SummaryRequest):
-    intro, suggestions = generate_summary(
-        req.query,
-        req.context,
-        req.type
-    )
-
+    # fallback response
     return {
-        "intro": intro,
-        "suggestions": suggestions
+        "answer": f"I couldn’t fully process that, but here’s a quick response:\n\n{query}",
+        "action": None
     }
 
+# =========================
+# HELPERS
+# =========================
+def build_context(context):
+    return "\n".join([f"{i+1}. {c['title']}" for i, c in enumerate(context)]) if context else "No strong results."
+
+def build_history(history):
+    return "\n".join([f"{h['role']}: {h['content']}" for h in history[-5:]]) if history else ""
+
+# =========================
+# API
+# =========================
+class ChatRequest(BaseModel):
+    query: str
+    context: list = []
+    history: list = []
+
+@app.post("/chat")
+def chat(req: ChatRequest):
+
+    query = req.query.strip()
+
+    context = req.context if req.context else hybrid_search(query)
+
+    context_text = build_context(context)
+    history_text = build_history(req.history)
+
+    ai = generate_full_ai(query, context_text, history_text)
+
+    return {
+        "answer": ai.get("answer"),
+        "action": ai.get("action"),
+        "context": context
+    }
+
+@app.on_event("startup")
+def startup():
+    build_vector_index()
 
 @app.get("/")
 def health():
-    return {"status": "ok"}
+    return {"status": "FINAL OPTIMIZED AI READY"}
