@@ -78,7 +78,7 @@ def build_vector_index():
 
     rows = safe_db_execute("""
         SELECT id, title, category_text, ai_keywords
-        FROM master_search_index
+        FROM master_search_mastersearchindex
         WHERE is_live = TRUE
     """)
 
@@ -132,8 +132,8 @@ def semantic_search(query, k=5):
 
 def fetch_db_context():
     rows = safe_db_execute("""
-        SELECT title, category_text, ai_keywords
-        FROM master_search_index
+        SELECT DISTINCT title, category_text, ai_keywords
+        FROM master_search_mastersearchindex
         WHERE is_live = TRUE
         ORDER BY id DESC
         LIMIT 5
@@ -215,7 +215,7 @@ Return JSON:
 
     try:
         r = requests.post(LLM_URL, json={
-            "prompt": f"[INST] {query} [/INST]",
+            "prompt": f"[INST] {prompt} [/INST]",
             "n_predict": 140,
             "temperature": 0.3
         }, timeout=8)
