@@ -6,3 +6,11 @@ pydantic
 
 numpy
 scipy
+
+sentence-transformers
+
+faiss-cpu
+
+psycopg2-binary
+
+python-dotenv

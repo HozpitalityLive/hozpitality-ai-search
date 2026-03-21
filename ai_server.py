@@ -12,9 +12,7 @@ from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 from psycopg2.pool import SimpleConnectionPool
 
-# =========================
-# LOAD ENV
-# =========================
+
 load_dotenv()
 
 DB_CONFIG = {
@@ -29,9 +27,6 @@ LLM_URL = os.getenv("LLM_URL")
 
 app = FastAPI()
 
-# =========================
-# DB POOL
-# =========================
 db_pool = SimpleConnectionPool(1, 10, **DB_CONFIG)
 
 def get_db():
@@ -40,9 +35,6 @@ def get_db():
 def release_db(conn):
     db_pool.putconn(conn)
 
-# =========================
-# SAFE DB EXECUTION
-# =========================
 def safe_db_execute(query):
     conn = None
     cur = None
@@ -60,17 +52,11 @@ def safe_db_execute(query):
         if conn:
             release_db(conn)
 
-# =========================
-# EMBEDDINGS
-# =========================
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
 def get_embedding(text):
     return model.encode(text).astype("float32")
 
-# =========================
-# FAISS
-# =========================
 vector_index = None
 vector_data = []
 
@@ -109,9 +95,6 @@ def build_vector_index():
 
     print("✅ FAISS READY:", len(vector_data))
 
-# =========================
-# SEARCH
-# =========================
 def semantic_search(query, k=5):
     if vector_index is None:
         return []
@@ -149,9 +132,6 @@ def hybrid_search(query):
 
     return [x["data"] for x in sorted(combined.values(), key=lambda x: x["score"], reverse=True)[:5]]
 
-# =========================
-# SAFE JSON PARSER
-# =========================
 def safe_json_parse(text):
     try:
         return json.loads(text)
@@ -167,9 +147,6 @@ def safe_json_parse(text):
 
     return None
 
-# =========================
-# SINGLE LLM CALL
-# =========================
 def generate_full_ai(query, context, history):
 
     prompt = f"""
@@ -213,24 +190,17 @@ Return JSON:
     except Exception as e:
         print("LLM ERROR:", e)
 
-    # fallback response
     return {
         "answer": f"I couldn’t fully process that, but here’s a quick response:\n\n{query}",
         "action": None
     }
 
-# =========================
-# HELPERS
-# =========================
 def build_context(context):
     return "\n".join([f"{i+1}. {c['title']}" for i, c in enumerate(context)]) if context else "No strong results."
 
 def build_history(history):
     return "\n".join([f"{h['role']}: {h['content']}" for h in history[-5:]]) if history else ""
 
-# =========================
-# API
-# =========================
 class ChatRequest(BaseModel):
     query: str
     context: list = []
