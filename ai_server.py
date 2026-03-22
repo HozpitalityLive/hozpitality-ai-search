@@ -77,7 +77,7 @@ def build_vector_index():
     print("\n[FAISS] Building vector index...")
 
     rows = safe_db_execute("""
-        SELECT id, title, category_text, ai_keywords
+        SELECT id, title, category_text, ai_keywords , content
         FROM master_search_mastersearchindex
         WHERE is_live = TRUE
     """)
@@ -132,7 +132,7 @@ def semantic_search(query, k=5):
 
 def fetch_db_context():
     rows = safe_db_execute("""
-        SELECT DISTINCT title, category_text, ai_keywords
+        SELECT DISTINCT title, category_text, ai_keywords , content
         FROM master_search_mastersearchindex
         WHERE is_live = TRUE
         ORDER BY id DESC
