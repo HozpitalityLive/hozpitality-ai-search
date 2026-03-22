@@ -19,6 +19,10 @@ ID_MAP_FILE = "id_map.json"
 
 id_map = {} 
 
+class KeywordGenRequest(BaseModel):
+    title: str
+    content: str
+
 load_dotenv()
 
 DB_CONFIG = {
@@ -65,6 +69,49 @@ def load_faiss():
         return True
 
     return False
+
+def generate(prompt, tokens=300):
+
+    payload = {
+        "prompt": f"[INST] {prompt} [/INST]",
+        "n_predict": tokens,
+        "temperature": 0.2,
+        "top_p": 0.9
+    }
+
+    print("\n================ LLM REQUEST ================")
+    print("PROMPT:")
+    print(prompt)
+    print("TOKENS:", tokens)
+    print("=============================================\n")
+
+    try:
+
+        r = requests.post(LLM_URL, json=payload, timeout=60)
+
+        print("LLM STATUS:", r.status_code)
+
+        if r.status_code != 200:
+            print("LLM ERROR:", r.text)
+            return ""
+
+        data = r.json()
+
+        print("\n============= LLM RAW RESPONSE =============")
+        print(data)
+        print("============================================\n")
+
+        content = data.get("content", "").strip()
+
+        print("LLM CONTENT:", content)
+
+        return content
+
+    except Exception as e:
+
+        print("LLM REQUEST FAILED:", e)
+
+        return ""
 
 
 def get_db():
@@ -397,6 +444,43 @@ def add_to_index(data: dict):
         save_faiss()
 
     return {"status": "ok"}
+
+
+@app.post("/generate_keywords")
+def generate_keywords(req: KeywordGenRequest):
+
+    print(f"DEBUG: Generating for Type: {req.title} | Data: {req.content}")
+
+    prompt = f"""
+    You are an AI SEO Specialist. Your task is to generate exactly 21 highly relevant, professional keywords.
+    
+    CONTEXT:
+    - Entity Type: {req.title} (This defines the domain, e.g., Job, Product, Supplier, Article)
+    - Input Data: {req.content} (This contains the specific details)
+
+    STRICT GUIDELINES:
+    1. STRICT RELEVANCE: Keywords must ONLY relate to the specific 'Entity Type' and 'Input Data'. 
+       - If it's a 'Furniture Product', DO NOT include 'kitchen', 'food', or 'hotel management'.
+       - If it's a 'Job', focus on skills, role, and industry.
+       - If it's an 'Article', focus on the topic and category.
+    2. NO GENERIC FILLERS: Avoid words like 'hospitality', 'service', or 'global' unless they are explicitly in the Input Data.
+    3. NO HALLUCINATIONS: Do not assume related categories. Stay within the boundary of the provided content.
+    4. FORMAT: Return ONLY a comma-separated list of strings. No bullets, no numbering, no introductory text.
+
+    Data for Keyword Generation:
+    {req.content}
+
+    Keywords:"""
+
+    # LLM Call
+    keywords_text = generate(prompt, tokens=150)
+    
+    if not keywords_text:
+        return {"keywords": []}
+
+    raw_keywords = [k.strip() for k in keywords_text.split(",") if k.strip()]
+    
+    return {"keywords": raw_keywords[:21]}
 
 
 
