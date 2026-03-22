@@ -12,6 +12,11 @@ from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 from psycopg2.pool import SimpleConnectionPool
 
+
+FAISS_INDEX_FILE = "faiss.index"
+VECTOR_DATA_FILE = "vector_data.json"
+ID_MAP_FILE = "id_map.json"
+
 id_map = {} 
 
 load_dotenv()
@@ -29,6 +34,38 @@ LLM_URL = os.getenv("LLM_URL")
 app = FastAPI()
 
 db_pool = SimpleConnectionPool(1, 10, **DB_CONFIG)
+
+def save_faiss():
+    if vector_index is not None:
+        faiss.write_index(vector_index, FAISS_INDEX_FILE)
+
+        with open(VECTOR_DATA_FILE, "w") as f:
+            json.dump(vector_data, f)
+
+        with open(ID_MAP_FILE, "w") as f:
+            json.dump(id_map, f)
+
+        print("💾 FAISS SAVED")
+    
+def load_faiss():
+    global vector_index, vector_data, id_map
+
+    if os.path.exists(FAISS_INDEX_FILE):
+        print("⚡ Loading FAISS from disk...")
+
+        vector_index = faiss.read_index(FAISS_INDEX_FILE)
+
+        with open(VECTOR_DATA_FILE) as f:
+            vector_data.extend(json.load(f))
+
+        with open(ID_MAP_FILE) as f:
+            id_map.update(json.load(f))
+
+        print("✅ FAISS LOADED:", len(vector_data))
+        return True
+
+    return False
+
 
 def get_db():
     return db_pool.getconn()
@@ -117,6 +154,8 @@ def build_vector_index():
     vector_index.add(vectors)
 
     print("✅ FAISS READY:", len(vector_data))
+
+    save_faiss()
 
 def semantic_search(query, k=5):
     print(f"\n[SEARCH] Semantic search for: {query}")
@@ -308,9 +347,13 @@ def chat(req: ChatRequest):
         "context": context
     }
 
+
 @app.on_event("startup")
 def startup():
-    build_vector_index()
+    if not load_faiss():
+        print("🚀 First build")
+        build_vector_index()
+        save_faiss()
 
 
 @app.post("/add-to-index")
@@ -351,7 +394,22 @@ def add_to_index(data: dict):
 
         print("✅ Added new ID:", data["id"])
 
+        save_faiss()
+
     return {"status": "ok"}
+
+
+
+@app.get("/reset-index")
+def reset_index():
+    import os
+
+    for f in ["faiss.index", "vector_data.json", "id_map.json"]:
+        if os.path.exists(f):
+            os.remove(f)
+
+    return {"status": "FAISS RESET"}
+
 
 @app.get("/")
 def health():
