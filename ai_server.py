@@ -12,6 +12,7 @@ from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 from psycopg2.pool import SimpleConnectionPool
 
+id_map = {} 
 
 load_dotenv()
 
@@ -86,9 +87,10 @@ def build_vector_index():
 
     embeddings = []
     vector_data = []
+    id_map.clear()
 
     for i, r in enumerate(rows):
-        text = f"{r[1]} {r[2]} {r[3]}"
+        text = f"{r[1]} {r[2]} {r[3]} {r[4]}"
         print(f"[FAISS] Processing row {i}: {r[1]}")
 
         emb = get_embedding(text)
@@ -98,8 +100,11 @@ def build_vector_index():
             "id": r[0],
             "title": r[1],
             "category": r[2],
-            "keywords": r[3]
+            "keywords": r[3],
+            "content": r[4]
         })
+
+        id_map[r[0]] = i
 
     if not embeddings:
         print("⚠️ No embeddings found — check DB data or query")
@@ -117,8 +122,7 @@ def semantic_search(query, k=5):
     print(f"\n[SEARCH] Semantic search for: {query}")
 
     if vector_index is None:
-        print("⚠️ FAISS index is not initialized")
-        return []
+        build_vector_index()
 
     q_vec = np.array([get_embedding(query)])
     print("[SEARCH] Query embedding shape:", q_vec.shape)
@@ -139,7 +143,12 @@ def fetch_db_context():
         LIMIT 5
     """)
 
-    return [{"title": r[0], "category": r[1], "keywords": r[2]} for r in rows]
+    return [{
+        "title": r[0],
+        "category": r[1],
+        "keywords": r[2],
+        "content": r[3]
+    } for r in rows]
 
 def hybrid_search(query):
     print("\n[HYBRID] Running hybrid search")
@@ -153,13 +162,31 @@ def hybrid_search(query):
     combined = {}
 
     for r in sem:
-        combined[r["title"]] = {"data": r, "score": 0.7}
+        score = 0.7
+
+        text = (r.get("content") or "").lower()
+
+        if "featured" in text:
+            score += 0.2
+        if "premium" in text:
+            score += 0.2
+
+        combined[r["title"]] = {"data": r, "score": score}
 
     for r in db:
+        score = 0.3
+
+        text = (r.get("content") or "").lower()
+
+        if "featured" in text:
+            score += 0.2
+        if "premium" in text:
+            score += 0.2
+
         if r["title"] in combined:
-            combined[r["title"]]["score"] += 0.3
+            combined[r["title"]]["score"] += score
         else:
-            combined[r["title"]] = {"data": r, "score": 0.3}
+            combined[r["title"]] = {"data": r, "score": score}
 
     final = sorted(combined.values(), key=lambda x: x["score"], reverse=True)[:5]
 
@@ -241,8 +268,12 @@ Return JSON:
         "action": None
     }
 
+
 def build_context(context):
-    return "\n".join([f"{i+1}. {c['title']}" for i, c in enumerate(context)]) if context else "No strong results."
+    return "\n".join([
+        f"{i+1}. {c['title']} - {c.get('content','')[:200]}"
+        for i, c in enumerate(context)
+    ]) if context else "No strong results."
 
 def build_history(history):
     return "\n".join([f"{h['role']}: {h['content']}" for h in history[-5:]]) if history else ""
@@ -280,6 +311,47 @@ def chat(req: ChatRequest):
 @app.on_event("startup")
 def startup():
     build_vector_index()
+
+
+@app.post("/add-to-index")
+def add_to_index(data: dict):
+    global vector_index, vector_data, id_map
+
+    if vector_index is None:
+        build_vector_index()
+
+    text = f"{data['title']} {data['category']} {data['keywords']} {data['content']}"
+    emb = get_embedding(text)
+
+    if data["id"] in id_map:
+        idx = id_map[data["id"]]
+
+        vector_data[idx] = {
+            "id": data["id"],
+            "title": data["title"],
+            "category": data["category"],
+            "keywords": data["keywords"],
+            "content": data["content"]
+        }
+
+        print("♻️ Updated existing ID:", data["id"])
+
+    else:
+        vector_index.add(np.array([emb]))
+
+        vector_data.append({
+            "id": data["id"],
+            "title": data["title"],
+            "category": data["category"],
+            "keywords": data["keywords"],
+            "content": data["content"]
+        })
+
+        id_map[data["id"]] = len(vector_data) - 1
+
+        print("✅ Added new ID:", data["id"])
+
+    return {"status": "ok"}
 
 @app.get("/")
 def health():
