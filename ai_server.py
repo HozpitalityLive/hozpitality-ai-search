@@ -70,7 +70,7 @@ def load_faiss():
 
     return False
 
-def generate(prompt, tokens=300):
+def generate(prompt, tokens=500):
 
     payload = {
         "prompt": f"[INST] {prompt} [/INST]",
@@ -380,7 +380,7 @@ IMPORTANT:
     try:
         r = requests.post(LLM_URL, json={
             "prompt": f"[INST] {prompt} [/INST]",
-            "n_predict": 140,
+            "n_predict": 500,
             "temperature": 0.3
         }, timeout=8)
 
