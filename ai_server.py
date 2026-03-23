@@ -113,7 +113,7 @@ def load_faiss():
 
 def analyze_query(query):
     prompt = f"""
-You are a search query analyzer.
+You are a STRICT search query intent classifier.
 
 User Query:
 {query}
@@ -125,10 +125,39 @@ Return ONLY valid JSON:
   "query": "clean improved search query"
 }}
 
-RULES:
-- intent must be one from list
-- query must be corrected, clear, searchable
-- no explanation
+INTENT DEFINITIONS:
+
+- job → job search, hiring, vacancies
+- article → general reading, news, blogs, information
+- faq → how-to, help, instructions, questions
+- company → company, brand, employer
+- event → conferences, summits, expos, scheduled events
+- awards → awards, nominations, winners, contests, rankings
+- product → items, marketplace, buy/sell
+- supplier → vendors, suppliers
+- professional → people, profiles
+
+STRICT RULES:
+
+1. If query contains:
+   - "award", "awards", "nomination", "winner", "ranking"
+   → intent MUST be "awards"
+
+2. If query contains:
+   - "date", "deadline", "upcoming", "schedule"
+   AND also contains "award"
+   → intent MUST be "awards"
+
+3. If query is about event timing WITHOUT awards
+   → intent = "event"
+
+4. NEVER classify award-related queries as "article"
+
+5. query must be corrected and meaningful (e.g., "upcoming awards dates 2026")
+
+6. NO explanation, ONLY JSON
+
+Output:
 """
 
     try:
@@ -476,6 +505,28 @@ FAQ OUTPUT RULE
 - Each step must be short and actionable
 - Use STRICT HTML:
 
+CRITICAL LINKING RULES:
+
+- Every result MUST be a clickable <a> tag using slug
+- Extract "Slug: xyz" from context
+
+URL FORMAT RULES:
+
+- job → https://www.hozpitality.com/jobs/details/{slug}/
+- company → https://www.hozpitality.com/profile/{slug}/
+- professional → https://www.hozpitality.com/profile/{slug}/
+- supplier → https://www.hozpitality.com/profile/{slug}/
+- article → https://www.hozpitality.com/articles/details/{slug}/
+- event → https://www.hozpitality.com/events/details/{slug}/
+- awards → https://www.hozpitality.com/awards
+
+IMPORTANT:
+
+- ALWAYS wrap title in <a href="URL">TITLE</a>
+- If slug is missing → DO NOT create link
+- NEVER hallucinate slug
+- Use ONLY slug from context
+
 <div>
   <ol>
     <li>Step 1</li>
@@ -487,6 +538,11 @@ NON-FAQ OUTPUT RULE
 
 - Use max 3 items
 - Use <ul><li> format
+- Each <li> MUST contain clickable link:
+
+<li>
+  <a href="URL">Title</a>
+</li>
 - Keep titles short
 
 OUTPUT FORMAT (STRICT JSON)
@@ -498,6 +554,8 @@ Return ONLY valid JSON:
   "results_html": "<div>HTML content</div>",
   "followup": "One relevant follow-up question",
 }}
+
+
 
 CRITICAL RULES
 
@@ -560,6 +618,12 @@ Output:
         "action": None
     }
 
+def extract_slug(content):
+    if not content:
+        return ""
+    match = re.search(r"Slug:\s*(\S+)", content)
+    return match.group(1) if match else ""
+
 
 def build_context(context):
     if not context:
@@ -573,6 +637,7 @@ ITEM {i+1}:
 TYPE: {c.get("category")}
 TITLE: {c.get("title")}
 KEYWORDS: {c.get("keywords")}
+SLUG: {extract_slug(c.get("content"))}
 CONTENT: {c.get("content")}
 """)
 
