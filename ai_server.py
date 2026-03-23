@@ -252,6 +252,9 @@ def hybrid_search(query):
 
         text = (r.get("content") or "").lower()
 
+        if "question:" in text or "how" in r.get("title","").lower():
+            score += 0.5
+
         if "featured" in text:
             score += 0.2
         if "premium" in text:
@@ -316,8 +319,9 @@ def safe_json_parse(text):
 def generate_full_ai(query, context, history):
 
     prompt = f"""
-You are an AI search assistant.
+You are Hozpitality AI Assistant.
 
+INPUT
 User Query:
 {query}
 
@@ -327,49 +331,87 @@ Context:
 History:
 {history}
 
-TASK:
+OBJECTIVE
 
-1. Understand the user intent
-2. Generate a short engaging INTRO (HTML format) about the results
-3. Generate structured RESULTS (HTML format) using context
-4. Suggest ONE follow-up question
-5. Detect action (apply_job, vote_award, nominate_award, none)
+Your job is to:
+1. Understand user intent
+2. Filter and select ONLY relevant context
+3. Generate structured HTML response
 
-STRICT OUTPUT FORMAT (JSON ONLY):
+DECISION LOGIC
+
+STEP 1: Detect intent
+
+STEP 2: Check if FAQ exists
+- If any context item:
+  - looks like a question/answer OR
+  - contains instructions OR
+  - starts with "how", "what", "can I"
+
+THEN:
+- Treat it as FAQ
+- Extract its CONTENT
+- Convert into step-by-step guide
+- IGNORE all other items
+
+STEP 3: If NO FAQ
+- Select top 3 relevant items
+- Show them as list/cards
+
+FAQ OUTPUT RULE
+
+- Convert answer into 4–6 steps
+- Each step must be short and actionable
+- Use STRICT HTML:
+
+<div>
+  <ol>
+    <li>Step 1</li>
+    <li>Step 2</li>
+  </ol>
+</div>
+
+NON-FAQ OUTPUT RULE
+
+- Use max 3 items
+- Use <ul><li> format
+- Keep titles short
+
+OUTPUT FORMAT (STRICT JSON)
+
+Return ONLY valid JSON:
 
 {{
-  "intro_html": "<p>Short engaging intro about results</p>",
-  "results_html": "<div>Formatted clickable/search results</div>",
-  "followup": "A helpful follow-up question",
-  "action": "none"
+  "intro_html": "<p>Short engaging intro</p>",
+  "results_html": "<div>HTML content</div>",
+  "followup": "One relevant follow-up question",
+  "action": "apply_job or none"
 }}
 
-RULES:
-- intro_html → NO list, only summary
-- results_html → use <ul><li> or cards
-- DO NOT return plain text
-- DO NOT break JSON
+CRITICAL RULES
 
-BRAND RESTRICTION (VERY IMPORTANT):
-- ONLY use the platform name: "Hozpitality"
-- NEVER mention: LinkedIn, Indeed, Naukri, Glassdoor, Monster, or any other platform
-- If needed, refer generically as "platform" or "portal"
-- All results MUST appear as coming from Hozpitality only
-
-CONTENT CONTROL:
-- DO NOT hallucinate external sources
-- ONLY use given context
-
-LENGTH CONTROL:
-- Keep results_html under 3-4 list items
-- Keep total response SHORT
-- Avoid long sentences
-
-IMPORTANT:
-- ALWAYS close JSON properly
+- ONLY use "Hozpitality" (no other platforms)
+- DO NOT hallucinate
+- Use ONLY given context
+- DO NOT invent data
+- ALWAYS return valid JSON
 - ALWAYS close all HTML tags
-- Ensure valid JSON (no truncation)
+- Keep response concise
 
+EXAMPLE
+
+Context:
+TYPE: faq
+TITLE: How do I apply for a job?
+CONTENT: Create profile. Search jobs. Click apply. Submit application.
+
+Output:
+{{
+  "intro_html": "<p>Here’s how you can apply for a job on Hozpitality:</p>",
+  "results_html": "<div><ol><li>Create your profile</li><li>Search for jobs</li><li>Select a job</li><li>Click Apply</li><li>Submit your application</li></ol></div>",
+  "followup": "Would you like to see available jobs now?",
+  "action": "apply_job"
+}}
 """
 
     print("\n[LLM] Sending request")
@@ -407,10 +449,21 @@ IMPORTANT:
 
 
 def build_context(context):
-    return "\n".join([
-        f"{i+1}. {c['title']} - {c.get('content','')[:200]}"
-        for i, c in enumerate(context)
-    ]) if context else "No strong results."
+    if not context:
+        return "No strong results."
+
+    formatted = []
+
+    for i, c in enumerate(context):
+        formatted.append(f"""
+ITEM {i+1}:
+TYPE: {c.get("category")}
+TITLE: {c.get("title")}
+KEYWORDS: {c.get("keywords")}
+CONTENT: {c.get("content")}
+""")
+
+    return "\n\n".join(formatted)
 
 def build_history(history):
     return "\n".join([f"{h['role']}: {h['content']}" for h in history[-5:]]) if history else ""
