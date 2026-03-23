@@ -271,6 +271,23 @@ def get_embedding(text):
 vector_index = None
 vector_data = []
 
+def normalize_type(category_text):
+    if not category_text:
+        return "article"
+
+    c = category_text.lower()
+
+    if "event" in c:
+        return "event"
+    if "award" in c:
+        return "awards"
+    if "job" in c:
+        return "job"
+    if "supplier" in c:
+        return "supplier"
+
+    return "article"
+
 def build_vector_index():
     global vector_index, vector_data
 
@@ -298,7 +315,7 @@ def build_vector_index():
         vector_data.append({
             "id": r[0],
             "title": r[1],
-            "category": r[2],
+            "category": normalize_type(r[2]),
             "keywords": r[3],
             "content": r[4]
         })
