@@ -281,17 +281,35 @@ def hybrid_search(query):
     return [x["data"] for x in final]
 
 def safe_json_parse(text):
+    if not text:
+        return None
+
     try:
         return json.loads(text)
     except:
         pass
 
-    match = re.search(r'\{.*\}', text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group())
-        except:
-            pass
+    try:
+        start = text.find("{")
+        end = text.rfind("}")
+
+        if start != -1 and end != -1:
+            return json.loads(text[start:end+1])
+    except:
+        pass
+
+    try:
+        fixed = text.strip()
+
+        if fixed.count("{") > fixed.count("}"):
+            fixed += "}"
+
+        if fixed.count("[") > fixed.count("]"):
+            fixed += "]"
+
+        return json.loads(fixed)
+    except:
+        pass
 
     return None
 
@@ -341,6 +359,16 @@ BRAND RESTRICTION (VERY IMPORTANT):
 CONTENT CONTROL:
 - DO NOT hallucinate external sources
 - ONLY use given context
+
+LENGTH CONTROL:
+- Keep results_html under 3-4 list items
+- Keep total response SHORT
+- Avoid long sentences
+
+IMPORTANT:
+- ALWAYS close JSON properly
+- ALWAYS close all HTML tags
+- Ensure valid JSON (no truncation)
 
 """
 
