@@ -370,10 +370,13 @@ def hybrid_search(query):
     for r in sem:
         score = 0.7
 
-        r_type = (r.get("category") or "").lower()
+        r_type = (r.get("category") or "").strip().lower()
         text = (r.get("content") or "").lower()
 
-        if intent and intent in r_type:
+        if intent and (
+            intent in r_type or
+            r_type.startswith(intent)
+        ):
             score += 2.0
         elif intent and r_type.startswith(intent):
             score += 2.0
@@ -401,10 +404,16 @@ def hybrid_search(query):
     final = sorted(combined.values(), key=lambda x: x["score"], reverse=True)
 
     if intent:
-        filtered = [
-            x for x in final
-            if intent in (x["data"].get("category","").lower())
-        ]
+        filtered = []
+        for x in final:
+            category = x["data"].get("category") or ""
+            category = category.lower()
+
+            if intent and (
+                intent in category or
+                category.startswith(intent)
+            ):
+                filtered.append(x)
 
         if filtered:
             final = filtered[:5]
