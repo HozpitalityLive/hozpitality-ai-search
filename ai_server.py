@@ -285,6 +285,14 @@ def normalize_type(category_text):
         return "job"
     if "supplier" in c:
         return "supplier"
+    if "professional" in c:
+        return "professional"
+    if "company" in c:
+        return "company"
+    if "faq" in c or "question" in c or "how" in c:
+        return "faq"
+    if "product" in c:
+        return "product"
 
     return "article"
 
