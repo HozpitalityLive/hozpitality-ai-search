@@ -19,6 +19,19 @@ ID_MAP_FILE = "id_map.json"
 
 id_map = {} 
 
+ACTION_MAP = {
+    "job": "apply_job",
+    "faq": "apply_job",
+    "article": "read_article",
+    "professional": "view_profile",
+    "company": "view_company",
+    "event": "view_event",
+    "supplier": "view_supplier",
+    "product": "view_product",
+    "awards": "view_award"
+}
+
+
 class KeywordGenRequest(BaseModel):
     title: str
     content: str
@@ -38,6 +51,22 @@ LLM_URL = os.getenv("LLM_URL")
 app = FastAPI()
 
 db_pool = SimpleConnectionPool(1, 10, **DB_CONFIG)
+
+def detect_primary_type(context):
+    if not context:
+        return None
+
+    scores = {}
+
+    for c in context:
+        t = (c.get("category") or "").lower()
+
+        if "question" in (c.get("content") or "").lower():
+            t = "faq"
+
+        scores[t] = scores.get(t, 0) + 1
+
+    return max(scores, key=scores.get) if scores else None
 
 def save_faiss():
     if vector_index is not None:
@@ -287,6 +316,9 @@ def safe_json_parse(text):
     if not text:
         return None
 
+    # 🔥 FIX ESCAPED CHARACTERS
+    text = text.replace("\\_", "_")
+
     try:
         return json.loads(text)
     except:
@@ -297,7 +329,9 @@ def safe_json_parse(text):
         end = text.rfind("}")
 
         if start != -1 and end != -1:
-            return json.loads(text[start:end+1])
+            cleaned = text[start:end+1]
+            cleaned = cleaned.replace("\\_", "_")
+            return json.loads(cleaned)
     except:
         pass
 
@@ -309,6 +343,8 @@ def safe_json_parse(text):
 
         if fixed.count("[") > fixed.count("]"):
             fixed += "]"
+
+        fixed = fixed.replace("\\_", "_")
 
         return json.loads(fixed)
     except:
@@ -385,7 +421,6 @@ Return ONLY valid JSON:
   "intro_html": "<p>Short engaging intro</p>",
   "results_html": "<div>HTML content</div>",
   "followup": "One relevant follow-up question",
-  "action": "apply_job or none"
 }}
 
 CRITICAL RULES
@@ -397,6 +432,8 @@ CRITICAL RULES
 - ALWAYS return valid JSON
 - ALWAYS close all HTML tags
 - Keep response concise
+- Do NOT decide action
+- Action is handled by system
 
 EXAMPLE
 
@@ -492,11 +529,14 @@ def chat(req: ChatRequest):
 
     print("[API] Final response:", ai)
 
+    primary_type = detect_primary_type(context)
+    final_action = ACTION_MAP.get(primary_type, "none")
+
     return {
         "intro_html": ai.get("intro_html", ""),
         "results_html": ai.get("results_html", ""),
         "followup": ai.get("followup", ""),
-        "action": ai.get("action"),
+        "action": final_action,
         "context": context
     }
 
