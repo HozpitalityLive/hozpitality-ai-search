@@ -298,7 +298,7 @@ def safe_json_parse(text):
 def generate_full_ai(query, context, history):
 
     prompt = f"""
-You are an AI assistant.
+You are an AI search assistant.
 
 User Query:
 {query}
@@ -310,15 +310,38 @@ History:
 {history}
 
 TASK:
-1. Understand intent
-2. Detect action (apply_job, vote_award, nominate_award, none)
-3. Answer clearly
 
-Return JSON:
+1. Understand the user intent
+2. Generate a short engaging INTRO (HTML format) about the results
+3. Generate structured RESULTS (HTML format) using context
+4. Suggest ONE follow-up question
+5. Detect action (apply_job, vote_award, nominate_award, none)
+
+STRICT OUTPUT FORMAT (JSON ONLY):
+
 {{
- "answer": "...",
- "action": "..."
+  "intro_html": "<p>Short engaging intro about results</p>",
+  "results_html": "<div>Formatted clickable/search results</div>",
+  "followup": "A helpful follow-up question",
+  "action": "none"
 }}
+
+RULES:
+- intro_html → NO list, only summary
+- results_html → use <ul><li> or cards
+- DO NOT return plain text
+- DO NOT break JSON
+
+BRAND RESTRICTION (VERY IMPORTANT):
+- ONLY use the platform name: "Hozpitality"
+- NEVER mention: LinkedIn, Indeed, Naukri, Glassdoor, Monster, or any other platform
+- If needed, refer generically as "platform" or "portal"
+- All results MUST appear as coming from Hozpitality only
+
+CONTENT CONTROL:
+- DO NOT hallucinate external sources
+- ONLY use given context
+
 """
 
     print("\n[LLM] Sending request")
@@ -389,7 +412,9 @@ def chat(req: ChatRequest):
     print("[API] Final response:", ai)
 
     return {
-        "answer": ai.get("answer"),
+        "intro_html": ai.get("intro_html", ""),
+        "results_html": ai.get("results_html", ""),
+        "followup": ai.get("followup", ""),
         "action": ai.get("action"),
         "context": context
     }
