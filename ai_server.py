@@ -512,12 +512,12 @@ CRITICAL LINKING RULES:
 
 URL FORMAT RULES:
 
-- job → https://www.hozpitality.com/jobs/details/{slug}/
-- company → https://www.hozpitality.com/profile/{slug}/
-- professional → https://www.hozpitality.com/profile/{slug}/
-- supplier → https://www.hozpitality.com/profile/{slug}/
-- article → https://www.hozpitality.com/articles/details/{slug}/
-- event → https://www.hozpitality.com/events/details/{slug}/
+- job → https://www.hozpitality.com/jobs/details/{{slug}}/
+- company → https://www.hozpitality.com/profile/{{slug}}/
+- professional → https://www.hozpitality.com/profile/{{slug}}/
+- supplier → https://www.hozpitality.com/profile/{{slug}}/
+- article → https://www.hozpitality.com/articles/details/{{slug}}/
+- event → https://www.hozpitality.com/events/details/{{slug}}/
 - awards → https://www.hozpitality.com/awards
 
 IMPORTANT:
