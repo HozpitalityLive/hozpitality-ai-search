@@ -19,6 +19,18 @@ ID_MAP_FILE = "id_map.json"
 
 id_map = {} 
 
+TYPE_MAPPING = {
+    'job': 'job',
+    'article': 'article',
+    'professional': 'professional',
+    'faq': 'faq',
+    'company': 'company',
+    'event': 'event',
+    'supplier': 'supplier',
+    'product': 'product',
+    'awards': 'awards'
+}
+
 ACTION_MAP = {
     "job": "apply_job",
     "faq": "apply_job",
@@ -98,6 +110,51 @@ def load_faiss():
         return True
 
     return False
+
+def analyze_query(query):
+    prompt = f"""
+You are a search query analyzer.
+
+User Query:
+{query}
+
+Return ONLY valid JSON:
+
+{{
+  "intent": "job/article/professional/faq/company/event/supplier/product/awards",
+  "query": "clean improved search query"
+}}
+
+RULES:
+- intent must be one from list
+- query must be corrected, clear, searchable
+- no explanation
+"""
+
+    try:
+        r = requests.post(LLM_URL, json={
+            "prompt": f"[INST] {prompt} [/INST]",
+            "n_predict": 100,
+            "temperature": 0.0
+        }, timeout=5)
+
+        text = r.json().get("content", "")
+
+        data = safe_json_parse(text)
+
+        if data:
+            intent = data.get("intent", "article")
+            new_query = data.get("query", query)
+
+            if intent not in TYPE_MAPPING:
+                intent = "article"
+
+            return intent, new_query
+
+    except Exception as e:
+        print("Analyze error:", e)
+
+    return "article", query
 
 def generate(prompt, tokens=500):
 
@@ -251,10 +308,10 @@ def semantic_search(query, k=5):
 
 def fetch_db_context():
     rows = safe_db_execute("""
-        SELECT DISTINCT title, category_text, ai_keywords , content
+        SELECT DISTINCT ON (title) title, category_text, ai_keywords, content
         FROM master_search_mastersearchindex
         WHERE is_live = TRUE
-        ORDER BY id DESC
+        ORDER BY title, id DESC
         LIMIT 5
     """)
 
@@ -268,7 +325,12 @@ def fetch_db_context():
 def hybrid_search(query):
     print("\n[HYBRID] Running hybrid search")
 
-    sem = semantic_search(query)
+    intent, improved_query = analyze_query(query)
+
+    print("[HYBRID] Intent:", intent)
+    print("[HYBRID] Improved Query:", improved_query)
+
+    sem = semantic_search(improved_query)
     db = fetch_db_context()
 
     print(f"[HYBRID] Semantic results: {len(sem)}")
@@ -279,15 +341,16 @@ def hybrid_search(query):
     for r in sem:
         score = 0.7
 
+        r_type = (r.get("category") or "").lower()
         text = (r.get("content") or "").lower()
+
+        if intent and intent in r_type:
+            score += 2.0
+        elif intent and r_type.startswith(intent):
+            score += 2.0
 
         if "question:" in text or "how" in r.get("title","").lower():
             score += 0.5
-
-        if "featured" in text:
-            score += 0.2
-        if "premium" in text:
-            score += 0.2
 
         combined[r["title"]] = {"data": r, "score": score}
 
@@ -306,7 +369,20 @@ def hybrid_search(query):
         else:
             combined[r["title"]] = {"data": r, "score": score}
 
-    final = sorted(combined.values(), key=lambda x: x["score"], reverse=True)[:5]
+    final = sorted(combined.values(), key=lambda x: x["score"], reverse=True)
+
+    if intent:
+        filtered = [
+            x for x in final
+            if intent in (x["data"].get("category","").lower())
+        ]
+
+        if filtered:
+            final = filtered[:5]
+        else:
+            final = final[:5]
+    else:
+        final = final[:5]
 
     print(f"[HYBRID] Final results: {len(final)}")
 
