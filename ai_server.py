@@ -424,7 +424,7 @@ Output:
             "prompt": f"[INST] {prompt} [/INST]",
             "n_predict": 500,
             "temperature": 0.3
-        }, timeout=8)
+        }, timeout=15)
 
         print("[LLM] Status Code:", r.status_code)
 
