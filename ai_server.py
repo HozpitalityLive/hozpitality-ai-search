@@ -396,40 +396,47 @@ Query: {req.query}
 History: {req.history}
 Data: {req.context}
 
+========================
 STRICT RULES
+========================
 
-1. RETURN SIMPLE TEXT ONLY
-2. USE HTML TAGS:
+1. "text" MUST BE A SINGLE STRING (NOT ARRAY)
+2. DO NOT RETURN [] or list
+3. RETURN ONE CONTINUOUS STRING
+4. USE:
    - <br> for line break
    - <strong> for title
    - <a href=""> for links
-3. DO NOT USE TABLE
-4. DO NOT USE JSON INSIDE HTML
-5. DO NOT WRITE CODE
+5. DO NOT USE <p>, <span>, or complex HTML
+6. DO NOT WRITE CODE
 
 
 FORMAT EXAMPLE:
 
-<a href="/job-link">Chef Job</a><br><br>
+<a href="/job-link">Chef Job</a><br>
 Company: Hilton<br>
-Location: Dubai<br>
+Location: Dubai<br><br>
+
+<a href="/job-link2">Waiter</a><br>
+Company: Accor<br>
+Location: Qatar<br><br>
 
 
-
-OUTPUT FORMAT:
+OUTPUT FORMAT (STRICT):
 
 {{
   "intro": "short intro",
-  "text": "formatted text",
+  "text": "FULL STRING ONLY",
   "followup": "next suggestion"
 }}
 
 IMPORTANT:
-- Show max 5 results
-- Keep clean readable format
+- Max 5 results
+- DO NOT CUT OUTPUT
+- DO NOT RETURN ARRAY
 """
 
-    text = generate(prompt, 400)
+    text = generate(prompt, 700)
     data = safe_json(text)
 
     if not data:
