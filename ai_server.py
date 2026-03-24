@@ -679,6 +679,7 @@ OUTPUT STRICT JSON:
         }, timeout=20)
 
         text = r.json().get("content", "")
+        print("\nRAW LLM:", text)
         data = safe_json_parse(text)
 
         if data:
