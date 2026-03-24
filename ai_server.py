@@ -64,7 +64,7 @@ item ::= "{" ws
     "\"model_type\"" ws ":" ws string
 ws "}"
 
-string ::= "\"" ([^"\\] | "\\" .)* "\""
+string ::= "\"" ([^"\\'] | "\\" .)* "\""
 
 ws ::= [ \t\n\r]*
 """
@@ -144,7 +144,12 @@ def safe_json(text):
     except Exception as e:
         print("JSON FAIL:", e)
         print(text)
-        return None
+
+        text = text.replace("'", "")
+        try:
+            return json.loads(text)
+        except:
+            return None
     
 
 def detect_intent(query):
