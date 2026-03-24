@@ -397,72 +397,47 @@ Query: {req.query}
 History: {req.history}
 Data: {req.context}
 
-STRICT RULES
+STRICT RULES:
 
-1. "text" MUST BE A SINGLE STRING (NOT ARRAY)
-2. DO NOT RETURN [] or list
-3. RETURN ONE CONTINUOUS STRING
-4. USE:
-   - <br> for line break
-   - <strong> for title
-   - <a href=""> for links
-5. DO NOT USE <p>, <span>, or complex HTML
-6. DO NOT WRITE CODE
-7. EACH RESULT MUST HAVE:
-   - Title (bold + link)
-   - Location
-   - One-line description
-   - MUST END WITH <br><br>
-8. DO NOT USE \\n ANYWHERE
-9. FOLLOWUP IS MANDATORY
-10. FOLLOWUP MUST:
-   - be related to query
-   - be useful next action
-   - max 8 words
-   - no punctuation
+1. RETURN JSON ONLY
+2. DO NOT RETURN HTML
+3. DO NOT INVENT DATA
+4. USE ONLY VALUES FROM "Data"
+5. SELECT BEST MATCHING RESULTS
 
-CRITICAL JSON RULES:
-- Return VALID JSON only
-- DO NOT use + operator
-- DO NOT split strings
-- "text" must be ONE continuous string
+EACH RESULT MUST HAVE:
+- title (exact match from Data)
+- url (exact)
+- company (exact)
+- location (exact)
+- model_type (exact)
 
-FORMAT EXAMPLE:
+MAX 5 RESULTS
 
-<strong><a href="/event-link">Event Title</a></strong><br>
-Location: Dubai<br>
-Description: Short text<br><br>
-
-<strong><a href="/event-link2">Event Title 2</a></strong><br>
-Location: UAE<br>
-Description: Short text<br><br>
-
-
-OUTPUT FORMAT (STRICT):
+OUTPUT:
 
 {{
-  "intro": "short intro",
-  "text": "FULL STRING ONLY",
-  "followup": "short helpful suggestion based on query"
+  "intro": "short helpful intro",
+  "results": [
+    {{
+      "title": "exact title from data",
+      "url": "exact url",
+      "company": "exact company",
+      "location": "exact location",
+      "model_type": "job"
+    }}
+  ],
+  "followup": "short next suggestion"
 }}
-
-IMPORTANT:
-- Max 5 results
-- DO NOT CUT OUTPUT
-- DO NOT RETURN ARRAY
 """
 
-    text = generate(prompt, 500)
+    text = generate(prompt, 400)
     data = safe_json(text)
-
-    print("raw text:", text)
-
-    print("data:", data)
 
     if not data:
         return {
             "intro": "No results found",
-            "text": "",
+            "results": [],
             "followup": "Try another search"
         }
 
