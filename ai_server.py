@@ -85,25 +85,26 @@ def safe_json(text):
 
     text = text.replace("```json", "").replace("```", "").strip()
 
-    text = re.sub(r'"\s*\+\s*"', '', text, flags=re.DOTALL)
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        text = match.group()
 
-    text = re.sub(r'\+\s*\n\s*"', '"', text)
+
+    text = text.replace("“", '"').replace("”", '"')
+
+    text = re.sub(r"(?<!\\)'", '"', text)
+
+    text = re.sub(r",\s*}", "}", text)
+    text = re.sub(r",\s*]", "]", text)
+
+    text = re.sub(r'[\x00-\x1F]+', ' ', text)
 
     try:
         return json.loads(text)
     except Exception as e:
-        print("JSON LOAD ERROR:", e)
-
-    try:
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            cleaned = match.group()
-            cleaned = re.sub(r'"\s*\+\s*"', '', cleaned, flags=re.DOTALL)
-            return json.loads(cleaned)
-    except Exception as e:
         print("FINAL JSON FAIL:", e)
-
-    return None
+        print("BROKEN JSON:", text)
+        return None
 
 import re
 
@@ -411,6 +412,9 @@ STRICT RULES:
 4. DO NOT INVENT DATA
 5. USE ONLY VALUES FROM "Data"
 6. SELECT BEST MATCHING RESULTS
+7. DO NOT use apostrophes (') in output
+8. Use only double quotes (") for JSON
+9. Keep followup simple (max 8 words, no punctuation)
 
 EACH RESULT MUST HAVE:
 - title (exact match from Data)
