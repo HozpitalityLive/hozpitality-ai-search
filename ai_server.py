@@ -362,14 +362,17 @@ def semantic_search(query, k=5):
 
     return [vector_data[i] for i in indices[0] if i < len(vector_data)]
 
-def fetch_db_context():
-    rows = safe_db_execute("""
+def fetch_db_context(intent):
+    query = f"""
         SELECT DISTINCT ON (title) title, category_text, ai_keywords, content
         FROM master_search_mastersearchindex
         WHERE is_live = TRUE
+        AND LOWER(category_text) LIKE '%{intent}%'
         ORDER BY title, id DESC
         LIMIT 5
-    """)
+    """
+
+    rows = safe_db_execute(query)
 
     return [{
         "title": r[0],
@@ -389,7 +392,7 @@ def hybrid_search(query):
     sem = semantic_search(improved_query)
     if intent:
         sem = [r for r in sem if intent in (r.get("category") or "").lower()]
-    db = fetch_db_context()
+    db = fetch_db_context(intent)
 
     print(f"[HYBRID] Semantic results: {len(sem)}")
     print(f"[HYBRID] DB fallback results: {len(db)}")
@@ -433,21 +436,12 @@ def hybrid_search(query):
     final = sorted(combined.values(), key=lambda x: x["score"], reverse=True)
 
     if intent:
-        filtered = []
-        for x in final:
-            category = x["data"].get("category") or ""
-            category = category.lower()
+        filtered = [
+            x for x in final
+            if intent in (x["data"].get("category") or "").lower()
+        ]
 
-            if intent and (
-                intent in category or
-                category.startswith(intent)
-            ):
-                filtered.append(x)
-
-        if filtered:
-            final = filtered[:5]
-        else:
-            final = final[:5]
+        final = filtered[:5] if filtered else []
     else:
         final = final[:5]
 
