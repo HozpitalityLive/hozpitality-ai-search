@@ -25,6 +25,12 @@ class KeywordGenRequest(BaseModel):
     title: str
     content: str
 
+class ChatRequest(BaseModel):
+    query: str
+    context: list = []
+    history: list = []
+    google_links: list = []
+    type: str = ""
 
 def generate(prompt, tokens=300):
 
@@ -378,6 +384,58 @@ def summary(req: SummaryRequest):
         "intro": intro,
         "suggestions": suggestions
     }
+
+@app.post("/chat")
+def chat(req: ChatRequest):
+
+    prompt = f"""
+You are a hospitality AI assistant.
+
+Query:
+{req.query}
+
+History:
+{req.history}
+
+Data:
+{req.context}
+
+Links:
+{req.google_links}
+
+TASK:
+
+1. Understand query (time-based, follow-up, intent)
+2. Use history if needed
+3. Build HTML UI:
+
+RULES:
+
+- job → table
+- event → list with date
+- professional → card
+- mixed → grouped
+
+OUTPUT JSON:
+{{
+"intro_html": "<p>text</p>",
+"results_html": "<html>",
+"followup": "next query"
+}}
+"""
+
+    text = generate(prompt)
+    data = safe_json(text)
+
+    if not data:
+        return {
+            "intro_html": "<p>No results found</p>",
+            "results_html": "",
+            "followup": "Try another search"
+        }
+
+    return data
+
 
 
 @app.get("/")
