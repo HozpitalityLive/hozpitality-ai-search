@@ -396,9 +396,7 @@ Query: {req.query}
 History: {req.history}
 Data: {req.context}
 
-========================
 STRICT RULES
-========================
 
 1. RETURN SIMPLE TEXT ONLY
 2. USE HTML TAGS:
@@ -409,16 +407,14 @@ STRICT RULES
 4. DO NOT USE JSON INSIDE HTML
 5. DO NOT WRITE CODE
 
-========================
 
 FORMAT EXAMPLE:
 
-<strong>Chef Job</strong><br>
+<a href="/job-link">Chef Job</a><br><br>
 Company: Hilton<br>
 Location: Dubai<br>
-<a href="/job-link">View Job</a><br><br>
 
-========================
+
 
 OUTPUT FORMAT:
 
