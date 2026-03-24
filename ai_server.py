@@ -489,112 +489,193 @@ def safe_json_parse(text):
 
     return None
 
+# def generate_full_ai(query, context, history):
+
+#     prompt = f"""
+# You are Hozpitality AI Assistant.
+
+# You behave like ChatGPT but specialized for hospitality (jobs, companies, news, events).
+
+# ====================
+# USER QUERY:
+# {query}
+
+# CONTEXT (JSON):
+# {context}
+
+# HISTORY:
+# {history}
+
+# 🎯 YOUR TASK:
+
+# 1. Understand user intent deeply
+# 2. Decide response style:
+#    - If informational → explain clearly
+#    - If job search → show relevant jobs
+#    - If mixed → explain + suggest
+# 3. Use context ONLY if relevant
+# 4. If relevant items exist in context:
+# - ALWAYS show them (max 3–5)
+# - Even if data is partial
+
+# If no items exist → then say no results
+
+# 🧠 RESPONSE RULES:
+
+# - You are NOT a search engine
+# - You are an assistant
+
+# ✔ You MAY:
+# - explain
+# - summarize
+# - suggest
+# - list items (if needed)
+
+# ❌ DO NOT:
+# - force list always
+# - show irrelevant items
+# - dump raw data
+
+# 🌐 HTML RULES:
+
+# - Use clean HTML only
+# - Use:
+#   <p> for explanation
+#   <ul><li> ONLY if listing helps
+#   <strong> for highlights
+
+# - Links format:
+
+# job:
+# https://www.hozpitality.com/jobs/details/{{slug}}/
+
+# article:
+# https://www.hozpitality.com/articles/details/{{slug}}/
+
+# company/professional/supplier:
+# https://www.hozpitality.com/profile/{{slug}}/
+
+# event:
+# https://www.hozpitality.com/events/details/{{slug}}/
+
+# awards:
+# https://www.hozpitality.com/awards
+
+# - If slug exists → use clickable link  
+# - If slug missing → show plain text title
+# - NEVER hallucinate links
+
+# 🎯 OUTPUT FORMAT (STRICT JSON):
+
+# {{
+#   "intro_html": "<p>natural human-like intro</p>",
+#   "results_html": "<div>clean structured html</div>",
+#   "followup": "relevant follow-up question"
+# }}
+
+# 💡 EXAMPLES:
+
+# User: chef jobs
+
+# → GOOD:
+# <p>Here are some chef job opportunities you can explore:</p>
+# <ul>
+#   <li><a href="...">Chef - Dubai</a></li>
+# </ul>
+
+# User: what is hospitality industry
+
+# → GOOD:
+# <p>The hospitality industry includes hotels, restaurants...</p>
+
+# """
+
+#     try:
+#         r = requests.post(LLM_URL, json={
+#             "prompt": f"[INST] {prompt} [/INST]",
+#             "n_predict": 500,
+#             "temperature": 0.4   # 🔥 slightly creative (important)
+#         }, timeout=20)
+
+#         text = r.json().get("content", "")
+#         data = safe_json_parse(text)
+
+#         if data:
+#             return data
+
+#     except Exception as e:
+#         print("❌ LLM ERROR:", e)
+
+#     return {
+#         "intro_html": f"<p>Here’s what I found for '{query}':</p>",
+#         "results_html": "<div><p>No strong results available right now.</p></div>",
+#         "followup": "Would you like me to refine your search?"
+#     }
+
 def generate_full_ai(query, context, history):
 
     prompt = f"""
 You are Hozpitality AI Assistant.
 
-You behave like ChatGPT but specialized for hospitality (jobs, companies, news, events).
+You MUST act as a job search assistant.
 
-====================
 USER QUERY:
 {query}
 
-CONTEXT (JSON):
+CONTEXT (JSON ARRAY):
 {context}
 
-HISTORY:
-{history}
 
-🎯 YOUR TASK:
+CRITICAL RULE (OVERRIDE ALL):
 
-1. Understand user intent deeply
-2. Decide response style:
-   - If informational → explain clearly
-   - If job search → show relevant jobs
-   - If mixed → explain + suggest
-3. Use context ONLY if relevant
-4. If relevant items exist in context:
-- ALWAYS show them (max 3–5)
-- Even if data is partial
+If ANY item in context has "type": "job":
+→ You MUST show those jobs
+→ NEVER say "no results"
+→ NEVER ignore context
 
-If no items exist → then say no results
 
-🧠 RESPONSE RULES:
+HOW TO USE CONTEXT:
 
-- You are NOT a search engine
-- You are an assistant
+Each item contains:
+- title → job title
+- description / full_content → job details
+- slug → job link (if available)
 
-✔ You MAY:
-- explain
-- summarize
-- suggest
-- list items (if needed)
 
-❌ DO NOT:
-- force list always
-- show irrelevant items
-- dump raw data
+RESPONSE RULES:
 
-🌐 HTML RULES:
+- ALWAYS show jobs if present
+- Show 3–5 items
+- If slug exists → clickable link
+- If no slug → plain text
 
-- Use clean HTML only
-- Use:
-  <p> for explanation
-  <ul><li> ONLY if listing helps
-  <strong> for highlights
+- DO NOT reject results
+- DO NOT say "no results" if jobs exist
 
-- Links format:
 
-job:
-https://www.hozpitality.com/jobs/details/{{slug}}/
+HTML FORMAT:
 
-article:
-https://www.hozpitality.com/articles/details/{{slug}}/
+<p>Intro sentence</p>
 
-company/professional/supplier:
-https://www.hozpitality.com/profile/{{slug}}/
-
-event:
-https://www.hozpitality.com/events/details/{{slug}}/
-
-awards:
-https://www.hozpitality.com/awards
-
-- If slug exists → use clickable link  
-- If slug missing → show plain text title
-- NEVER hallucinate links
-
-🎯 OUTPUT FORMAT (STRICT JSON):
-
-{{
-  "intro_html": "<p>natural human-like intro</p>",
-  "results_html": "<div>clean structured html</div>",
-  "followup": "relevant follow-up question"
-}}
-
-💡 EXAMPLES:
-
-User: chef jobs
-
-→ GOOD:
-<p>Here are some chef job opportunities you can explore:</p>
 <ul>
-  <li><a href="...">Chef - Dubai</a></li>
+  <li><a href="JOB_LINK">Job Title</a></li>
 </ul>
 
-User: what is hospitality industry
 
-→ GOOD:
-<p>The hospitality industry includes hotels, restaurants...</p>
+OUTPUT STRICT JSON:
 
+{{
+  "intro_html": "...",
+  "results_html": "...",
+  "followup": "..."
+}}
 """
 
     try:
         r = requests.post(LLM_URL, json={
             "prompt": f"[INST] {prompt} [/INST]",
-            "n_predict": 500,
-            "temperature": 0.4   # 🔥 slightly creative (important)
+            "n_predict": 250,   
+            "temperature": 0.3
         }, timeout=20)
 
         text = r.json().get("content", "")
@@ -607,9 +688,9 @@ User: what is hospitality industry
         print("❌ LLM ERROR:", e)
 
     return {
-        "intro_html": f"<p>Here’s what I found for '{query}':</p>",
-        "results_html": "<div><p>No strong results available right now.</p></div>",
-        "followup": "Would you like me to refine your search?"
+        "intro_html": f"<p>Here are some job opportunities for '{query}':</p>",
+        "results_html": "<div><p>Please try again.</p></div>",
+        "followup": "Would you like jobs in a specific location?"
     }
 
 def extract_slug(content):
