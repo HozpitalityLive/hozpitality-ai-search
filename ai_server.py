@@ -158,7 +158,7 @@ Output:
 {{
 "intent":"FAQ",
 "type":"faq",
-"keywords":"job application",
+"keywords":"faq",
 "location":""
 }}
 
