@@ -139,17 +139,25 @@ def generate(prompt, tokens=300):
 
 
 def safe_json(text):
+    import json, re
+
+    if not text:
+        return None
+
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        text = match.group()
+
+    text = re.sub(r"(?<=: )\"([^\"]*)'([^\"]*)\"", lambda m: f"\"{m.group(1)}{m.group(2)}\"", text)
+
+    text = text.replace("'", "")
+
     try:
         return json.loads(text)
     except Exception as e:
         print("JSON FAIL:", e)
-        print(text)
-
-        text = text.replace("'", "")
-        try:
-            return json.loads(text)
-        except:
-            return None
+        print("FINAL TEXT:", text)
+        return None
     
 
 def detect_intent(query):
@@ -461,6 +469,8 @@ STRICT RULES:
 7. DO NOT use apostrophes (') in output
 8. Use only double quotes (") for JSON
 9. Keep followup simple (max 8 words, no punctuation)
+10. followup MUST NOT contain quotes or special characters
+11. followup MUST be plain words only
 
 EACH RESULT MUST HAVE:
 - title (exact match from Data)
