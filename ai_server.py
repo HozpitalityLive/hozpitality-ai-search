@@ -397,13 +397,20 @@ Query: {req.query}
 History: {req.history}
 Data: {req.context}
 
+
 STRICT RULES:
 
-1. RETURN JSON ONLY
-2. DO NOT RETURN HTML
-3. DO NOT INVENT DATA
-4. USE ONLY VALUES FROM "Data"
-5. SELECT BEST MATCHING RESULTS
+1. If query mentions:
+   - "today" → prefer today's content
+   - "latest" → prefer newest content
+   - "upcoming" → prefer future events
+   - "active" → prefer active items
+
+2. RETURN JSON ONLY
+3. DO NOT RETURN HTML
+4. DO NOT INVENT DATA
+5. USE ONLY VALUES FROM "Data"
+6. SELECT BEST MATCHING RESULTS
 
 EACH RESULT MUST HAVE:
 - title (exact match from Data)
