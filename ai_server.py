@@ -399,9 +399,23 @@ Data: {req.context}
 STRICT RULES
 ========================
 
-1. DO NOT GENERATE HTML
-2. DO NOT GENERATE CODE
-3. RETURN STRUCTURED JSON ONLY
+1. RETURN SIMPLE TEXT ONLY
+2. USE HTML TAGS:
+   - <br> for line break
+   - <strong> for title
+   - <a href=""> for links
+3. DO NOT USE TABLE
+4. DO NOT USE JSON INSIDE HTML
+5. DO NOT WRITE CODE
+
+========================
+
+FORMAT EXAMPLE:
+
+<strong>Chef Job</strong><br>
+Company: Hilton<br>
+Location: Dubai<br>
+<a href="/job-link">View Job</a><br><br>
 
 ========================
 
@@ -409,22 +423,13 @@ OUTPUT FORMAT:
 
 {{
   "intro": "short intro",
-  "display_type": "table | list | cards",
-  "items": [
-    {{
-      "title": "string",
-      "company": "string",
-      "location": "string",
-      "url": "string",
-      "type": "job | event | professional"
-    }}
-  ],
-  "followup": "short suggestion"
+  "text": "formatted text",
+  "followup": "next suggestion"
 }}
 
 IMPORTANT:
-- Use ONLY given data
-- Max 6 items
+- Show max 5 results
+- Keep clean readable format
 """
 
     text = generate(prompt, 400)
@@ -433,8 +438,7 @@ IMPORTANT:
     if not data:
         return {
             "intro": "No results found",
-            "display_type": "list",
-            "items": [],
+            "text": "",
             "followup": "Try another search"
         }
 
