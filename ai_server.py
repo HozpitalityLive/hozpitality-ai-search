@@ -660,11 +660,13 @@ def chat(req: ChatRequest):
 
     print("[API] Context selected:", len(context))
 
-    print("\n====== FINAL CONTEXT TO LLM ======")
-    print(context_text)
+    
 
     context_text = build_context(context)
     history_text = build_history(req.history)
+
+    print("\n====== FINAL CONTEXT TO LLM ======")
+    print(context_text)
 
     ai = generate_full_ai(query, context_text, history_text)
 
