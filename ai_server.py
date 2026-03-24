@@ -396,9 +396,7 @@ Query: {req.query}
 History: {req.history}
 Data: {req.context}
 
-========================
 STRICT RULES
-========================
 
 1. "text" MUST BE A SINGLE STRING (NOT ARRAY)
 2. DO NOT RETURN [] or list
@@ -422,7 +420,11 @@ STRICT RULES
    - max 8 words
    - no punctuation
 
-
+CRITICAL JSON RULES:
+- Return VALID JSON only
+- DO NOT use + operator
+- DO NOT split strings
+- "text" must be ONE continuous string
 
 FORMAT EXAMPLE:
 
