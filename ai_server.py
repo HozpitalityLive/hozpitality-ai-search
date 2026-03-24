@@ -409,17 +409,30 @@ STRICT RULES
    - <a href=""> for links
 5. DO NOT USE <p>, <span>, or complex HTML
 6. DO NOT WRITE CODE
+7. EACH RESULT MUST HAVE:
+   - Title (bold + link)
+   - Location
+   - One-line description
+   - MUST END WITH <br><br>
+8. DO NOT USE \\n ANYWHERE
+9. FOLLOWUP IS MANDATORY
+10. FOLLOWUP MUST:
+   - be related to query
+   - be useful next action
+   - max 8 words
+   - no punctuation
+
 
 
 FORMAT EXAMPLE:
 
-<a href="/job-link">Chef Job</a><br>
-Company: Hilton<br>
-Location: Dubai<br><br>
+<strong><a href="/event-link">Event Title</a></strong><br>
+Location: Dubai<br>
+Description: Short text<br><br>
 
-<a href="/job-link2">Waiter</a><br>
-Company: Accor<br>
-Location: Qatar<br><br>
+<strong><a href="/event-link2">Event Title 2</a></strong><br>
+Location: UAE<br>
+Description: Short text<br><br>
 
 
 OUTPUT FORMAT (STRICT):
@@ -427,7 +440,7 @@ OUTPUT FORMAT (STRICT):
 {{
   "intro": "short intro",
   "text": "FULL STRING ONLY",
-  "followup": "next suggestion"
+  "followup": "short helpful suggestion based on query"
 }}
 
 IMPORTANT:
