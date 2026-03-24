@@ -391,92 +391,50 @@ def chat(req: ChatRequest):
     prompt = f"""
 You are a hospitality AI assistant.
 
-Query:
-{req.query}
-
-History:
-{req.history}
-
-Data:
-{req.context}
-
-Links:
-{req.google_links}
+Query: {req.query}
+History: {req.history}
+Data: {req.context}
 
 ========================
-STRICT INSTRUCTIONS
+STRICT RULES
 ========================
 
-1. RETURN ONLY PURE HTML
-2. DO NOT WRITE JAVASCRIPT
-3. DO NOT USE LOOPS
-4. DO NOT WRITE CODE LIKE for(), map(), etc.
-5. WRITE FINAL HTML DIRECTLY
+1. DO NOT GENERATE HTML
+2. DO NOT GENERATE CODE
+3. RETURN STRUCTURED JSON ONLY
 
 ========================
 
-HTML RULES:
-
-👉 JOBS → TABLE
-
-<table border="1" cellpadding="6">
-<tr>
-<th>Title</th>
-<th>Company</th>
-<th>Location</th>
-</tr>
-
-<tr>
-<td>Chef</td>
-<td>Hilton</td>
-<td>Dubai</td>
-</tr>
-
-</table>
-
-
-👉 EVENTS → LIST
-
-<ul>
-<li><b>Event Name</b> - Location</li>
-</ul>
-
-
-👉 PROFESSIONAL → CARD
-
-<div style="border:1px solid #ddd; padding:10px; margin:5px;">
-<img src="avatar" width="40"/>
-<b>Name</b><br/>
-Experience<br/>
-Location
-</div>
-
-
-========================
-OUTPUT FORMAT (STRICT JSON)
-========================
+OUTPUT FORMAT:
 
 {{
-"intro_html": "<p>text</p>",
-"results_html": "<FULL HTML STRING>",
-"followup": "short suggestion"
+  "intro": "short intro",
+  "display_type": "table | list | cards",
+  "items": [
+    {{
+      "title": "string",
+      "company": "string",
+      "location": "string",
+      "url": "string",
+      "type": "job | event | professional"
+    }}
+  ],
+  "followup": "short suggestion"
 }}
 
-========================
-
 IMPORTANT:
-- Generate FULL HTML (not partial)
-- No JS, no loops, no pseudo code
-- Use only given data
+- Use ONLY given data
+- Max 6 items
 """
 
-    text = generate(prompt, 500)
+    text = generate(prompt, 400)
     data = safe_json(text)
 
     if not data:
         return {
-            "intro_html": "<p>No results found</p>",
-            "results_html": "<p>No results</p>",
+            "intro": "No results found",
+            "display_type": "list",
+            "items": [],
             "followup": "Try another search"
         }
 
