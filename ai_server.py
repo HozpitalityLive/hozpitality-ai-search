@@ -610,7 +610,8 @@ User: what is hospitality industry
 def extract_slug(content):
     if not content:
         return ""
-    match = re.search(r"Slug:\s*(\S+)", content)
+
+    match = re.search(r"[Ss]lug:\s*(\S+)", content)
     return match.group(1) if match else ""
 
 
