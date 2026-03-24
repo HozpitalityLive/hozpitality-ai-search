@@ -85,24 +85,25 @@ def safe_json(text):
 
     text = text.replace("```json", "").replace("```", "").strip()
 
+    text = re.sub(r'"\s*\+\s*"', '', text, flags=re.DOTALL)
+
+    text = re.sub(r'\+\s*\n\s*"', '"', text)
+
     try:
         return json.loads(text)
-    except:
-        pass
-
-    match = re.search(r"\{.*", text, re.DOTALL)
-    if not match:
-        return None
-
-    partial = match.group()
+    except Exception as e:
+        print("JSON LOAD ERROR:", e)
 
     try:
-        partial = partial.rstrip(", \n")
-        if not partial.endswith("}"):
-            partial += '"}'  
-        return json.loads(partial)
-    except:
-        return None
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            cleaned = match.group()
+            cleaned = re.sub(r'"\s*\+\s*"', '', cleaned, flags=re.DOTALL)
+            return json.loads(cleaned)
+    except Exception as e:
+        print("FINAL JSON FAIL:", e)
+
+    return None
 
 import re
 
