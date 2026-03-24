@@ -449,7 +449,7 @@ IMPORTANT:
 - DO NOT RETURN ARRAY
 """
 
-    text = generate(prompt, 700)
+    text = generate(prompt, 500)
     data = safe_json(text)
 
     if not data:
