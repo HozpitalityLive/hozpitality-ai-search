@@ -112,78 +112,80 @@ def load_faiss():
     return False
 
 def analyze_query(query):
-    prompt = f"""
-You are a STRICT search query intent classifier.
+    q = query.strip()
 
-User Query:
-{query}
+    # 🔹 SOFT GUARDRAILS (precision boost, not hardcoding)
+    q_lower = q.lower()
+
+    job_signals = ["job", "jobs", "vacancy", "vacancies", "hiring", "career", "apply"]
+    award_signals = ["award", "awards", "nomination", "winner", "ranking"]
+
+    if any(w in q_lower for w in job_signals):
+        return "job", q
+
+    if any(w in q_lower for w in award_signals):
+        return "awards", q
+
+    # 🔹 FEW-SHOT PROMPT (THIS IS THE REAL FIX)
+    prompt = f"""
+You are an intent classifier for a hospitality platform (jobs, companies, news, events).
+
+Classify the query into ONE of:
+job, article, professional, faq, company, event, supplier, product, awards
+
+Examples:
+
+"chef jobs" → job
+"hotel vacancies dubai" → job
+"apply for waiter job" → job
+"latest hotel news" → article
+"dubai hospitality trends" → article
+"how to apply for job" → faq
+"what is hospitality industry" → faq
+"marriott hotel company" → company
+"top chefs in dubai" → professional
+"upcoming hospitality events dubai" → event
+"hotel awards 2025" → awards
+"kitchen equipment supplier" → supplier
+"buy hotel furniture" → product
+
+Now classify:
+
+Query: {q}
 
 Return ONLY valid JSON:
-
 {{
-  "intent": "job/article/professional/faq/company/event/supplier/product/awards",
-  "query": "clean improved search query"
+  "intent": "...",
+  "query": "clean improved query"
 }}
-
-INTENT DEFINITIONS:
-
-- job → job search, hiring, vacancies
-- article → general reading, news, blogs, information
-- faq → how-to, help, instructions, questions
-- company → company, brand, employer
-- event → conferences, summits, expos, scheduled events
-- awards → awards, nominations, winners, contests, rankings
-- product → items, marketplace, buy/sell
-- supplier → vendors, suppliers
-- professional → people, profiles
-
-STRICT RULES:
-
-1. If query contains:
-   - "award", "awards", "nomination", "winner", "ranking"
-   → intent MUST be "awards"
-
-2. If query contains:
-   - "date", "deadline", "upcoming", "schedule"
-   AND also contains "award"
-   → intent MUST be "awards"
-
-3. If query is about event timing WITHOUT awards
-   → intent = "event"
-
-4. NEVER classify award-related queries as "article"
-
-5. query must be corrected and meaningful (e.g., "upcoming awards dates 2026")
-
-6. NO explanation, ONLY JSON
-
-Output:
 """
 
     try:
         r = requests.post(LLM_URL, json={
             "prompt": f"[INST] {prompt} [/INST]",
-            "n_predict": 100,
+            "n_predict": 80,
             "temperature": 0.0
         }, timeout=5)
 
         text = r.json().get("content", "")
-
         data = safe_json_parse(text)
 
         if data:
-            intent = data.get("intent", "article")
-            new_query = data.get("query", query)
+            intent = data.get("intent", "").strip().lower()
+            new_query = data.get("query", q)
 
             if intent not in TYPE_MAPPING:
                 intent = "article"
+
+            if any(w in q_lower for w in job_signals):
+                intent = "job"
 
             return intent, new_query
 
     except Exception as e:
         print("Analyze error:", e)
 
-    return "article", query
+    return "article", q
 
 def generate(prompt, tokens=500):
 
@@ -385,6 +387,8 @@ def hybrid_search(query):
     print("[HYBRID] Improved Query:", improved_query)
 
     sem = semantic_search(improved_query)
+    if intent:
+        sem = [r for r in sem if intent in (r.get("category") or "").lower()]
     db = fetch_db_context()
 
     print(f"[HYBRID] Semantic results: {len(sem)}")
@@ -496,160 +500,117 @@ def generate_full_ai(query, context, history):
     prompt = f"""
 You are Hozpitality AI Assistant.
 
-INPUT
-User Query:
+You behave like ChatGPT but specialized for hospitality (jobs, companies, news, events).
+
+====================
+USER QUERY:
 {query}
 
-Context:
+CONTEXT (JSON):
 {context}
 
-History:
+HISTORY:
 {history}
 
-OBJECTIVE
+🎯 YOUR TASK:
 
-Your job is to:
-1. Understand user intent
-2. Filter and select ONLY relevant context
-3. Generate structured HTML response
+1. Understand user intent deeply
+2. Decide response style:
+   - If informational → explain clearly
+   - If job search → show relevant jobs
+   - If mixed → explain + suggest
+3. Use context ONLY if relevant
+4. Do NOT blindly list results
 
-DECISION LOGIC
+🧠 RESPONSE RULES:
 
-STEP 1: Detect intent
+- You are NOT a search engine
+- You are an assistant
 
-STEP 2: Check if FAQ exists
-- If any context item:
-  - looks like a question/answer OR
-  - contains instructions OR
-  - starts with "how", "what", "can I"
+✔ You MAY:
+- explain
+- summarize
+- suggest
+- list items (if needed)
 
-THEN:
-- Treat it as FAQ
-- Extract its CONTENT
-- Convert into step-by-step guide
-- IGNORE all other items
+❌ DO NOT:
+- force list always
+- show irrelevant items
+- dump raw data
 
-STEP 3: If NO FAQ
-- Select top 3 relevant items
-- Show them as list/cards
+🌐 HTML RULES:
 
-FAQ OUTPUT RULE
+- Use clean HTML only
+- Use:
+  <p> for explanation
+  <ul><li> ONLY if listing helps
+  <strong> for highlights
 
-- Convert answer into 4–6 steps
-- Each step must be short and actionable
-- Use STRICT HTML:
+- Links format:
 
-CRITICAL LINKING RULES:
+job:
+https://www.hozpitality.com/jobs/details/{{slug}}/
 
-- Every result MUST be a clickable <a> tag using slug
-- Extract "Slug: xyz" from context
+article:
+https://www.hozpitality.com/articles/details/{{slug}}/
 
-URL FORMAT RULES:
+company/professional/supplier:
+https://www.hozpitality.com/profile/{{slug}}/
 
-- job → https://www.hozpitality.com/jobs/details/{{slug}}/
-- company → https://www.hozpitality.com/profile/{{slug}}/
-- professional → https://www.hozpitality.com/profile/{{slug}}/
-- supplier → https://www.hozpitality.com/profile/{{slug}}/
-- article → https://www.hozpitality.com/articles/details/{{slug}}/
-- event → https://www.hozpitality.com/events/details/{{slug}}/
-- awards → https://www.hozpitality.com/awards
+event:
+https://www.hozpitality.com/events/details/{{slug}}/
 
-IMPORTANT:
+awards:
+https://www.hozpitality.com/awards
 
-- ALWAYS wrap title in <a href="URL">TITLE</a>
-- If slug is missing → DO NOT create link
-- NEVER hallucinate slug
-- Use ONLY slug from context
+- ONLY use slug if present
+- NEVER hallucinate links
 
-<div>
-  <ol>
-    <li>Step 1</li>
-    <li>Step 2</li>
-  </ol>
-</div>
-
-NON-FAQ OUTPUT RULE
-
-- Use max 3 items
-- Use <ul><li> format
-- Each <li> MUST contain clickable link:
-
-<li>
-  <a href="URL">Title</a>
-</li>
-- Keep titles short
-
-OUTPUT FORMAT (STRICT JSON)
-
-Return ONLY valid JSON:
+🎯 OUTPUT FORMAT (STRICT JSON):
 
 {{
-  "intro_html": "<p>Short engaging intro</p>",
-  "results_html": "<div>HTML content</div>",
-  "followup": "One relevant follow-up question",
+  "intro_html": "<p>natural human-like intro</p>",
+  "results_html": "<div>clean structured html</div>",
+  "followup": "relevant follow-up question"
 }}
 
+💡 EXAMPLES:
 
+User: chef jobs
 
-CRITICAL RULES
+→ GOOD:
+<p>Here are some chef job opportunities you can explore:</p>
+<ul>
+  <li><a href="...">Chef - Dubai</a></li>
+</ul>
 
-- ONLY use "Hozpitality" (no other platforms)
-- DO NOT hallucinate
-- Use ONLY given context
-- DO NOT invent data
-- ALWAYS return valid JSON
-- ALWAYS close all HTML tags
-- Keep response concise
-- Do NOT decide action
-- Action is handled by system
+User: what is hospitality industry
 
-EXAMPLE
+→ GOOD:
+<p>The hospitality industry includes hotels, restaurants...</p>
 
-Context:
-TYPE: faq
-TITLE: How do I apply for a job?
-CONTENT: Create profile. Search jobs. Click apply. Submit application.
-
-Output:
-{{
-  "intro_html": "<p>Here’s how you can apply for a job on Hozpitality:</p>",
-  "results_html": "<div><ol><li>Create your profile</li><li>Search for jobs</li><li>Select a job</li><li>Click Apply</li><li>Submit your application</li></ol></div>",
-  "followup": "Would you like to see available jobs now?",
-  "action": "apply_job"
-}}
 """
-
-    print("\n[LLM] Sending request")
-    print("[LLM] Query:", query)
-    print("[LLM] Context:", context)
-    print("[LLM] History:", history)
 
     try:
         r = requests.post(LLM_URL, json={
             "prompt": f"[INST] {prompt} [/INST]",
             "n_predict": 500,
-            "temperature": 0.3
-        }, timeout=15)
-
-        print("[LLM] Status Code:", r.status_code)
+            "temperature": 0.4   # 🔥 slightly creative (important)
+        }, timeout=20)
 
         text = r.json().get("content", "")
-        print("[LLM] Raw Response:", text)
-
         data = safe_json_parse(text)
 
         if data:
-            print("[LLM] Parsed JSON:", data)
             return data
-        else:
-            print("⚠️ JSON parsing failed")
 
     except Exception as e:
         print("❌ LLM ERROR:", e)
 
     return {
-        "answer": f"Fallback response for: {query}",
-        "action": None
+        "intro_html": f"<p>Here’s what I found for '{query}':</p>",
+        "results_html": "<div><p>No strong results available right now.</p></div>",
+        "followup": "Would you like me to refine your search?"
     }
 
 def extract_slug(content):
@@ -661,21 +622,20 @@ def extract_slug(content):
 
 def build_context(context):
     if not context:
-        return "No strong results."
+        return "[]"
 
-    formatted = []
+    structured = []
 
-    for i, c in enumerate(context):
-        formatted.append(f"""
-ITEM {i+1}:
-TYPE: {c.get("category")}
-TITLE: {c.get("title")}
-KEYWORDS: {c.get("keywords")}
-SLUG: {extract_slug(c.get("content"))}
-CONTENT: {c.get("content")}
-""")
+    for c in context:
+        structured.append({
+            "type": (c.get("category") or "").lower(),
+            "title": c.get("title"),
+            "keywords": c.get("keywords"),
+            "summary": (c.get("content") or "")[:200],
+            "slug": extract_slug(c.get("content"))
+        })
 
-    return "\n\n".join(formatted)
+    return json.dumps(structured, indent=2)
 
 def build_history(history):
     return "\n".join([f"{h['role']}: {h['content']}" for h in history[-5:]]) if history else ""
