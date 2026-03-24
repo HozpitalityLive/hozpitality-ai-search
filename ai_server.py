@@ -452,6 +452,10 @@ IMPORTANT:
     text = generate(prompt, 500)
     data = safe_json(text)
 
+    print("raw text:", text)
+
+    print("data:", data)
+
     if not data:
         return {
             "intro": "No results found",
