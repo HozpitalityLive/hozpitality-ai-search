@@ -13,7 +13,8 @@ LLM_URL = "http://127.0.0.1:8080/completion"
 class IntentRequest(BaseModel):
     query: str
 
-
+class SynonymRequest(BaseModel):
+    text: str
 
 class SummaryRequest(BaseModel):
     query: str
@@ -443,6 +444,52 @@ IMPORTANT:
         }
 
     return data
+
+
+
+@app.post("/synonyms")
+def get_synonyms(req: SynonymRequest):
+
+    prompt = f"""
+You are an AI that generates job-related synonyms.
+
+INPUT:
+"{req.text}"
+
+TASK:
+- Extract core keywords
+- Generate related job role keywords and synonyms
+- Keep it relevant to hiring / job titles
+- Return ONLY a JSON list
+
+RULES:
+- No explanation
+- No sentence
+- Only list
+- Max 15 keywords
+- Lowercase only
+
+EXAMPLE:
+
+Input: finance
+Output:
+["finance", "accounting", "audit", "billing", "payroll", "accounts payable", "accounts receivable"]
+
+Input: IT
+Output:
+["it", "software", "developer", "engineer", "backend", "frontend", "technology"]
+
+OUTPUT:
+"""
+
+    text = generate(prompt, 120)
+
+    data = safe_json(text)
+
+    if isinstance(data, list):
+        return {"keywords": data}
+
+    return {"keywords": [req.text.lower()]}
 
 
 
