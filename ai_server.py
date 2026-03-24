@@ -514,7 +514,11 @@ HISTORY:
    - If job search → show relevant jobs
    - If mixed → explain + suggest
 3. Use context ONLY if relevant
-4. Do NOT blindly list results
+4. If relevant items exist in context:
+- ALWAYS show them (max 3–5)
+- Even if data is partial
+
+If no items exist → then say no results
 
 🧠 RESPONSE RULES:
 
@@ -557,7 +561,8 @@ https://www.hozpitality.com/events/details/{{slug}}/
 awards:
 https://www.hozpitality.com/awards
 
-- ONLY use slug if present
+- If slug exists → use clickable link  
+- If slug missing → show plain text title
 - NEVER hallucinate links
 
 🎯 OUTPUT FORMAT (STRICT JSON):
@@ -622,12 +627,15 @@ def build_context(context):
     structured = []
 
     for c in context:
+        content = c.get("content") or ""
+
         structured.append({
             "type": (c.get("category") or "").lower(),
             "title": c.get("title"),
             "keywords": c.get("keywords"),
-            "summary": (c.get("content") or "")[:200],
-            "slug": extract_slug(c.get("content"))
+            "description": content[:400],
+            "full_content": content,
+            "slug": extract_slug(content)
         })
 
     return json.dumps(structured, indent=2)
