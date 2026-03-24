@@ -139,24 +139,44 @@ def generate(prompt, tokens=300):
 
 
 def safe_json(text):
-    import json, re
+    import re, json
 
     if not text:
         return None
 
-    match = re.search(r'\{.*\}', text, re.DOTALL)
-    if match:
-        text = match.group()
+    match = re.search(r'\{.*', text, re.DOTALL)
+    if not match:
+        return None
 
-    text = re.sub(r"(?<=: )\"([^\"]*)'([^\"]*)\"", lambda m: f"\"{m.group(1)}{m.group(2)}\"", text)
+    text = match.group()
 
     text = text.replace("'", "")
 
     try:
         return json.loads(text)
+    except:
+        pass
+
+    try:
+        intro = re.search(r'"intro"\s*:\s*"([^"]*)"', text)
+        followup = re.search(r'"followup"\s*:\s*"([^"]*)"', text)
+
+        results = []
+        for m in re.finditer(r'\{[^{}]*"title"[^{}]*\}', text):
+            try:
+                obj = json.loads(m.group())
+                results.append(obj)
+            except:
+                continue
+
+        return {
+            "intro": intro.group(1) if intro else "",
+            "results": results,
+            "followup": followup.group(1) if followup else "explore more"
+        }
+
     except Exception as e:
-        print("JSON FAIL:", e)
-        print("FINAL TEXT:", text)
+        print("FALLBACK FAIL:", e)
         return None
     
 
