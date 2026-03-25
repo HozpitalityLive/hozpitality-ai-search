@@ -1,5 +1,3 @@
-# previous code 
-
 import json
 import requests
 from fastapi import FastAPI
@@ -9,69 +7,10 @@ app = FastAPI()
 
 LLM_URL = "http://127.0.0.1:8080/completion"
 
-SITE_CONTEXT = """
-Hozpitality.com is a global hospitality platform.
-
-It includes:
-- Jobs (hospitality careers, hotel jobs, chef jobs)
-- Articles (industry news, insights, trends)
-- Professionals (user profiles, candidates, experts)
-- Companies (hospitality brands, hotels, suppliers)
-- Events (upcoming hospitality events, expos)
-- Suppliers (vendors, services, B2B providers)
-- Products (equipment, services)
-- Awards (voting-based hospitality awards)
-
-FIELD MEANINGS:
-
-- title → main heading
-- content → full searchable text (includes dates, roles, departments)
-- company → associated company or brand
-- location → city/country
-- model_type → content type (job, article, professional, etc.)
-
-IMPORTANT RULES:
-
-- "professional" = person profile, not article
-- "article" = blog/news content
-- "event" = has start/end date (future = upcoming)
-- "job" = hiring role
-- "awards" = voting or competition
-
-SEARCH BEHAVIOR:
-
-- If user asks "today" → match recent or current content
-- If "latest" → prefer newest
-- If "upcoming" → prefer future events
-- If "active" → prefer currently active items
-
-NEVER GUESS:
-Only use provided Data. If no match, return empty results.
-"""
-
-json_grammar = r"""
-root ::= object
-
-object ::= "{" ws "\"intro\"" ws ":" ws string ws "," ws "\"results\"" ws ":" ws array ws "," ws "\"followup\"" ws ":" ws string ws "}"
-
-array ::= "[" ws (item (ws "," ws item)*)? ws "]"
-
-item ::= "{" ws
-    "\"title\"" ws ":" ws string ws "," ws
-    "\"url\"" ws ":" ws string ws "," ws
-    "\"company\"" ws ":" ws string ws "," ws
-    "\"location\"" ws ":" ws string ws "," ws
-    "\"model_type\"" ws ":" ws string
-ws "}"
-
-string ::= "\"" ([^"\\'] | "\\" .)* "\""
-
-ws ::= [ \t\n\r]*
-"""
-
 
 class IntentRequest(BaseModel):
     query: str
+
 
 class SynonymRequest(BaseModel):
     text: str
@@ -86,21 +25,14 @@ class KeywordGenRequest(BaseModel):
     title: str
     content: str
 
-class ChatRequest(BaseModel):
-    query: str
-    context: list = []
-    history: list = []
-    google_links: list = []
-    type: str = ""
 
 def generate(prompt, tokens=300):
 
     payload = {
         "prompt": f"[INST] {prompt} [/INST]",
         "n_predict": tokens,
-        "temperature": 0.0,
-        "top_p": 0.9,
-        "grammar": json_grammar
+        "temperature": 0.2,
+        "top_p": 0.9
     }
 
     print("\n================ LLM REQUEST ================")
@@ -139,46 +71,33 @@ def generate(prompt, tokens=300):
 
 
 def safe_json(text):
-    import re, json
+    import json, re
 
     if not text:
         return None
 
-    match = re.search(r'\{.*', text, re.DOTALL)
-    if not match:
-        return None
-
-    text = match.group()
-
-    text = text.replace("'", "")
+    text = text.replace("```json", "").replace("```", "").strip()
 
     try:
         return json.loads(text)
     except:
         pass
 
-    try:
-        intro = re.search(r'"intro"\s*:\s*"([^"]*)"', text)
-        followup = re.search(r'"followup"\s*:\s*"([^"]*)"', text)
-
-        results = []
-        for m in re.finditer(r'\{[^{}]*"title"[^{}]*\}', text):
-            try:
-                obj = json.loads(m.group())
-                results.append(obj)
-            except:
-                continue
-
-        return {
-            "intro": intro.group(1) if intro else "",
-            "results": results,
-            "followup": followup.group(1) if followup else "explore more"
-        }
-
-    except Exception as e:
-        print("FALLBACK FAIL:", e)
+    match = re.search(r"\{.*", text, re.DOTALL)
+    if not match:
         return None
-    
+
+    partial = match.group()
+
+    try:
+        partial = partial.rstrip(", \n")
+        if not partial.endswith("}"):
+            partial += '"}'  
+        return json.loads(partial)
+    except:
+        return None
+
+import re
 
 def detect_intent(query):
     categories = ['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
@@ -232,7 +151,7 @@ Output:
 {{
 "intent":"FAQ",
 "type":"faq",
-"keywords":"faq",
+"keywords":"job application",
 "location":""
 }}
 
@@ -460,75 +379,15 @@ def summary(req: SummaryRequest):
         "suggestions": suggestions
     }
 
-@app.post("/chat")
-def chat(req: ChatRequest):
 
-    prompt = f"""
-You are a hospitality AI assistant for Hozpitality.com.
-
-{SITE_CONTEXT}
-
-Query: {req.query}
-History: {req.history}
-Data: {req.context}
+@app.get("/")
+def health():
+    return {"status": "ok"}
 
 
-STRICT RULES:
 
-1. If query mentions:
-   - "today" → prefer today's content
-   - "latest" → prefer newest content
-   - "upcoming" → prefer future events
-   - "active" → prefer active items
 
-2. RETURN JSON ONLY
-3. DO NOT RETURN HTML
-4. DO NOT INVENT DATA
-5. USE ONLY VALUES FROM "Data"
-6. SELECT BEST MATCHING RESULTS
-7. DO NOT use apostrophes (') in output
-8. Use only double quotes (") for JSON
-9. Keep followup simple (max 8 words, no punctuation)
-10. followup MUST NOT contain quotes or special characters
-11. followup MUST be plain words only
 
-EACH RESULT MUST HAVE:
-- title (exact match from Data)
-- url (exact)
-- company (exact)
-- location (exact)
-- model_type (exact)
-
-MAX 5 RESULTS
-
-OUTPUT:
-
-{{
-  "intro": "short helpful intro",
-  "results": [
-    {{
-      "title": "exact title from data",
-      "url": "exact url",
-      "company": "exact company",
-      "location": "exact location",
-      "model_type": "job"
-    }}
-  ],
-  "followup": "short next suggestion"
-}}
-"""
-
-    text = generate(prompt, 400)
-    data = safe_json(text)
-
-    if not data:
-        return {
-            "intro": "No results found",
-            "results": [],
-            "followup": "Try another search"
-        }
-
-    return data
 
 
 
@@ -575,9 +434,3 @@ OUTPUT:
         return {"keywords": data}
 
     return {"keywords": [req.text.lower()]}
-
-
-
-@app.get("/")
-def health():
-    return {"status": "ok"}
