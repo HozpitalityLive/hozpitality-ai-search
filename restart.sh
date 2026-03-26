@@ -15,6 +15,10 @@ source env/bin/activate
 # Start server
 echo "Starting AI server..."
 
+sudo fuser -k 80/tcp
+
+sleep 2
+
 nohup env/bin/uvicorn main:main_app \
 --host 0.0.0.0 \
 --port 80 \
