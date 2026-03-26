@@ -206,7 +206,7 @@ def save_message(conversation_id, role, content):
     cur = conn.cursor()
 
     cur.execute("""
-    INSERT INTO user_search_message (conversation_id, role, content, created_at)
+    INSERT INTO master_search_usersearchmessage (conversation_id, role, content, created_at)
     VALUES (%s, %s, %s, NOW())
     """, (conversation_id, role, content))
 
