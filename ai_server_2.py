@@ -187,7 +187,7 @@ def create_conversation(user_id, title):
     cur = conn.cursor()
 
     cur.execute("""
-    INSERT INTO user_search_conversation (user_id, title, created_at, updated_at)
+    INSERT INTO master_search_usersearchconversation (user_id, title, created_at, updated_at)
     VALUES (%s, %s, NOW(), NOW())
     RETURNING id
     """, (user_id, title))
