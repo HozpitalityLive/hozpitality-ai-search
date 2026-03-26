@@ -16,6 +16,7 @@ import redis
 import hashlib
 from fastapi import WebSocket , WebSocketDisconnect
 import numpy as np
+from dotenv import load_dotenv
 
 redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
 
@@ -47,12 +48,9 @@ llm = Llama(
     n_threads=4
 )
 
-db_pool = None
+load_dotenv()
 
-@app.on_event("startup")
-def startup():
-    global db_pool
-    db_pool = SimpleConnectionPool(1, 5, **DB_CONFIG)
+db_pool = SimpleConnectionPool(1, 5, **DB_CONFIG)
 
 @app.on_event("shutdown")
 def shutdown():
@@ -74,7 +72,6 @@ def get_memory(user_id, org_id):
 
 def store_memory(user_id, org_id, text):
     idx, store = get_memory(user_id, org_id)
-    vec = [get_embedding(text)]
     
     vec = np.array([get_embedding(text)]).astype("float32")
     idx.add(vec)
