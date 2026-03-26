@@ -15,7 +15,7 @@ source env/bin/activate
 # Start server
 echo "Starting AI server..."
 
-nohup env/bin/uvicorn ai_server:app \
+nohup env/bin/uvicorn main:main_app \
 --host 0.0.0.0 \
 --port 80 \
 --access-log \
