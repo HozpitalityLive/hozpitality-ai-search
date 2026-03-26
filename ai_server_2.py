@@ -17,6 +17,7 @@ import hashlib
 from fastapi import WebSocket , WebSocketDisconnect
 import numpy as np
 from dotenv import load_dotenv
+load_dotenv()
 
 redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
 
@@ -48,7 +49,6 @@ llm = Llama(
     n_threads=4
 )
 
-load_dotenv()
 
 db_pool = SimpleConnectionPool(1, 5, **DB_CONFIG)
 
