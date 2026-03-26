@@ -115,7 +115,7 @@ STRICT RULES:
     - FAQ RULE (TOP PRIORITY): If the query starts with "how to", "how do i", "how can i", "steps to", or "process", intent MUST be 'FAQ' and type MUST be 'faq'. DO NOT classify as 'job' even if 'job' or 'apply' is mentioned.
     - PROFILE RULE: If the query is a person's name (e.g., 'Yuni Hunter', 'Raj Bhatt') OR starts with "who is" or "who's", intent MUST be 'SEARCH' and type MUST be 'professional'.
     
-    - COMPANY RULE: If query contains "what is", "define", or "hozpitality", intent MUST be 'SEARCH' and type MUST be 'company'.
+    - COMPANY RULE: If the query contains "what is", "define", or "hozpitality", set type to 'company' ONLY if no other category (like 'awards', 'job', 'product', etc.) is mentioned in the query. If a specific category is present, prioritize that category as the 'type'.
     - Default: Intent 'SEARCH', type 'article'.
 
 2. KEYWORD EXTRACTION (STRICT):
