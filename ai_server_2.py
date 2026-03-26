@@ -33,7 +33,7 @@ DB_CONFIG = {
 }
 
 
-MODEL_PATH = os.path.expanduser("~/models/mistral/mistral-7b-instruct-v0.2.Q4_K_M.gguf")
+MODEL_PATH = "/home/dev/models/mistral/mistral-7b-instruct-v0.2.Q4_K_M.gguf"
 MAX_MEMORY = 50
 
 app = FastAPI()
