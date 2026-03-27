@@ -599,10 +599,12 @@ def search_web(query):
         import json
         return json.loads(cached)
 
+    domain_query = f"{query} (site:hozpitality.com OR site:instagram.com OR site:linkedin.com OR site:hozpitalityexcellenceawards.com)"
+
     try:
         res = requests.post(
             "https://google.serper.dev/search",
-            json={"q": query},
+            json={"q": domain_query},
             headers={
                 "X-API-KEY": SERPER_API_KEY,
                 "Content-Type": "application/json"
