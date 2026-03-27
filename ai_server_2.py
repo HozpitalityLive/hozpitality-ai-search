@@ -459,3 +459,9 @@ def get_history(user_id: int, conversation_id: int):
         }
         for r in rows
     ]
+
+
+@app.websocket("/ws/test")
+async def ws_test(websocket: WebSocket):
+    await websocket.accept()
+    await websocket.send_text("connected")
