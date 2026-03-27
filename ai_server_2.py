@@ -362,6 +362,20 @@ def chat_stream(req: ChatRequest):
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
+    origin = websocket.headers.get("origin")
+
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://32.195.22.230",
+        "https://your-frontend-domain.com",
+        "http://in.localhost:3000/"
+    ]
+
+    if origin not in allowed_origins:
+        print("Blocked origin:", origin)
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
 
     try:
