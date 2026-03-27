@@ -11,12 +11,15 @@ from pydantic import BaseModel
 
 from sentence_transformers import SentenceTransformer
 from llama_cpp import Llama
+from fastapi.middleware.cors import CORSMiddleware
 
 import redis
 import hashlib
 import numpy as np
 from dotenv import load_dotenv
 load_dotenv()
+
+
 
 redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
@@ -39,6 +42,15 @@ DB_CONFIG = {
 MODEL_PATH = "/home/dev/models/mistral/mistral-7b-instruct-v0.2.Q4_K_M.gguf"
 
 app = FastAPI()
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 EMBED_DIM = embedder.get_sentence_embedding_dimension()
