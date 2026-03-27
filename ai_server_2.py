@@ -620,6 +620,10 @@ def search_web(query):
                 "category": "web",
                 "location": r.get("link")
             })
+            print(f"Web search result: {r.get('title')}")
+            print(f"Snippet: {r.get('snippet')}")
+            print(f"Link: {r.get('link')}")
+            print(f"Location: {r.get('location')}")
 
         import json
         redis_client.setex(key, 300, json.dumps(results))
