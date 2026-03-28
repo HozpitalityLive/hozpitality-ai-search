@@ -6,8 +6,10 @@ echo "================================="
 
 PORT=8000
 
-echo "Stopping old vLLM (if any)..."
-pkill -f vllm || true
+echo "Stopping old vLLM..."
+
+# safer kill (only exact process)
+pkill -f "vllm.entrypoints.openai.api_server" || true
 
 sleep 2
 
