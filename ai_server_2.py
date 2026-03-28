@@ -398,7 +398,7 @@ async def websocket_chat(websocket: WebSocket):
             memory = retrieve_memory(user_id, org_id, query)
             prompt = build_prompt(query, memory, context)
 
-            stream = llm(prompt, max_tokens=200, stream=True)
+            stream = llm(prompt, max_tokens=120, stream=True)
 
             full = ""  # ✅ FIXED
 
