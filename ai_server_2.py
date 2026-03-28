@@ -1,3 +1,6 @@
+# ai_server_2.py
+
+import openai
 from cachetools import LRUCache
 import requests
 import os
@@ -11,13 +14,16 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from sentence_transformers import SentenceTransformer
-from llama_cpp import Llama
 
 import redis
 import hashlib
 import numpy as np
 from dotenv import load_dotenv
 load_dotenv()
+
+
+openai.api_base = "http://localhost:8000/v1"
+openai.api_key = ""
 
 
 
@@ -47,12 +53,6 @@ app = FastAPI()
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 EMBED_DIM = embedder.get_sentence_embedding_dimension()
 
-llm = Llama(
-    model_path=MODEL_PATH,
-    n_ctx=1024,
-    n_threads=os.cpu_count(),
-    n_batch=512
-)
 
 db_pool = SimpleConnectionPool(1, 5, **DB_CONFIG)
 
@@ -319,8 +319,13 @@ def chat(req: ChatRequest):
     else:
         try:
             prompt = build_prompt(query, memory, context)
-            output = llm(prompt, max_tokens=120)
-            answer = output["choices"][0]["text"].strip()
+            response = openai.ChatCompletion.create(
+                model="google/gemma-2b-it",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=200,
+            )
+
+            answer = response["choices"][0]["message"]["content"]
         except Exception as e:
             print("LLM error:", e)
             answer = "Error generating response."
@@ -358,9 +363,16 @@ def chat_stream(req: ChatRequest):
     prompt = build_prompt(query, memory, context)
 
     def generate():
-        stream = llm(prompt, max_tokens=200, stream=True)
-        for chunk in stream:
-            yield chunk["choices"][0]["text"]
+        response = openai.ChatCompletion.create(
+            model="google/gemma-2b-it",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            stream=True
+        )
+
+        for chunk in response:
+            token = chunk["choices"][0]["delta"].get("content", "")
+            yield token
 
 
     return StreamingResponse(generate(), media_type="text/plain")
@@ -398,12 +410,17 @@ async def websocket_chat(websocket: WebSocket):
             memory = retrieve_memory(user_id, org_id, query)
             prompt = build_prompt(query, memory, context)
 
-            stream = llm(prompt, max_tokens=120, stream=True)
+            response = openai.ChatCompletion.create(
+                model="google/gemma-2b-it",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=100,
+                stream=True
+            )
 
-            full = ""  # ✅ FIXED
+            full = ""
 
-            for chunk in stream:
-                token = chunk["choices"][0]["text"]
+            for chunk in response:
+                token = chunk["choices"][0]["delta"].get("content", "")
                 full += token
 
                 await websocket.send_json({
