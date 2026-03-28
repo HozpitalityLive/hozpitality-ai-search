@@ -1,9 +1,10 @@
+from cachetools import LRUCache
 import requests
 import os
 import faiss
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
@@ -22,7 +23,7 @@ load_dotenv()
 
 redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
-CACHE_TTL = 120
+CACHE_TTL = 600
 
 def cache_key(query):
     return "ai:" + hashlib.md5(query.encode()).hexdigest()
@@ -46,7 +47,12 @@ app = FastAPI()
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 EMBED_DIM = embedder.get_sentence_embedding_dimension()
 
-llm = Llama(model_path=MODEL_PATH, n_ctx=2048, n_threads=6)
+llm = Llama(
+    model_path=MODEL_PATH,
+    n_ctx=1024,
+    n_threads=os.cpu_count(),
+    n_batch=512
+)
 
 db_pool = SimpleConnectionPool(1, 5, **DB_CONFIG)
 
@@ -65,7 +71,8 @@ def get_memory(user_id, org_id):
 
 def store_memory(user_id, org_id, text):
     idx, store = get_memory(user_id, org_id)
-    vec = np.array([get_embedding(text)]).astype("float32")
+    vec = np.array([get_embedding(text)], dtype="float32")
+    faiss.normalize_L2(vec)
     idx.add(vec)
     store.append(text)
     if len(store) > 50:
@@ -75,20 +82,18 @@ def retrieve_memory(user_id, org_id, query):
     idx, store = get_memory(user_id, org_id)
     if not store:
         return []
-    q_vec = embedder.encode([query], normalize_embeddings=True)
+    q_vec = np.array([get_embedding(query)], dtype="float32")
+    faiss.normalize_L2(q_vec)
     D, I = idx.search(q_vec, 5)
     return [store[i] for i in I[0] if i < len(store)]
 
-embedding_cache = {}
+embedding_cache = LRUCache(maxsize=5000)
 
 def get_embedding(text):
     if text in embedding_cache:
         return embedding_cache[text]
 
     vec = embedder.encode([text], normalize_embeddings=True)[0]
-
-    if len(embedding_cache) > 1000:
-        embedding_cache.clear()
 
     embedding_cache[text] = vec
     return vec
@@ -223,7 +228,7 @@ def search_db(query):
 
 def build_prompt(query, memory, context):
 
-    memory_text = "\n".join(memory[-3:]) if memory else ""
+    memory_text = "\n".join(memory[-2:]) if memory else ""
 
     context_text = ""
     for i, item in enumerate(context):
@@ -301,11 +306,11 @@ def chat(req: ChatRequest):
         db_future = executor.submit(search_db, query)
         web_future = executor.submit(search_web, query)
 
+        done, _ = wait([db_future, web_future], timeout=2)
+
         db_context = db_future.result()
-        try:
-            web_context = web_future.result(timeout=2)
-        except:
-            web_context = []
+
+        web_context = web_future.result() if web_future in done else []
 
     context = simple_rerank(db_context + web_context)
 
@@ -341,11 +346,11 @@ def chat_stream(req: ChatRequest):
         db_future = executor.submit(search_db, query)
         web_future = executor.submit(search_web, query)
 
+        done, _ = wait([db_future, web_future], timeout=2)
+
         db_context = db_future.result()
-        try:
-            web_context = web_future.result(timeout=2)
-        except:
-            web_context = []
+
+        web_context = web_future.result() if web_future in done else []
 
     context = simple_rerank(db_context + web_context)
 
@@ -382,11 +387,11 @@ async def websocket_chat(websocket: WebSocket):
                 db_future = executor.submit(search_db, query)
                 web_future = executor.submit(search_web, query)
 
+                done, _ = wait([db_future, web_future], timeout=2)
+
                 db_context = db_future.result()
-                try:
-                    web_context = web_future.result(timeout=2)
-                except:
-                    web_context = []
+
+                web_context = web_future.result() if web_future in done else []
 
             context = simple_rerank(db_context + web_context)
 
