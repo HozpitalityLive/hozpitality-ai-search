@@ -17,5 +17,6 @@ python-dotenv
 
 redis
 # llama-cpp-python
-openai==0.28
+# openai==0.28
+openai
 vllm
