@@ -4,19 +4,16 @@ uvicorn[standard]
 requests
 pydantic
 
-numpy
+numpy<2.0
 scipy
 
 sentence-transformers
-
 faiss-cpu
 
 psycopg2-binary
-
 python-dotenv
-
 redis
-# llama-cpp-python
-# openai==0.28
-openai
-vllm
+
+openai>=1.0.0
+
+vllm==0.5.4
