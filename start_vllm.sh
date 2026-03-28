@@ -16,7 +16,7 @@ sleep 2
 echo "Starting vLLM..."
 
 nohup python -m vllm.entrypoints.openai.api_server \
-  --model google/gemma-2b-it \
+  --model mistralai/Mistral-7B-Instruct-v0.2 \
   --gpu-memory-utilization 0.7 \
   --max-model-len 1024 \
   --port $PORT \
