@@ -16,6 +16,6 @@ psycopg2-binary
 python-dotenv
 
 redis
-llama-cpp-python
+# llama-cpp-python
 openai==0.28
 vllm
