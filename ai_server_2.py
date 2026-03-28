@@ -235,7 +235,7 @@ def build_prompt(query, memory, context):
         context_text += f"""
 [{i+1}]
 Title: {item['title']}
-Details: {item['content']}
+Details: {item['content'][:80]}
 Source: {item.get('url', item.get('location'))}
 """
 
@@ -319,7 +319,7 @@ def chat(req: ChatRequest):
     else:
         try:
             prompt = build_prompt(query, memory, context)
-            output = llm(prompt, max_tokens=200)
+            output = llm(prompt, max_tokens=120)
             answer = output["choices"][0]["text"].strip()
         except Exception as e:
             print("LLM error:", e)
