@@ -13,7 +13,3 @@ python-dotenv
 redis
 
 openai>=1.0.0
-
-vllm==0.5.4
-transformers==4.43.2
-tokenizers==0.19.1
