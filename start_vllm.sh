@@ -29,6 +29,7 @@ echo "Starting vLLM..."
 
 nohup $PYTHON -m vllm.entrypoints.openai.api_server \
   --model mistralai/Mistral-7B-Instruct-v0.1 \
+  --dtype=half \
   --gpu-memory-utilization 0.7 \
   --port $PORT \
   > vllm.log 2>&1 &
