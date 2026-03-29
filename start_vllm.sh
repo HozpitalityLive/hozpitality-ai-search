@@ -28,9 +28,8 @@ $PYTHON -c "import pyairports; print('pyairports OK')" || {
 echo "Starting vLLM..."
 
 nohup $PYTHON -m vllm.entrypoints.openai.api_server \
-  --model mistralai/Mistral-7B-Instruct-v0.2 \
+  --model mistralai/Mistral-7B-Instruct-v0.1 \
   --gpu-memory-utilization 0.7 \
-  --max-model-len 1024 \
   --port $PORT \
   > vllm.log 2>&1 &
 
