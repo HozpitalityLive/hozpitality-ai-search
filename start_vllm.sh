@@ -1,21 +1,33 @@
 #!/bin/bash
 
 echo "================================="
-echo "Starting vLLM (Gemma 2B)"
+echo "Starting vLLM (Mistral 7B)"
 echo "================================="
 
 PORT=8000
+VENV_PATH="/home/dev/hozpitality-ai-search/env"
+PYTHON="$VENV_PATH/bin/python"
 
 echo "Stopping old vLLM..."
-
-# safer kill (only exact process)
 pkill -f "vllm.entrypoints.openai.api_server" || true
 
 sleep 2
 
+echo "Verifying environment..."
+
+# Ensure correct Python is used
+echo "Python path: $PYTHON"
+$PYTHON -c "import sys; print('Executable:', sys.executable)"
+
+# Verify pyairports is actually importable
+$PYTHON -c "import pyairports; print('pyairports OK')" || {
+  echo "ERROR: pyairports not found in this environment"
+  exit 1
+}
+
 echo "Starting vLLM..."
 
-nohup python -m vllm.entrypoints.openai.api_server \
+nohup $PYTHON -m vllm.entrypoints.openai.api_server \
   --model mistralai/Mistral-7B-Instruct-v0.2 \
   --gpu-memory-utilization 0.7 \
   --max-model-len 1024 \
@@ -25,7 +37,11 @@ nohup python -m vllm.entrypoints.openai.api_server \
 sleep 5
 
 echo "Checking server..."
-lsof -i :$PORT
+lsof -i :$PORT || echo "Port not open yet"
+
+echo ""
+echo "Process check:"
+ps aux | grep vllm | grep -v grep
 
 echo ""
 echo "vLLM started on port $PORT"
