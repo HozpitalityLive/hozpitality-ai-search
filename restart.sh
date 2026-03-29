@@ -1,32 +1,45 @@
 #!/bin/bash
 
+echo "================================="
 echo "Restarting AI server..."
+echo "================================="
 
 # Stop existing server
 echo "Stopping existing server..."
-pkill -f "uvicorn ai_server:app"
+pkill -f "uvicorn main:main_app" || true
+
+sleep 2
+
+# Kill port 80 just in case
+echo "Freeing port 80..."
+sudo fuser -k 80/tcp || true
 
 sleep 2
 
 # Activate virtual environment
 echo "Activating virtual environment..."
-source env/bin/activate
+source /home/dev/hozpitality-ai-search/env/bin/activate
 
-# Start server
+# Verify uvicorn exists
+which uvicorn
+
 echo "Starting AI server..."
 
-sudo fuser -k 80/tcp
+nohup uvicorn main:main_app \
+  --host 0.0.0.0 \
+  --port 80 \
+  --access-log \
+  --log-level info \
+  > ai_server.log 2>&1 &
 
-sleep 2
+sleep 3
 
-nohup env/bin/uvicorn main:main_app \
---host 0.0.0.0 \
---port 80 \
---access-log \
---log-level info \
-> ai_server.log 2>&1 &
+echo ""
+echo "Process check:"
+ps aux | grep uvicorn | grep -v grep
 
-sleep 2
-
-echo "AI server restarted successfully!"
+echo ""
+echo "================================="
+echo "AI server started!"
 echo "Logs: tail -f ai_server.log"
+echo "================================="
