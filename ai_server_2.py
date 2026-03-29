@@ -320,7 +320,7 @@ def chat(req: ChatRequest):
         try:
             prompt = build_prompt(query, memory, context)
             response = openai.ChatCompletion.create(
-                model="microsoft/Phi-3-mini-4k-instruct",
+                model="google/gemma-2b-it",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=200,
             )
@@ -364,7 +364,7 @@ def chat_stream(req: ChatRequest):
 
     def generate():
         response = openai.ChatCompletion.create(
-            model="microsoft/Phi-3-mini-4k-instruct",
+            model="google/gemma-2b-it",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=200,
             stream=True
@@ -411,7 +411,7 @@ async def websocket_chat(websocket: WebSocket):
             prompt = build_prompt(query, memory, context)
 
             response = openai.ChatCompletion.create(
-                model="microsoft/Phi-3-mini-4k-instruct",
+                model="google/gemma-2b-it",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=100,
                 stream=True
