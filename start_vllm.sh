@@ -1,14 +1,18 @@
 #!/bin/bash
 
+
 echo "================================="
 echo "Starting vLLM (Gemma 2B - Docker)"
 echo "================================="
 
 PORT=8000
 CONTAINER_NAME="vllm-gemma"
-HF_TOKEN="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"
+
 
 echo "Stopping old container..."
+
+docker ps -q --filter "publish=8000" | xargs -r docker stop
+docker ps -aq --filter "publish=8000" | xargs -r docker rm
 docker stop $CONTAINER_NAME 2>/dev/null || true
 docker rm $CONTAINER_NAME 2>/dev/null || true
 
