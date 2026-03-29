@@ -4,11 +4,9 @@ uvicorn[standard]
 requests
 pydantic
 
-numpy<2.0
-scipy
-
 sentence-transformers
 faiss-cpu
+numpy<2.0
 
 psycopg2-binary
 python-dotenv
@@ -17,5 +15,5 @@ redis
 openai>=1.0.0
 
 vllm==0.5.4
-outlines
-pyairports
+transformers==4.43.2
+tokenizers==0.19.1
