@@ -1,5 +1,6 @@
 # ai_server_2.py
 
+import json
 import openai
 from cachetools import LRUCache
 import requests
@@ -58,6 +59,101 @@ db_pool = SimpleConnectionPool(1, 5, **DB_CONFIG)
 
 memory_indexes = {}
 memory_store = {}
+
+def detect_intent_llm(query: str):
+    categories = ['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
+
+    prompt = f"""
+You are an AI intent classifier for a hospitality platform.
+
+User Query: "{query}"
+Available Categories: {categories}
+
+STRICT RULES:
+
+0. TYPO CORRECTION:
+- Fix spelling mistakes (e.g., "kitchn" → "kitchen", "dishwashr" → "dishwasher")
+- Normalize to hospitality terminology
+
+1. INTENT LOGIC (CRITICAL):
+- FAQ PRIORITY:
+    If query starts with:
+    "how to", "how do i", "how can i", "steps to", "process"
+    → intent = "FAQ", type = "faq"
+
+- PROFILE RULE:
+    If query is a person name OR starts with "who is", "who's"
+    → intent = "SEARCH", type = "professional"
+
+- COMPANY RULE:
+    If query contains "what is", "define"
+    → type = "company" ONLY if no other category is present
+
+- DEFAULT:
+    intent = "SEARCH", type = "article"
+
+2. KEYWORD RULES:
+- lowercase only
+- remove stop words
+- remove category words if used as type
+
+- FAQ:
+    keep only core problem
+    e.g. "how to apply job" → "job application"
+
+- SEARCH:
+    remove words like "job", "articles", "events" if they match type
+
+3. LOCATION EXTRACTION:
+- Extract city / country if present
+- Examples:
+    "jobs in dubai" → "dubai"
+    "chef mumbai india" → "mumbai"
+
+4. REPHRASE QUERY:
+- Clean, typo-free, search optimized
+
+OUTPUT STRICT JSON:
+
+{{
+"intent": "...",
+"type": "...",
+"keywords": "...",
+"location": "",
+"rephrased_query": "..."
+}}
+
+Return ONLY JSON.
+"""
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="google/gemma-2b-it",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=180,
+            temperature=0
+        )
+
+        text = response["choices"][0]["message"]["content"].strip()
+
+        # 🧠 Robust JSON extraction (important for LLM errors)
+        import re
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        else:
+            raise ValueError("Invalid JSON")
+
+    except Exception as e:
+        print("Intent error:", e)
+
+        return {
+            "intent": "SEARCH",
+            "type": "article",
+            "keywords": query.lower().strip(),
+            "location": "",
+            "rephrased_query": query.strip()
+        }
 
 def tenant_key(user_id, org_id):
     return f"{org_id}:{user_id}"
@@ -185,11 +281,10 @@ def build_url(category, slug):
 
     return ""
 
-def search_db(query):
-    key = cache_key("db:" + query)
+def search_db(query, intent_type=None, location=None):
+    key = cache_key(f"db:{query}:{intent_type}:{location}")
     cached = redis_client.get(key)
     if cached:
-        import json
         return json.loads(cached)
 
     conn = db_pool.getconn()
@@ -198,14 +293,26 @@ def search_db(query):
 
         q_vec = get_embedding(query).tolist()
 
-        cur.execute("""
+        sql = """
         SELECT title, content, category_text, location_text, slug
         FROM master_search_mastersearchindex
         WHERE is_live = TRUE
-        ORDER BY embedding <-> %s::vector
-        LIMIT 3
-        """, (q_vec,))
+        """
 
+        params = []
+
+        if intent_type:
+            sql += " AND LOWER(category_text) LIKE %s"
+            params.append(f"%{intent_type.lower()}%")
+
+        if location:
+            sql += " AND LOWER(location_text) LIKE %s"
+            params.append(f"%{location.lower()}%")
+
+        sql += " ORDER BY embedding <-> %s::vector LIMIT 5"
+        params.append(q_vec)
+
+        cur.execute(sql, params)
         rows = cur.fetchall()
         cur.close()
 
@@ -217,7 +324,6 @@ def search_db(query):
             "url": build_url(r[2], r[4])
         } for r in rows]
 
-        import json
         redis_client.setex(key, CACHE_TTL, json.dumps(result))
 
         return result
@@ -300,11 +406,21 @@ def chat(req: ChatRequest):
     if cached:
         return {"conversation_id": conversation_id, "answer": cached}
 
-    memory = retrieve_memory(user_id, org_id, query)
+    intent_data = detect_intent_llm(query)
+
+    clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
+    intent_type = intent_data.get("type")
+    location = intent_data.get("location")
+
+    final_query = clean_query
+    if location:
+        final_query += f" {location}"
+
+    memory = retrieve_memory(user_id, org_id, final_query)
 
     with ThreadPoolExecutor() as executor:
-        db_future = executor.submit(search_db, query)
-        web_future = executor.submit(search_web, query)
+        db_future = executor.submit(search_db, final_query, intent_type, location)
+        web_future = executor.submit(search_web, final_query)
 
         done, _ = wait([db_future, web_future], timeout=2)
 
@@ -347,9 +463,20 @@ def chat_stream(req: ChatRequest):
     user_id = req.user_id
     org_id = req.org_id
 
+
+    intent_data = detect_intent_llm(query)
+
+    clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
+    intent_type = intent_data.get("type")
+    location = intent_data.get("location")
+
+    final_query = clean_query
+    if location:
+        final_query += f" {location}"
+
     with ThreadPoolExecutor() as executor:
-        db_future = executor.submit(search_db, query)
-        web_future = executor.submit(search_web, query)
+        db_future = executor.submit(search_db, final_query, intent_type, location)
+        web_future = executor.submit(search_web, final_query)
 
         done, _ = wait([db_future, web_future], timeout=2)
 
@@ -395,9 +522,19 @@ async def websocket_chat(websocket: WebSocket):
 
             conversation_id = data.get("conversation_id") or create_conversation(user_id, query[:30])
 
+            intent_data = detect_intent_llm(query)
+
+            clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
+            intent_type = intent_data.get("type")
+            location = intent_data.get("location")
+
+            final_query = clean_query
+            if location:
+                final_query += f" {location}"
+
             with ThreadPoolExecutor() as executor:
-                db_future = executor.submit(search_db, query)
-                web_future = executor.submit(search_web, query)
+                db_future = executor.submit(search_db, final_query, intent_type, location)
+                web_future = executor.submit(search_web, final_query)
 
                 done, _ = wait([db_future, web_future], timeout=2)
 
