@@ -17,3 +17,5 @@ redis
 openai>=1.0.0
 
 vllm==0.5.4
+outlines
+pyairports
