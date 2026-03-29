@@ -1,30 +1,46 @@
 #!/bin/bash
 
 echo "================================="
-echo "Starting vLLM (Gemma 2B FINAL)"
+echo "Starting vLLM (Gemma 2B - Docker)"
 echo "================================="
 
 PORT=8000
-PYTHON="/home/dev/hozpitality-ai-search/env/bin/python"
+CONTAINER_NAME="vllm-gemma"
+HF_TOKEN="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"
 
-pkill -f vllm || true
+echo "Stopping old container..."
+docker stop $CONTAINER_NAME 2>/dev/null || true
+docker rm $CONTAINER_NAME 2>/dev/null || true
+
 sleep 2
 
-# Critical fix
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+echo "Starting new container..."
 
-nohup $PYTHON -m vllm.entrypoints.openai.api_server \
-  --model google/gemma-2b-it \
-  --dtype=half \
-  --gpu-memory-utilization 0.5 \
+docker run -d \
+  --name $CONTAINER_NAME \
+  --gpus all \
+  -p $PORT:8000 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  -e HUGGING_FACE_HUB_TOKEN=$HF_TOKEN \
+  --ipc=host \
+  vllm/vllm-openai:latest \
+  google/gemma-2b-it \
+  --dtype half \
   --max-model-len 512 \
-  --max-num-seqs 4 \
-  --port $PORT \
-  > vllm.log 2>&1 &
+  --gpu-memory-utilization 0.6
 
 sleep 5
 
-lsof -i :$PORT || echo "Port not open yet"
+echo "Checking server..."
+curl -s http://localhost:$PORT/v1/models || echo "Server not ready yet"
+
+echo ""
+echo "Container status:"
+docker ps | grep $CONTAINER_NAME
+
+echo ""
+echo "Logs:"
+echo "docker logs -f $CONTAINER_NAME"
 
 echo "================================="
 echo "vLLM running on port $PORT"
