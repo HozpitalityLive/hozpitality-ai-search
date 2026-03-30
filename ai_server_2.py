@@ -507,6 +507,9 @@ def chat(req: ChatRequest):
     if any(k in q_lower for k in ["job", "jobs", "hiring", "vacancy"]):
         intent_type = "job"
 
+    elif any(k in q_lower for k in ["event", "events", "conference", "expo"]):
+        intent_type = "event"
+
     elif any(q_lower.startswith(x) for x in [
         "how to", "how do", "how can", "steps to", "process"
     ]):
@@ -590,6 +593,9 @@ def chat_stream(req: ChatRequest):
     if any(k in q_lower for k in ["job", "jobs", "hiring", "vacancy"]):
         intent_type = "job"
 
+    elif any(k in q_lower for k in ["event", "events", "conference", "expo"]):
+        intent_type = "event"
+
     elif any(q_lower.startswith(x) for x in [
         "how to", "how do", "how can", "steps to", "process"
     ]):
@@ -672,6 +678,9 @@ async def websocket_chat(websocket: WebSocket):
 
             if any(k in q_lower for k in ["job", "jobs", "hiring", "vacancy"]):
                 intent_type = "job"
+
+            elif any(k in q_lower for k in ["event", "events", "conference", "expo"]):
+                intent_type = "event"
 
             elif any(q_lower.startswith(x) for x in [
                 "how to", "how do", "how can", "steps to", "process"
