@@ -468,6 +468,9 @@ def search_db(query, intent_type=None, location=None):
     if cached:
         return json.loads(cached)
 
+    remove_location_from_query = query.replace(location, "") if location else query
+    query = remove_location_from_query
+
     conn = db_pool.getconn()
     try:
         cur = conn.cursor()
