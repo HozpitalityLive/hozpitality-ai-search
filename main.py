@@ -23,4 +23,4 @@ async def websocket_chat_main(websocket: WebSocket):
     await websocket.send_text("connected")
 
 main_app.mount("/v2", app2)
-main_app.mount("", app1)
+# main_app.mount("", app1)
