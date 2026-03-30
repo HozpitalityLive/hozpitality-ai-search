@@ -519,7 +519,7 @@ def search_db(query, intent_type=None, location=None):
     try:
         cur = conn.cursor()
 
-        query = query.replace(",", " ").lower()
+        query = query.replace(",", " ").lower().strip()
 
         words = [
             w.strip()
@@ -527,45 +527,9 @@ def search_db(query, intent_type=None, location=None):
             if w and len(w) > 2 and w != location
         ]
 
-        def run_query(use_location=True):
-            sql = """
-            SELECT title, content, category_text, location_text, slug
-            FROM master_search_mastersearchindex
-            WHERE is_live = TRUE
-            """
+        full_phrase = " ".join(words)
 
-            params = []
-
-            if intent_type:
-                sql += " AND LOWER(category_text) LIKE %s"
-                params.append(f"%{intent_type.lower()}%")
-
-            if use_location and location:
-                sql += " AND LOWER(location_text) LIKE %s"
-                params.append(f"%{location.lower()}%")
-
-            if words:
-                conditions = []
-                for w in words:
-                    conditions.append("(LOWER(title) LIKE %s OR LOWER(content) LIKE %s)")
-                    params.extend([f"%{w}%", f"%{w}%"])
-
-                sql += " AND (" + " OR ".join(conditions) + ")"
-
-            if words:
-                sql += """
-                ORDER BY 
-                    CASE 
-                        WHEN LOWER(title) LIKE %s THEN 0
-                        WHEN LOWER(content) LIKE %s THEN 1
-                        ELSE 2
-                    END
-                LIMIT 6
-                """
-                params.extend([f"%{words[0]}%", f"%{words[0]}%"])
-            else:
-                sql += " LIMIT 6"
-
+        def execute(sql, params):
             logger.info("SQL: %s", sql)
             logger.info("Params: %s", params)
 
@@ -580,17 +544,85 @@ def search_db(query, intent_type=None, location=None):
                 "url": build_url(r[2], r[4])
             } for r in rows]
 
-        results = run_query(use_location=True)
+        def base_sql():
+            sql = """
+            SELECT title, content, category_text, location_text, slug
+            FROM master_search_mastersearchindex
+            WHERE is_live = TRUE
+            """
+            params = []
 
-        if not results and location:
-            logger.warning("[DB FALLBACK] Retrying without location filter")
-            results = run_query(use_location=False)
+            if intent_type:
+                sql += " AND LOWER(category_text) LIKE %s"
+                params.append(f"%{intent_type.lower()}%")
 
-        cur.close()
+            if location:
+                sql += " AND LOWER(location_text) LIKE %s"
+                params.append(f"%{location.lower()}%")
 
-        redis_client.setex(key, CACHE_TTL, json.dumps(results))
+            return sql, params
 
-        return results
+        if full_phrase:
+            sql, params = base_sql()
+
+            sql += """
+            AND (
+                LOWER(title) LIKE %s
+                OR LOWER(content) LIKE %s
+            )
+            ORDER BY 
+                CASE 
+                    WHEN LOWER(title) = %s THEN 0
+                    WHEN LOWER(title) LIKE %s THEN 1
+                    ELSE 2
+                END
+            LIMIT 6
+            """
+
+            params.extend([
+                f"%{full_phrase}%",
+                f"%{full_phrase}%",
+                full_phrase,
+                f"%{full_phrase}%"
+            ])
+
+            results = execute(sql, params)
+
+            if results:
+                return results
+
+        if words:
+            sql, params = base_sql()
+
+            conditions = []
+            for w in words:
+                conditions.append("(LOWER(title) LIKE %s OR LOWER(content) LIKE %s)")
+                params.extend([f"%{w}%", f"%{w}%"])
+
+            sql += " AND " + " AND ".join(conditions)
+            sql += " LIMIT 6"
+
+            results = execute(sql, params)
+
+            if results:
+                return results
+
+        if words:
+            sql, params = base_sql()
+
+            conditions = []
+            for w in words:
+                conditions.append("(LOWER(title) LIKE %s OR LOWER(content) LIKE %s)")
+                params.extend([f"%{w}%", f"%{w}%"])
+
+            sql += " AND (" + " OR ".join(conditions) + ")"
+            sql += " LIMIT 6"
+
+            results = execute(sql, params)
+
+            return results
+
+        return []
 
     except Exception as e:
         logger.error(f"DB ERROR: {e}", exc_info=True)
@@ -625,9 +657,7 @@ Context Data:
 Memory:
 {memory_text}
 
-----------------------------------------
 STRICT INSTRUCTIONS
-----------------------------------------
 
 1. OUTPUT MUST BE PURE HTML ONLY (NO MARKDOWN, NO ```)
 
@@ -643,9 +673,7 @@ STRICT INSTRUCTIONS
   <!-- RESULTS -->
   <div class="ai-results">
 
-----------------------------------------
 CASE 1: PROFESSIONAL / COMPANY / SUPPLIER
-----------------------------------------
 
 IF intent_type is "professional" OR "company" OR "supplier":
 
@@ -675,9 +703,7 @@ RULES:
 - Description MUST come from content
 - Avatar = first letter of name
 
-----------------------------------------
 CASE 2: JOB
-----------------------------------------
 
 IF intent_type is "job":
 
@@ -693,9 +719,7 @@ RULES:
 - Show minimum 5 results
 - Keep it list-like (multiple items)
 
-----------------------------------------
 CASE 3: FAQ
-----------------------------------------
 
 FORMAT:
 
@@ -703,13 +727,10 @@ FORMAT:
   <li>Step or answer</li>
 </ul>
 
-----------------------------------------
 CASE 4: DEFAULT
-----------------------------------------
 
 - Use normal result cards (same as job but fewer items)
 
-----------------------------------------
 
   </div>
 
@@ -720,9 +741,7 @@ CASE 4: DEFAULT
 
 </div>
 
-----------------------------------------
 DO NOT:
-----------------------------------------
 - Do NOT use markdown
 - Do NOT return plain text
 - Do NOT skip description
