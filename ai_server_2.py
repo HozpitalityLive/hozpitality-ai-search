@@ -526,7 +526,7 @@ def search_db(query, intent_type=None, location=None):
                 ELSE 2
             END,
             similarity(title, %s) DESC,
-            embedding <-> %s::vector
+            embedding <-> CAST(%s AS vector)
         LIMIT 6
         """
 
