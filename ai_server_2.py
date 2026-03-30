@@ -42,7 +42,21 @@ def clean_html_response(text: str):
     return text.replace("```html", "").replace("```", "").strip()
 
 def simple_rerank(results):
-    return results[:6]
+    job = []
+    article = []
+    others = []
+
+    for r in results:
+        cat = (r.get("category") or "").lower()
+
+        if "job" in cat:
+            job.append(r)
+        elif "article" in cat:
+            article.append(r)
+        else:
+            others.append(r)
+
+    return (job + article + others)[:6]
 
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME"),
@@ -307,9 +321,29 @@ def search_db(query, intent_type=None, location=None):
 
         params = []
 
-        if intent_type:
-            sql += " AND LOWER(category_text) LIKE %s"
-            params.append(f"%{intent_type.lower()}%")
+        if intent_type == "job":
+            sql += " AND LOWER(category_text) LIKE '%job%'"
+
+        elif intent_type == "article":
+            sql += " AND LOWER(category_text) LIKE '%article%'"
+
+        elif intent_type == "company":
+            sql += " AND LOWER(category_text) LIKE '%company%'"
+
+        elif intent_type == "event":
+            sql += " AND LOWER(category_text) LIKE '%event%'"
+
+        elif intent_type == "supplier":
+            sql += " AND LOWER(category_text) LIKE '%supplier%'"
+
+        elif intent_type == "product":
+            sql += " AND LOWER(category_text) LIKE '%product%'"
+
+        elif intent_type == "awards":
+            sql += " AND LOWER(category_text) LIKE '%award%'"
+
+        elif intent_type == "professional":
+            sql += " AND LOWER(category_text) LIKE '%professional%'"
 
         if location:
             sql += " AND LOWER(location_text) LIKE %s"
@@ -456,7 +490,14 @@ def chat(req: ChatRequest):
 
         web_context = web_future.result() if web_future in done else []
 
-    context = simple_rerank(db_context + web_context)
+    if intent_type == "job":
+        context = simple_rerank(db_context)
+
+    elif intent_type in ["company", "professional"]:
+        context = simple_rerank(db_context)
+
+    else:
+        context = simple_rerank(db_context + web_context)
 
     if not context:
         answer = "You can check the official website or latest announcements for more details."
@@ -593,7 +634,7 @@ async def websocket_chat(websocket: WebSocket):
             await websocket.send_json({
                 "type": "final",
                 "data": {
-                    "type": "job",
+                    "type": intent_type or "chat",
                     "html": clean_html
                 },
                 "conversation_id": conversation_id
