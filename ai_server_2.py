@@ -22,6 +22,28 @@ import numpy as np
 from dotenv import load_dotenv
 load_dotenv()
 from sentence_transformers import CrossEncoder
+import logging
+
+
+
+logger = logging.getLogger("ai-websocket")
+logger.setLevel(logging.INFO)
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+
+file_handler = logging.FileHandler("app.log")
+file_handler.setLevel(logging.INFO)
+
+formatter = logging.Formatter(
+    "%(asctime)s - %(levelname)s - %(message)s"
+)
+
+console_handler.setFormatter(formatter)
+file_handler.setFormatter(formatter)
+
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
 
 
 openai.api_base = "http://localhost:8000/v1"
@@ -808,27 +830,35 @@ def chat_stream(req: ChatRequest):
 async def websocket_chat(websocket: WebSocket):
 
     origin = websocket.headers.get("origin")
-    print("Incoming origin:", origin)
+    logger.info(f"[WS CONNECT] Origin: {origin}")
 
     await websocket.accept()
 
     try:
         while True:
             data = await websocket.receive_json()
+            logger.debug(f"[WS RECEIVED] Raw Data: {data}")
 
             query = data["query"]
             user_id = data["user_id"]
             org_id = data["org_id"]
 
-            conversation_id = data.get("conversation_id") or create_conversation(user_id, query[:30])
+            logger.info(f"[QUERY] User:{user_id} Org:{org_id} → {query}")
 
+            conversation_id = data.get("conversation_id") or create_conversation(user_id, query[:30])
+            logger.debug(f"[CONVERSATION] ID: {conversation_id}")
+
+            # 🔹 Intent Detection
             intent_data = detect_intent_llm(query)
+            logger.debug(f"[INTENT] {intent_data}")
 
             base_query = (
                 intent_data.get("rephrased_query")
                 or intent_data.get("keywords")
                 or query
             )
+
+            logger.debug(f"[BASE QUERY] {base_query}")
 
             final_query = build_final_query(base_query)
             intent_type = intent_data.get("type")
@@ -846,11 +876,13 @@ async def websocket_chat(websocket: WebSocket):
             ]):
                 intent_type = "faq"
 
-
             location = intent_data.get("location")
 
             if location:
                 final_query += f" {location}"
+
+            logger.info(f"[FINAL QUERY] {final_query}")
+            logger.info(f"[INTENT TYPE] {intent_type} | Location: {location}")
 
             with ThreadPoolExecutor() as executor:
                 db_future = executor.submit(search_db, final_query, intent_type, location)
@@ -859,28 +891,34 @@ async def websocket_chat(websocket: WebSocket):
                 done, _ = wait([db_future, web_future], timeout=2)
 
                 db_context = db_future.result()
-
                 web_context = web_future.result() if web_future in done else []
+
+            logger.debug(f"[DB RESULTS COUNT] {len(db_context)}")
+            logger.debug(f"[WEB RESULTS COUNT] {len(web_context)}")
 
             if intent_type in ["job", "company", "professional"]:
                 combined = db_context
 
             elif intent_type == "faq":
-                if len(db_context) < 2:
-                    combined = db_context + web_context[:2]
-                else:
-                    combined = db_context
+                combined = db_context if len(db_context) >= 2 else db_context + web_context[:2]
 
             else:
                 combined = db_context + web_context[:2]
 
+            logger.debug(f"[COMBINED COUNT] {len(combined)}")
 
             context = rerank(final_query, combined)
+            logger.debug(f"[RERANKED COUNT] {len(context)}")
 
-            # memory = retrieve_memory(user_id, org_id, query)
+            if not context:
+                logger.warning("[NO RESULTS] Empty context after rerank")
+
             memory = []
             prompt = build_prompt(query, memory, context)
 
+            logger.debug(f"[PROMPT GENERATED] Length: {len(prompt)}")
+
+            # 🔹 LLM Call
             response = openai.ChatCompletion.create(
                 model="google/gemma-2b-it",
                 messages=[{"role": "user", "content": prompt}],
@@ -893,8 +931,10 @@ async def websocket_chat(websocket: WebSocket):
             for chunk in response:
                 token = chunk["choices"][0]["delta"].get("content", "")
                 full += token
-            
+
             clean_html = clean_html_response(full)
+
+            logger.info(f"[RESPONSE GENERATED] Length: {len(clean_html)}")
 
             await websocket.send_json({
                 "type": "final",
@@ -904,8 +944,6 @@ async def websocket_chat(websocket: WebSocket):
                 },
                 "conversation_id": conversation_id
             })
-            
-            print("Full answer:", full)
 
             save_message(conversation_id, "user", query)
             save_message(conversation_id, "assistant", full)
@@ -919,7 +957,10 @@ async def websocket_chat(websocket: WebSocket):
             })
 
     except WebSocketDisconnect:
-        print("WebSocket disconnected")
+        logger.warning("[WS DISCONNECTED]")
+
+    except Exception as e:
+        logger.error(f"[WS ERROR] {str(e)}", exc_info=True)
 
 
 @app.get("/conversations/{user_id}")
