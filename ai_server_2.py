@@ -1,5 +1,6 @@
 # ai_server_2.py
 
+import re
 import json
 import openai
 from cachetools import LRUCache
@@ -507,7 +508,10 @@ def search_db(query, intent_type=None, location=None):
             sql += " AND LOWER(location_text) LIKE %s"
             params.append(f"%{location.lower()}%")
 
-        words = [w for w in query.split() if len(w) > 2]
+        words = [
+            w for w in re.split(r"[,\s]+", query.lower())
+            if w and len(w) > 2
+        ]
 
         if words:
             conditions = []
@@ -531,7 +535,10 @@ def search_db(query, intent_type=None, location=None):
         LIMIT 6
         """
 
-        params.append(f"%{words[0]}%" if words else "%")
+        if words:
+            params.append(f"%{words[0]}%")
+        else:
+            params.append("%")
 
         logger.info("SQL: %s", sql)
         logger.info("Params: %s", params)
@@ -846,11 +853,7 @@ async def websocket_chat(websocket: WebSocket):
             intent_data = detect_intent_llm(query)
             logger.debug(f"[INTENT] {intent_data}")
 
-            base_query = (
-                intent_data.get("rephrased_query")
-                or intent_data.get("keywords")
-                or query
-            )
+            base_query = intent_data.get("keywords") or query
 
             logger.debug(f"[BASE QUERY] {base_query}")
 
