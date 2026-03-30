@@ -2,7 +2,6 @@
 
 import re
 import json
-import openai
 from cachetools import LRUCache
 import requests
 import os
@@ -47,11 +46,6 @@ if not logger.handlers:
 
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
-
-
-openai.api_base = "http://localhost:8000/v1"
-openai.api_key = ""
-
 
 
 redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
@@ -121,7 +115,29 @@ def simple_rerank(results, intent_type=None):
 
     return (primary + secondary)[:6]
 
+def call_ollama(prompt, stream=False, model="llama3", max_tokens=200):
+    url = "http://localhost:11434/api/generate"
 
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": stream,
+        "options": {
+            "temperature": 0.2,
+            "num_predict": max_tokens
+        }
+    }
+
+    if not stream:
+        res = requests.post(url, json=payload, timeout=60)
+        return res.json().get("response", "")
+
+    else:
+        with requests.post(url, json=payload, stream=True) as r:
+            for line in r.iter_lines():
+                if line:
+                    data = json.loads(line.decode("utf-8"))
+                    yield data.get("response", "")
 
 def normalize_query_llm(query: str):
     cache_k = cache_key("norm:" + query)
@@ -149,17 +165,9 @@ Return ONLY JSON.
 """
 
     try:
-        res = openai.ChatCompletion.create(
-            model="microsoft/Phi-3-mini-4k-instruct",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=100,
-            temperature=0
-        )
+        res = call_ollama(prompt, model="phi3", max_tokens=60)
 
-        text = res["choices"][0]["message"]["content"]
-
-        import re
-        match = re.search(r'\{.*\}', text, re.DOTALL)
+        match = re.search(r'\{[\s\S]*?\}', res)
         if match:
             data = json.loads(match.group())
             redis_client.setex(cache_k, 600, json.dumps(data))
@@ -193,15 +201,9 @@ Return ONLY JSON.
 """
 
     try:
-        res = openai.ChatCompletion.create(
-            model="microsoft/Phi-3-mini-4k-instruct",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=120,
-            temperature=0.2
-        )
-
-        text = res["choices"][0]["message"]["content"]
-
+        
+        res = call_ollama(prompt, model="phi3", max_tokens=80)
+        text = res
         import re
         match = re.search(r'\{.*\}', text, re.DOTALL)
         if match:
@@ -315,16 +317,9 @@ OUTPUT (STRICT JSON ONLY)
 """
 
     try:
-        response = openai.ChatCompletion.create(
-            model="microsoft/Phi-3-mini-4k-instruct",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=220,
-            temperature=0
-        )
+        answer = call_ollama(prompt, model="llama3", max_tokens=200)
 
-        text = response["choices"][0]["message"]["content"].strip()
-
-        match = re.search(r'\{.*\}', text, re.DOTALL)
+        match = re.search(r'\{.*\}', answer, re.DOTALL)
         if match:
             data = json.loads(match.group())
 
@@ -835,13 +830,7 @@ def chat(req: ChatRequest):
     else:
         try:
             prompt = build_prompt(query, memory, context)
-            response = openai.ChatCompletion.create(
-                model="microsoft/Phi-3-mini-4k-instruct",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=200,
-            )
-
-            answer = response["choices"][0]["message"]["content"]
+            answer = call_ollama(prompt, model="llama3", max_tokens=200)
         except Exception as e:
             print("LLM error:", e)
             answer = "Error generating response."
@@ -922,15 +911,7 @@ def chat_stream(req: ChatRequest):
     prompt = build_prompt(query, memory, context)
 
     def generate():
-        response = openai.ChatCompletion.create(
-            model="microsoft/Phi-3-mini-4k-instruct",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=200,
-            stream=True
-        )
-
-        for chunk in response:
-            token = chunk["choices"][0]["delta"].get("content", "")
+        for token in call_ollama(prompt, stream=True, model="llama3", max_tokens=200):
             yield token
 
 
@@ -1026,17 +1007,11 @@ async def websocket_chat(websocket: WebSocket):
             logger.debug(f"[PROMPT GENERATED] Length: {len(prompt)}")
 
             # 🔹 LLM Call
-            response = openai.ChatCompletion.create(
-                model="microsoft/Phi-3-mini-4k-instruct",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=700,
-                stream=True
-            )
+            response = call_ollama(prompt, model="llama3", max_tokens=700, stream=True)
 
             full = ""
 
-            for chunk in response:
-                token = chunk["choices"][0]["delta"].get("content", "")
+            for token in response:
                 full += token
 
             clean_html = clean_html_response(full)
