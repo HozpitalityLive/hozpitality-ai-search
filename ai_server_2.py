@@ -150,7 +150,7 @@ Return ONLY JSON.
 
     try:
         res = openai.ChatCompletion.create(
-            model="google/gemma-2b-it",
+            model="mistralai/Mistral-7B-Instruct-v0.2",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=100,
             temperature=0
@@ -194,7 +194,7 @@ Return ONLY JSON.
 
     try:
         res = openai.ChatCompletion.create(
-            model="google/gemma-2b-it",
+            model="mistralai/Mistral-7B-Instruct-v0.2",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=120,
             temperature=0.2
@@ -316,7 +316,7 @@ OUTPUT (STRICT JSON ONLY)
 
     try:
         response = openai.ChatCompletion.create(
-            model="google/gemma-2b-it",
+            model="mistralai/Mistral-7B-Instruct-v0.2",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=220,
             temperature=0
@@ -836,7 +836,7 @@ def chat(req: ChatRequest):
         try:
             prompt = build_prompt(query, memory, context)
             response = openai.ChatCompletion.create(
-                model="google/gemma-2b-it",
+                model="mistralai/Mistral-7B-Instruct-v0.2",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=200,
             )
@@ -923,7 +923,7 @@ def chat_stream(req: ChatRequest):
 
     def generate():
         response = openai.ChatCompletion.create(
-            model="google/gemma-2b-it",
+            model="mistralai/Mistral-7B-Instruct-v0.2",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=200,
             stream=True
@@ -1027,7 +1027,7 @@ async def websocket_chat(websocket: WebSocket):
 
             # 🔹 LLM Call
             response = openai.ChatCompletion.create(
-                model="google/gemma-2b-it",
+                model="mistralai/Mistral-7B-Instruct-v0.2",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=700,
                 stream=True
