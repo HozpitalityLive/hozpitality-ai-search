@@ -499,7 +499,11 @@ def chat(req: ChatRequest):
     intent_data = detect_intent_llm(query)
 
     clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
-    clean_query = query.lower().strip()
+    clean_query = (
+        intent_data.get("rephrased_query")
+        or intent_data.get("keywords")
+        or query
+    ).lower().strip()
     intent_type = intent_data.get("type")
 
     q_lower = query.lower()
@@ -585,7 +589,11 @@ def chat_stream(req: ChatRequest):
     intent_data = detect_intent_llm(query)
 
     clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
-    clean_query = query.lower().strip()
+    clean_query = (
+        intent_data.get("rephrased_query")
+        or intent_data.get("keywords")
+        or query
+    ).lower().strip()
     intent_type = intent_data.get("type")
 
     q_lower = query.lower()
@@ -671,7 +679,11 @@ async def websocket_chat(websocket: WebSocket):
             intent_data = detect_intent_llm(query)
 
             clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
-            clean_query = query.lower().strip()
+            clean_query = (
+                intent_data.get("rephrased_query")
+                or intent_data.get("keywords")
+                or query
+            ).lower().strip()
             intent_type = intent_data.get("type")
 
             q_lower = query.lower()
