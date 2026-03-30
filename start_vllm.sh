@@ -30,8 +30,8 @@ docker run -d \
   vllm/vllm-openai:latest \
   google/gemma-2b-it \
   --dtype half \
-  --max-model-len 1024 \
-  --gpu-memory-utilization 0.65 \
+  --max-model-len 2024 \
+  --gpu-memory-utilization 0.7 \
   --max-num-seqs 3
 
 sleep 5
