@@ -41,22 +41,24 @@ def clean_html_response(text: str):
 
     return text.replace("```html", "").replace("```", "").strip()
 
-def simple_rerank(results):
-    job = []
-    article = []
-    others = []
+def simple_rerank(results, intent_type=None):
+    if not results:
+        return []
+
+    intent_type = (intent_type or "").lower()
+
+    primary = []
+    secondary = []
 
     for r in results:
         cat = (r.get("category") or "").lower()
 
-        if "job" in cat:
-            job.append(r)
-        elif "article" in cat:
-            article.append(r)
+        if intent_type and intent_type in cat:
+            primary.append(r)
         else:
-            others.append(r)
+            secondary.append(r)
 
-    return (job + article + others)[:6]
+    return (primary + secondary)[:6]
 
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME"),
@@ -529,13 +531,19 @@ def chat(req: ChatRequest):
         web_context = web_future.result() if web_future in done else []
 
     if intent_type == "job":
-        context = simple_rerank(db_context)
+        context = simple_rerank(db_context, intent_type)
 
     elif intent_type in ["company", "professional"]:
-        context = simple_rerank(db_context)
+        context = simple_rerank(db_context, intent_type)
+
+    elif intent_type == "faq":
+        if len(db_context) < 2:
+            context = simple_rerank(db_context + web_context[:2], intent_type)
+        else:
+            context = simple_rerank(db_context, intent_type)
 
     else:
-        context = simple_rerank(db_context + web_context)
+        context = simple_rerank(db_context + web_context[:2], intent_type)
 
     if not context:
         answer = "You can check the official website or latest announcements for more details."
@@ -603,7 +611,20 @@ def chat_stream(req: ChatRequest):
 
         web_context = web_future.result() if web_future in done else []
 
-    context = simple_rerank(db_context + web_context)
+    if intent_type == "job":
+        context = simple_rerank(db_context, intent_type)
+
+    elif intent_type in ["company", "professional"]:
+        context = simple_rerank(db_context, intent_type)
+
+    elif intent_type == "faq":
+        if len(db_context) < 2:
+            context = simple_rerank(db_context + web_context[:2], intent_type)
+        else:
+            context = simple_rerank(db_context, intent_type)
+
+    else:
+        context = simple_rerank(db_context + web_context[:2], intent_type)
 
     memory = retrieve_memory(user_id, org_id, query)
     prompt = build_prompt(query, memory, context)
@@ -674,7 +695,20 @@ async def websocket_chat(websocket: WebSocket):
 
                 web_context = web_future.result() if web_future in done else []
 
-            context = simple_rerank(db_context + web_context)
+            if intent_type == "job":
+                context = simple_rerank(db_context, intent_type)
+
+            elif intent_type in ["company", "professional"]:
+                context = simple_rerank(db_context, intent_type)
+
+            elif intent_type == "faq":
+                if len(db_context) < 2:
+                    context = simple_rerank(db_context + web_context[:2], intent_type)
+                else:
+                    context = simple_rerank(db_context, intent_type)
+
+            else:
+                context = simple_rerank(db_context + web_context[:2], intent_type)
 
             memory = retrieve_memory(user_id, org_id, query)
             prompt = build_prompt(query, memory, context)
