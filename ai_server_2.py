@@ -253,10 +253,19 @@ def search_web(query):
     key = cache_key("web:" + query)
     cached = redis_client.get(key)
     if cached:
-        import json
         return json.loads(cached)
 
-    domain_query = f"{query} (site:hozpitality.com OR site:instagram.com OR site:linkedin.com)"
+    ALLOWED_DOMAINS = [
+        "hozpitality.com",
+        "hozpitalityexcellenceawards.com",
+        "instagram.com/hozpitalitygroup",
+        "www.instagram.com/hozpitalitygroup",
+
+        "linkedin.com/company/hozpitalitygroup",
+        "www.linkedin.com/company/hozpitalitygroup",
+    ]
+
+    domain_query = query + " " + " OR ".join([f"site:{d}" for d in ALLOWED_DOMAINS])
 
     try:
         res = requests.post(
@@ -278,7 +287,11 @@ def search_web(query):
             "location": r.get("link")
         } for r in data.get("organic", [])[:3]]
 
-        import json
+        results = [
+            r for r in results
+            if any(domain in (r.get("location") or "") for domain in ALLOWED_DOMAINS)
+        ]
+
         redis_client.setex(key, 300, json.dumps(results))
 
         return results
@@ -484,7 +497,19 @@ def chat(req: ChatRequest):
     intent_data = detect_intent_llm(query)
 
     clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
+    clean_query = query.lower().strip()
     intent_type = intent_data.get("type")
+
+    q_lower = query.lower()
+
+    if any(k in q_lower for k in ["job", "jobs", "hiring", "vacancy"]):
+        intent_type = "job"
+
+    elif any(q_lower.startswith(x) for x in [
+        "how to", "how do", "how can", "steps to", "process"
+    ]):
+        intent_type = "faq"
+
     location = intent_data.get("location")
 
     final_query = clean_query
@@ -549,7 +574,19 @@ def chat_stream(req: ChatRequest):
     intent_data = detect_intent_llm(query)
 
     clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
+    clean_query = query.lower().strip()
     intent_type = intent_data.get("type")
+
+    q_lower = query.lower()
+
+    if any(k in q_lower for k in ["job", "jobs", "hiring", "vacancy"]):
+        intent_type = "job"
+
+    elif any(q_lower.startswith(x) for x in [
+        "how to", "how do", "how can", "steps to", "process"
+    ]):
+        intent_type = "faq"
+
     location = intent_data.get("location")
 
     final_query = clean_query
@@ -607,7 +644,20 @@ async def websocket_chat(websocket: WebSocket):
             intent_data = detect_intent_llm(query)
 
             clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
+            clean_query = query.lower().strip()
             intent_type = intent_data.get("type")
+
+            q_lower = query.lower()
+
+            if any(k in q_lower for k in ["job", "jobs", "hiring", "vacancy"]):
+                intent_type = "job"
+
+            elif any(q_lower.startswith(x) for x in [
+                "how to", "how do", "how can", "steps to", "process"
+            ]):
+                intent_type = "faq"
+
+
             location = intent_data.get("location")
 
             final_query = clean_query
