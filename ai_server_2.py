@@ -346,42 +346,48 @@ Source: {item.get('url', item.get('location'))}
 """
 
     return f"""
-You are a smart AI assistant for Hozpitality.com like ChatGPT or Gemini.
+You are a smart AI assistant for Hozpitality.com.
 
-Query: {query}
+User Query: {query}
 
-Context:
+Context Data:
 {context_text}
 
 Memory:
 {memory_text}
 
-INSTRUCTIONS:
+STRICT INSTRUCTIONS:
 
-1. Start with a short helpful introduction answering the query
-2. Then show structured results (bullet points or sections)
-3. Each result should include:
-   - Title
-   - Short explanation
-   - Link (if available)
-4. DO NOT invent missing steps
-5. If data is incomplete → explain clearly but naturally
-6. Keep tone helpful and human-like
+1. OUTPUT MUST BE PURE HTML ONLY (NO MARKDOWN, NO **, NO TEXT OUTSIDE HTML)
+2. Use clean semantic HTML:
+   - <p> for intro
+   - <ul><li> OR <table> depending on data
+   - <a href="URL" target="_blank"> for links
+3. If query is job-related:
+   - Show MINIMUM 5 results
+   - Each result must include:
+     • Job Title (clickable link)
+     • Short description
+     • Location if available
+4. DO NOT return plain text
+5. DO NOT explain anything outside HTML
+6. Keep UI clean and readable
 
-FORMAT:
+OUTPUT FORMAT EXAMPLE:
 
-- Intro (2–3 lines)
-- Then results list
-- Then a helpful closing line
-- Then ONE follow-up question
+<div class="ai-response">
+  <p>Intro text...</p>
 
-STYLE:
+  <ul>
+    <li>
+      <a href="URL">Job Title</a>
+      <div>Short description</div>
+    </li>
+  </ul>
 
-- Conversational but factual
-- Clear and structured
-- Helpful tone
+</div>
 
-ANSWER:
+RETURN ONLY HTML.
 """
 
 class ChatRequest(BaseModel):
@@ -560,10 +566,14 @@ async def websocket_chat(websocket: WebSocket):
                 token = chunk["choices"][0]["delta"].get("content", "")
                 full += token
 
-                await websocket.send_json({
-                    "type": "token",
-                    "data": token
-                })
+            await websocket.send_json({
+                "type": "final",
+                "data": {
+                    "type": "job",
+                    "html": full
+                },
+                "conversation_id": conversation_id
+            })
             
             print("Full answer:", full)
 
