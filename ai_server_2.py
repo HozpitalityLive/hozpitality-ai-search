@@ -230,94 +230,89 @@ def detect_intent_llm(query: str):
     categories = ['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
 
     prompt = f"""
-You are an AI intent classifier for a hospitality platform.
+You are a strict JSON API for search processing.
 
 User Query: "{query}"
-Available Categories: {categories}
+Categories: {categories}
 
-STRICT RULES:
+YOUR TASK (STRICT):
 
-0. TYPO CORRECTION:
-- Fix spelling mistakes (e.g., "kitchn" → "kitchen", "dishwashr" → "dishwasher")
-- Normalize to hospitality terminology
+1. SPELLING FIX ONLY:
+- Fix spelling mistakes
+- DO NOT merge words
+- DO NOT remove words
+- DO NOT add new words
+- Keep sentence structure same
 
-1. INTENT LOGIC (CRITICAL):
-- FAQ PRIORITY:
-    If query starts with:
-    "how to", "how do i", "how can i", "steps to", "process"
-    → intent = "FAQ", type = "faq"
+Example:
+"find a job for cheiif in dubai"
+→ "find a job for chef in dubai"
 
-- PROFILE RULE:
-    If query is a person name OR starts with "who is", "who's"
-    → intent = "SEARCH", type = "professional"
+2. INTENT:
+- FAQ if starts with "how to", "how do", "steps", "process"
+- professional if "who is"
+- job if contains job-related words
+- else SEARCH
 
-- COMPANY RULE:
-    If query contains "what is", "define"
-    → type = "company" ONLY if no other category is present
+3. TYPE:
+Must be ONE of: {categories}
 
-- DEFAULT:
-    intent = "SEARCH", type = "article"
+4. LOCATION:
+- Extract city or country only
+- Return single word if possible
+- Example: "dubai", "india", "mumbai"
 
-2. KEYWORD RULES:
+5. KEYWORDS:
+- Extract 2–4 important search terms
 - lowercase only
-- remove stop words
-- remove category words if used as type
+- remove filler words like: find, a, the, for, in
+- KEEP important roles (chef, manager etc.)
 
-- FAQ:
-    keep only core problem
-    e.g. "how to apply job" → "job application"
+Example:
+"find a job for chef in dubai"
+→ "chef dubai"
 
-- SEARCH:
-    remove words like "job", "articles", "events" if they match type
-
-3. LOCATION EXTRACTION:
-- Extract city / country if present
-- Examples:
-    "jobs in dubai" → "dubai"
-    "chef mumbai india" → "mumbai"
-
-4. REPHRASE QUERY:
-- Clean, typo-free, search optimized
-
-OUTPUT STRICT JSON:
+STRICT OUTPUT (NO TEXT, ONLY JSON):
 
 {{
-"intent": "...",
-"type": "...",
-"keywords": "...",
-"location": "",
-"rephrased_query": "..."
+"intent": "SEARCH",
+"type": "job",
+"keywords": "chef dubai",
+"location": "dubai",
+"rephrased_query": "find a job for chef in dubai"
 }}
-
-Return ONLY JSON.
 """
 
     try:
         response = openai.ChatCompletion.create(
             model="google/gemma-2b-it",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=180,
-            temperature=0
+            max_tokens=220,
+            temperature=0  
         )
 
         text = response["choices"][0]["message"]["content"].strip()
 
-        print("intent:", text)
-
         import re
         match = re.search(r'\{.*\}', text, re.DOTALL)
-        print("Intent match:", match.group() if match else "No match")
+
         if match:
-            print("Matched JSON:", match.group())
-            print("Parsed JSON:", json.loads(match.group()))
-            logger.info("Intent detected: %s", json.loads(match.group()))
-            return json.loads(match.group())
-        else:
-            print("No valid JSON found")
-            raise ValueError("Invalid JSON")
+            data = json.loads(match.group())
+
+            rq = data.get("rephrased_query", "").lower()
+
+            rq = re.sub(r'\bin([a-z]+)', r'in \1', rq)
+
+            data["rephrased_query"] = rq.strip()
+
+            logger.info(f"Intent detected: {data}")
+
+            return data
+
+        raise ValueError("Invalid JSON")
 
     except Exception as e:
-        print("Intent error:", e)
+        logger.error(f"Intent error: {e}")
 
         return {
             "intent": "SEARCH",
