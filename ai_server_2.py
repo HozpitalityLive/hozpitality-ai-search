@@ -483,7 +483,6 @@ def search_db(query, intent_type=None, location=None):
 
         params = []
 
-        # category filter
         if intent_type == "job":
             sql += " AND LOWER(category_text) LIKE '%job%'"
 
@@ -508,17 +507,26 @@ def search_db(query, intent_type=None, location=None):
         elif intent_type == "professional":
             sql += " AND LOWER(category_text) LIKE '%professional%'"
 
-        # location filter
         if location:
             sql += " AND LOWER(location_text) LIKE %s"
             params.append(f"%{location.lower()}%")
 
-        # 🔥 SAFE SEARCH (no similarity, no vector)
+        words = [w for w in query.split() if len(w) > 2]
+
+        if words:
+            conditions = []
+
+            for w in words:
+                conditions.append("LOWER(title) LIKE %s")
+                params.append(f"%{w}%")
+
+            for w in words:
+                conditions.append("LOWER(content) LIKE %s")
+                params.append(f"%{w}%")
+
+            sql += " AND (" + " OR ".join(conditions) + ")"
+
         sql += """
-        AND (
-            LOWER(title) LIKE %s
-            OR LOWER(content) LIKE %s
-        )
         ORDER BY 
             CASE 
                 WHEN LOWER(title) LIKE %s THEN 0
@@ -527,13 +535,7 @@ def search_db(query, intent_type=None, location=None):
         LIMIT 6
         """
 
-        query_like = f"%{query.lower()}%"
-
-        params.extend([
-            query_like,  # title
-            query_like,  # content
-            query_like   # order priority
-        ])
+        params.append(f"%{words[0]}%" if words else "%")
 
         print("SQL:", sql)
         print("Params:", params)
