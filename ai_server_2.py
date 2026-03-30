@@ -538,8 +538,8 @@ def search_db(query, intent_type=None, location=None):
 
         params.append(f"%{words[0]}%" if words else "%")
 
-        print("SQL:", sql)
-        print("Params:", params)
+        logger.info("SQL: %s", sql)
+        logger.info("Params: %s", params)
 
         cur.execute(sql, params)
         rows = cur.fetchall()
