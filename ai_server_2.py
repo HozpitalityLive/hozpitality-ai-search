@@ -719,7 +719,8 @@ async def websocket_chat(websocket: WebSocket):
             else:
                 context = simple_rerank(db_context + web_context[:2], intent_type)
 
-            memory = retrieve_memory(user_id, org_id, query)
+            # memory = retrieve_memory(user_id, org_id, query)
+            memory = []
             prompt = build_prompt(query, memory, context)
 
             response = openai.ChatCompletion.create(
