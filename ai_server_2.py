@@ -600,7 +600,7 @@ def search_db(query, intent_type=None, location=None):
         db_pool.putconn(conn)
 
 
-def build_prompt(query, memory, context):
+def build_prompt(query, memory, context, intent_type=None):
 
     memory_text = "\n".join(memory[-2:]) if memory else ""
 
@@ -609,7 +609,7 @@ def build_prompt(query, memory, context):
         context_text += f"""
 [{i+1}]
 Title: {item['title']}
-Details: {item['content'][:80]}
+Details: {item['content'][:120]}
 Source: {item.get('url', item.get('location'))}
 """
 
@@ -617,6 +617,7 @@ Source: {item.get('url', item.get('location'))}
 You are a smart AI assistant for Hozpitality.com.
 
 User Query: {query}
+Intent Type: {intent_type}
 
 Context Data:
 {context_text}
@@ -624,7 +625,9 @@ Context Data:
 Memory:
 {memory_text}
 
-STRICT INSTRUCTIONS:
+----------------------------------------
+STRICT INSTRUCTIONS
+----------------------------------------
 
 1. OUTPUT MUST BE PURE HTML ONLY (NO MARKDOWN, NO ```)
 
@@ -634,49 +637,96 @@ STRICT INSTRUCTIONS:
 
   <!-- INTRO -->
   <div class="ai-intro">
-    <p>Write 2-3 lines introduction explaining the answer clearly.</p>
+    <p>Write 1-2 lines introduction based on the query.</p>
   </div>
 
   <!-- RESULTS -->
   <div class="ai-results">
 
-    For EACH result, you MUST use EXACTLY this structure:
+----------------------------------------
+CASE 1: PROFESSIONAL / COMPANY / SUPPLIER
+----------------------------------------
+
+IF intent_type is "professional" OR "company" OR "supplier":
+
+- Show PROFILE STYLE (NOT list)
+- Show only top 1–3 most relevant results
+
+FORMAT:
+
+<div class="profile-card" style="display:flex; gap:12px; align-items:flex-start; margin-bottom:12px;">
     
-    <div class="result">
-        <a href="URL">Title (with company name)</a>
-        <p>Short description  (1-2 lines)</p>
-        <span class="location">Location (if available)</span>
+    <div class="avatar" style="width:40px; height:40px; border-radius:50%; background:#ddd; display:flex; align-items:center; justify-content:center; font-weight:bold;">
+        {{first letter}}
     </div>
 
-    RULES:
-    - Always wrap each item in <div class="result">
-    - ALWAYS include a <p> description (do NOT skip)
-    - Use real URLs from context
-    - Do NOT output raw links without wrapper
-    - Do NOT use lists (<ul>, <li>)
-    - Do NOT skip description
+    <div class="info">
+        <a href="URL" style="font-weight:600; text-decoration:none;">Name</a>
+        <p style="margin:4px 0;">Description (use content)</p>
+        <span style="font-size:12px; color:gray;">Location</span>
     </div>
-  
+
+</div>
+
+RULES:
+- DO NOT show job-style cards
+- DO NOT show more than 3 results
+- Focus on identity (who is this)
+- Description MUST come from content
+- Avatar = first letter of name
+
+----------------------------------------
+CASE 2: JOB
+----------------------------------------
+
+IF intent_type is "job":
+
+FORMAT:
+
+<div class="job-card" style="margin-bottom:10px;">
+    <a href="URL" style="font-weight:600;">Job Title</a>
+    <p style="margin:4px 0;">Short description</p>
+    <span style="font-size:12px; color:gray;">Location</span>
+</div>
+
+RULES:
+- Show minimum 5 results
+- Keep it list-like (multiple items)
+
+----------------------------------------
+CASE 3: FAQ
+----------------------------------------
+
+FORMAT:
+
+<ul>
+  <li>Step or answer</li>
+</ul>
+
+----------------------------------------
+CASE 4: DEFAULT
+----------------------------------------
+
+- Use normal result cards (same as job but fewer items)
+
+----------------------------------------
+
+  </div>
 
   <!-- FOLLOW UP -->
   <div class="ai-followup">
-    <p><strong>Follow-up:</strong> Ask ONE relevant question.</p>
+    <p><strong>Follow-up:</strong> Ask one relevant question based on intent.</p>
   </div>
 
 </div>
 
-3. JOB RULE:
-- If query is job-related → show at least 5 results
-
-4. DO NOT:
-- Use markdown (**, ###, ``` etc)
-- Do not return plain text
-- Do not wrap in code block
-
-5. KEEP UI:
-- Clean
-- Minimal
-- Readable spacing
+----------------------------------------
+DO NOT:
+----------------------------------------
+- Do NOT use markdown
+- Do NOT return plain text
+- Do NOT skip description
+- Do NOT mix UI types
 
 RETURN ONLY HTML.
 """
@@ -952,7 +1002,7 @@ async def websocket_chat(websocket: WebSocket):
                 logger.warning("[NO RESULTS] Empty context after rerank")
 
             memory = []
-            prompt = build_prompt(query, memory, context)
+            prompt = build_prompt(query, memory, context, intent_type)
 
             logger.debug(f"[PROMPT GENERATED] Length: {len(prompt)}")
 
