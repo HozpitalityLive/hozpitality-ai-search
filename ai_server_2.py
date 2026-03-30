@@ -324,8 +324,6 @@ def search_db(query, intent_type=None, location=None):
         WHERE is_live = TRUE
         """
 
-        params = []
-
         if intent_type == "job":
             sql += " AND LOWER(category_text) LIKE '%job%'"
 
@@ -350,14 +348,20 @@ def search_db(query, intent_type=None, location=None):
         elif intent_type == "professional":
             sql += " AND LOWER(category_text) LIKE '%professional%'"
 
+        params = []
+
         if location:
             sql += " AND LOWER(location_text) LIKE %s"
             params.append(f"%{location.lower()}%")
 
-        sql += " ORDER BY embedding <-> %s::vector LIMIT 5"
+        sql += " ORDER BY embedding <-> %s::vector LIMIT 6"
         params.append(q_vec)
 
+        print("SQL:", sql)
+        print("Params count:", len(params))
+
         cur.execute(sql, params)
+
         rows = cur.fetchall()
         cur.close()
 
@@ -372,6 +376,10 @@ def search_db(query, intent_type=None, location=None):
         redis_client.setex(key, CACHE_TTL, json.dumps(result))
 
         return result
+
+    except Exception as e:
+        print("DB ERROR:", e)
+        return []
 
     finally:
         db_pool.putconn(conn)
