@@ -21,6 +21,7 @@ import hashlib
 import numpy as np
 from dotenv import load_dotenv
 load_dotenv()
+from sentence_transformers import CrossEncoder
 
 
 openai.api_base = "http://localhost:8000/v1"
@@ -31,6 +32,41 @@ openai.api_key = ""
 redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 CACHE_TTL = 600
+
+reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+DB_CONFIG = {
+    "dbname": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
+    "host": os.getenv("DB_HOST"),
+    "port": os.getenv("DB_PORT"),
+}
+
+MODEL_PATH = "/home/dev/models/mistral/mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+
+app = FastAPI()
+
+
+embedder = SentenceTransformer("all-MiniLM-L6-v2")
+EMBED_DIM = embedder.get_sentence_embedding_dimension()
+
+
+db_pool = SimpleConnectionPool(1, 5, **DB_CONFIG)
+
+memory_indexes = {}
+memory_store = {}
+
+def rerank(query, results):
+    if not results:
+        return []
+
+    pairs = [(query, r["title"]) for r in results]
+    scores = reranker.predict(pairs)
+
+    ranked = sorted(zip(results, scores), key=lambda x: x[1], reverse=True)
+
+    return [r[0] for r in ranked]
 
 def cache_key(query):
     return "ai:" + hashlib.md5(query.encode()).hexdigest()
@@ -60,27 +96,111 @@ def simple_rerank(results, intent_type=None):
 
     return (primary + secondary)[:6]
 
-DB_CONFIG = {
-    "dbname": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    "host": os.getenv("DB_HOST"),
-    "port": os.getenv("DB_PORT"),
-}
-
-MODEL_PATH = "/home/dev/models/mistral/mistral-7b-instruct-v0.2.Q4_K_M.gguf"
-
-app = FastAPI()
 
 
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
-EMBED_DIM = embedder.get_sentence_embedding_dimension()
+def normalize_query_llm(query: str):
+    cache_k = cache_key("norm:" + query)
+    cached = redis_client.get(cache_k)
+    if cached:
+        return json.loads(cached)
+
+    prompt = f"""
+You are a search query optimizer.
+
+User Query: "{query}"
+
+TASK:
+1. Fix spelling mistakes
+2. Normalize to hospitality terms
+3. Remove unnecessary words
+4. Keep intent clear
+
+OUTPUT JSON:
+{{
+  "normalized": "clean optimized query"
+}}
+
+Return ONLY JSON.
+"""
+
+    try:
+        res = openai.ChatCompletion.create(
+            model="google/gemma-2b-it",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0
+        )
+
+        text = res["choices"][0]["message"]["content"]
+
+        import re
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            data = json.loads(match.group())
+            redis_client.setex(cache_k, 600, json.dumps(data))
+            return data
+    except Exception as e:
+        print("Normalize error:", e)
+
+    return {"normalized": query}
+
+def generate_synonyms_llm(query: str):
+    cache_k = cache_key("syn:" + query)
+    cached = redis_client.get(cache_k)
+    if cached:
+        return json.loads(cached)
+
+    prompt = f"""
+You are a search expansion engine.
+
+User Query: "{query}"
+
+TASK:
+Generate 3-5 relevant synonyms or related search terms 
+specific to hospitality jobs / industry.
+
+OUTPUT JSON:
+{{
+  "synonyms": ["term1", "term2", "term3"]
+}}
+
+Return ONLY JSON.
+"""
+
+    try:
+        res = openai.ChatCompletion.create(
+            model="google/gemma-2b-it",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=120,
+            temperature=0.2
+        )
+
+        text = res["choices"][0]["message"]["content"]
+
+        import re
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            data = json.loads(match.group())
+            redis_client.setex(cache_k, 600, json.dumps(data))
+            return data
+    except Exception as e:
+        print("Synonym error:", e)
+
+    return {"synonyms": []}
 
 
-db_pool = SimpleConnectionPool(1, 5, **DB_CONFIG)
+def build_final_query(query: str):
+    norm = normalize_query_llm(query)
+    normalized = norm.get("normalized", query)
 
-memory_indexes = {}
-memory_store = {}
+    syn = generate_synonyms_llm(normalized)
+    synonyms = syn.get("synonyms", [])
+
+    final_query = normalized + " " + " ".join(synonyms)
+
+    return final_query.strip()
+
+
 
 def detect_intent_llm(query: str):
     categories = ['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
@@ -369,8 +489,32 @@ def search_db(query, intent_type=None, location=None):
             sql += " AND LOWER(location_text) LIKE %s"
             params.append(f"%{location.lower()}%")
 
-        sql += " ORDER BY embedding <-> %s::vector LIMIT 6"
-        params.append(q_vec)
+        sql += """
+        AND (
+            LOWER(title) LIKE %s
+            OR LOWER(content) LIKE %s
+            OR similarity(title, %s) > 0.3
+        )
+        ORDER BY 
+            CASE 
+                WHEN LOWER(title) LIKE %s THEN 0
+                WHEN LOWER(content) LIKE %s THEN 1
+                ELSE 2
+            END,
+            similarity(title, %s) DESC,
+            embedding <-> %s::vector
+        LIMIT 6
+        """
+
+        params.extend([
+            f"%{query.lower()}%",   
+            f"%{query.lower()}%",   
+            query.lower(),          
+            f"%{query.lower()}%",   
+            f"%{query.lower()}%",   
+            query.lower(),          
+            q_vec                   
+        ])
 
         print("SQL:", sql)
         print("Params count:", len(params))
@@ -499,11 +643,14 @@ def chat(req: ChatRequest):
     intent_data = detect_intent_llm(query)
 
     clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
-    clean_query = (
+    base_query = (
         intent_data.get("rephrased_query")
         or intent_data.get("keywords")
         or query
-    ).lower().strip()
+    )
+
+    final_query = build_final_query(base_query)
+
     intent_type = intent_data.get("type")
 
     q_lower = query.lower()
@@ -521,7 +668,6 @@ def chat(req: ChatRequest):
 
     location = intent_data.get("location")
 
-    final_query = clean_query
     if location:
         final_query += f" {location}"
 
@@ -537,20 +683,20 @@ def chat(req: ChatRequest):
 
         web_context = web_future.result() if web_future in done else []
 
-    if intent_type == "job":
-        context = simple_rerank(db_context, intent_type)
-
-    elif intent_type in ["company", "professional"]:
-        context = simple_rerank(db_context, intent_type)
+    if intent_type in ["job", "company", "professional"]:
+        combined = db_context
 
     elif intent_type == "faq":
         if len(db_context) < 2:
-            context = simple_rerank(db_context + web_context[:2], intent_type)
+            combined = db_context + web_context[:2]
         else:
-            context = simple_rerank(db_context, intent_type)
+            combined = db_context
 
     else:
-        context = simple_rerank(db_context + web_context[:2], intent_type)
+        combined = db_context + web_context[:2]
+
+
+    context = rerank(final_query, combined)
 
     if not context:
         answer = "You can check the official website or latest announcements for more details."
@@ -588,12 +734,13 @@ def chat_stream(req: ChatRequest):
 
     intent_data = detect_intent_llm(query)
 
-    clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
-    clean_query = (
+    base_query = (
         intent_data.get("rephrased_query")
         or intent_data.get("keywords")
         or query
-    ).lower().strip()
+    )
+
+    final_query = build_final_query(base_query)
     intent_type = intent_data.get("type")
 
     q_lower = query.lower()
@@ -611,7 +758,6 @@ def chat_stream(req: ChatRequest):
 
     location = intent_data.get("location")
 
-    final_query = clean_query
     if location:
         final_query += f" {location}"
 
@@ -625,20 +771,20 @@ def chat_stream(req: ChatRequest):
 
         web_context = web_future.result() if web_future in done else []
 
-    if intent_type == "job":
-        context = simple_rerank(db_context, intent_type)
-
-    elif intent_type in ["company", "professional"]:
-        context = simple_rerank(db_context, intent_type)
+    if intent_type in ["job", "company", "professional"]:
+        combined = db_context
 
     elif intent_type == "faq":
         if len(db_context) < 2:
-            context = simple_rerank(db_context + web_context[:2], intent_type)
+            combined = db_context + web_context[:2]
         else:
-            context = simple_rerank(db_context, intent_type)
+            combined = db_context
 
     else:
-        context = simple_rerank(db_context + web_context[:2], intent_type)
+        combined = db_context + web_context[:2]
+
+
+    context = rerank(final_query, combined)
 
     memory = retrieve_memory(user_id, org_id, query)
     prompt = build_prompt(query, memory, context)
@@ -678,12 +824,13 @@ async def websocket_chat(websocket: WebSocket):
 
             intent_data = detect_intent_llm(query)
 
-            clean_query = intent_data.get("rephrased_query") or intent_data.get("keywords")
-            clean_query = (
+            base_query = (
                 intent_data.get("rephrased_query")
                 or intent_data.get("keywords")
                 or query
-            ).lower().strip()
+            )
+
+            final_query = build_final_query(base_query)
             intent_type = intent_data.get("type")
 
             q_lower = query.lower()
@@ -702,7 +849,6 @@ async def websocket_chat(websocket: WebSocket):
 
             location = intent_data.get("location")
 
-            final_query = clean_query
             if location:
                 final_query += f" {location}"
 
@@ -716,20 +862,20 @@ async def websocket_chat(websocket: WebSocket):
 
                 web_context = web_future.result() if web_future in done else []
 
-            if intent_type == "job":
-                context = simple_rerank(db_context, intent_type)
-
-            elif intent_type in ["company", "professional"]:
-                context = simple_rerank(db_context, intent_type)
+            if intent_type in ["job", "company", "professional"]:
+                combined = db_context
 
             elif intent_type == "faq":
                 if len(db_context) < 2:
-                    context = simple_rerank(db_context + web_context[:2], intent_type)
+                    combined = db_context + web_context[:2]
                 else:
-                    context = simple_rerank(db_context, intent_type)
+                    combined = db_context
 
             else:
-                context = simple_rerank(db_context + web_context[:2], intent_type)
+                combined = db_context + web_context[:2]
+
+
+            context = rerank(final_query, combined)
 
             # memory = retrieve_memory(user_id, org_id, query)
             memory = []
