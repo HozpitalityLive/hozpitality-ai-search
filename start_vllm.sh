@@ -1,22 +1,15 @@
 #!/bin/bash
 
-
-echo "================================="
-echo "Starting vLLM (Gemma 2B - Docker)"
-echo "================================="
+echo "Loading env..."
+source .env
 
 PORT=8000
 CONTAINER_NAME="vllm-gemma"
 
-
 echo "Stopping old container..."
 
-docker ps -q --filter "publish=8000" | xargs -r docker stop
-docker ps -aq --filter "publish=8000" | xargs -r docker rm
 docker stop $CONTAINER_NAME 2>/dev/null || true
 docker rm $CONTAINER_NAME 2>/dev/null || true
-
-sleep 2
 
 echo "Starting new container..."
 
@@ -30,23 +23,10 @@ docker run -d \
   vllm/vllm-openai:latest \
   google/gemma-2b-it \
   --dtype half \
-  --max-model-len 2024 \
-  --gpu-memory-utilization 0.7 \
-  --max-num-seqs 3
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.8 \
+  --max-num-seqs 5
 
 sleep 5
 
-echo "Checking server..."
-curl -s http://localhost:$PORT/v1/models || echo "Server not ready yet"
-
-echo ""
-echo "Container status:"
-docker ps | grep $CONTAINER_NAME
-
-echo ""
-echo "Logs:"
-echo "docker logs -f $CONTAINER_NAME"
-
-echo "================================="
-echo "vLLM running on port $PORT"
-echo "================================="
+curl http://localhost:$PORT/v1/models
