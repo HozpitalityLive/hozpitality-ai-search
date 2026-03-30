@@ -578,7 +578,7 @@ async def websocket_chat(websocket: WebSocket):
             response = openai.ChatCompletion.create(
                 model="google/gemma-2b-it",
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=500,
+                max_tokens=700,
                 stream=True
             )
 

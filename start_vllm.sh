@@ -27,6 +27,3 @@ docker run -d \
   --gpu-memory-utilization 0.8 \
   --max-num-seqs 5
 
-sleep 5
-
-curl http://localhost:$PORT/v1/models
