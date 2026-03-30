@@ -35,8 +35,14 @@ CACHE_TTL = 600
 def cache_key(query):
     return "ai:" + hashlib.md5(query.encode()).hexdigest()
 
+def clean_html_response(text: str):
+    if not text:
+        return ""
+
+    return text.replace("```html", "").replace("```", "").strip()
+
 def simple_rerank(results):
-    return results[:3]
+    return results[:6]
 
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME"),
@@ -358,34 +364,50 @@ Memory:
 
 STRICT INSTRUCTIONS:
 
-1. OUTPUT MUST BE PURE HTML ONLY (NO MARKDOWN, NO **, NO TEXT OUTSIDE HTML)
-2. Use clean semantic HTML:
-   - <p> for intro
-   - <ul><li> OR <table> depending on data
-   - <a href="URL" target="_blank"> for links
-3. If query is job-related:
-   - Show MINIMUM 5 results
-   - Each result must include:
-     • Job Title (clickable link)
-     • Short description
-     • Location if available
-4. DO NOT return plain text
-5. DO NOT explain anything outside HTML
-6. Keep UI clean and readable
+1. OUTPUT MUST BE PURE HTML ONLY (NO MARKDOWN, NO ```)
 
-OUTPUT FORMAT EXAMPLE:
+2. RESPONSE STRUCTURE (MANDATORY):
 
 <div class="ai-response">
-  <p>Intro text...</p>
 
-  <ul>
-    <li>
-      <a href="URL">Job Title</a>
-      <div>Short description</div>
-    </li>
-  </ul>
+  <!-- INTRO -->
+  <div class="ai-intro">
+    <p>Write 2-3 lines introduction explaining the answer clearly.</p>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="ai-results">
+    Use ANY clean HTML format based on data:
+    - paragraphs OR
+    - cards (div blocks) OR
+    - table OR
+    - list (only if needed)
+
+    Each result MUST include:
+    - Title (clickable <a>)
+    - Short description (1-2 lines)
+    - Optional location
+  </div>
+
+  <!-- FOLLOW UP -->
+  <div class="ai-followup">
+    <p><strong>Follow-up:</strong> Ask ONE relevant question.</p>
+  </div>
 
 </div>
+
+3. JOB RULE:
+- If query is job-related → show at least 5 results
+
+4. DO NOT:
+- Use markdown (**, ###, ``` etc)
+- Do not return plain text
+- Do not wrap in code block
+
+5. KEEP UI:
+- Clean
+- Minimal
+- Readable spacing
 
 RETURN ONLY HTML.
 """
@@ -556,7 +578,7 @@ async def websocket_chat(websocket: WebSocket):
             response = openai.ChatCompletion.create(
                 model="google/gemma-2b-it",
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=100,
+                max_tokens=500,
                 stream=True
             )
 
@@ -565,12 +587,14 @@ async def websocket_chat(websocket: WebSocket):
             for chunk in response:
                 token = chunk["choices"][0]["delta"].get("content", "")
                 full += token
+            
+            clean_html = clean_html_response(full)
 
             await websocket.send_json({
                 "type": "final",
                 "data": {
                     "type": "job",
-                    "html": full
+                    "html": clean_html
                 },
                 "conversation_id": conversation_id
             })
