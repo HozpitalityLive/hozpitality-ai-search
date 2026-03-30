@@ -475,14 +475,15 @@ def search_db(query, intent_type=None, location=None):
     try:
         cur = conn.cursor()
 
-        q_vec = get_embedding(query).tolist()
-
         sql = """
         SELECT title, content, category_text, location_text, slug
         FROM master_search_mastersearchindex
         WHERE is_live = TRUE
         """
 
+        params = []
+
+        # category filter
         if intent_type == "job":
             sql += " AND LOWER(category_text) LIKE '%job%'"
 
@@ -507,44 +508,37 @@ def search_db(query, intent_type=None, location=None):
         elif intent_type == "professional":
             sql += " AND LOWER(category_text) LIKE '%professional%'"
 
-        params = []
-
+        # location filter
         if location:
             sql += " AND LOWER(location_text) LIKE %s"
             params.append(f"%{location.lower()}%")
 
+        # 🔥 SAFE SEARCH (no similarity, no vector)
         sql += """
         AND (
             LOWER(title) LIKE %s
             OR LOWER(content) LIKE %s
-            OR similarity(title, %s) > 0.3
         )
         ORDER BY 
             CASE 
                 WHEN LOWER(title) LIKE %s THEN 0
-                WHEN LOWER(content) LIKE %s THEN 1
-                ELSE 2
-            END,
-            similarity(title, %s) DESC,
-            embedding <-> CAST(%s AS vector)
+                ELSE 1
+            END
         LIMIT 6
         """
 
+        query_like = f"%{query.lower()}%"
+
         params.extend([
-            f"%{query.lower()}%",   
-            f"%{query.lower()}%",   
-            query.lower(),          
-            f"%{query.lower()}%",   
-            f"%{query.lower()}%",   
-            query.lower(),          
-            q_vec                   
+            query_like,  # title
+            query_like,  # content
+            query_like   # order priority
         ])
 
         print("SQL:", sql)
-        print("Params count:", len(params))
+        print("Params:", params)
 
         cur.execute(sql, params)
-
         rows = cur.fetchall()
         cur.close()
 
