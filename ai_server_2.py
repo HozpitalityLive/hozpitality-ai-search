@@ -236,44 +236,33 @@ You are a strict JSON API for search processing.
 User Query: "{query}"
 Categories: {categories}
 
-YOUR TASK (STRICT):
+RULES:
 
-1. SPELLING FIX ONLY:
-- Fix spelling mistakes
-- DO NOT merge words
-- DO NOT remove words
-- DO NOT add new words
-- Keep sentence structure same
-
-Example:
-"find a job for cheiif in dubai"
-→ "find a job for chef in dubai"
+1. SPELLING FIX ONLY (DO NOT CHANGE STRUCTURE)
 
 2. INTENT:
-- FAQ if starts with "how to", "how do", "steps", "process"
-- professional if "who is"
-- job if contains job-related words
+- FAQ → "how to", "steps", "process"
+- professional → "who is"
+- job → job-related words
 - else SEARCH
 
-3. TYPE:
-Must be ONE of: {categories}
+3. TYPE: must be one of {categories}
 
 4. LOCATION:
-- Extract city or country only
-- Return single word if possible
-- Example: "dubai", "india", "mumbai"
+- Extract single city/country word only
 
 5. KEYWORDS:
-- Extract 2–4 important search terms
-- lowercase only
-- remove filler words like: find, a, the, for, in
-- KEEP important roles (chef, manager etc.)
+- Extract 2–4 important words
+- lowercase
+- REMOVE filler words
+- KEEP roles (chef, manager etc.)
+- OUTPUT SPACE SEPARATED (NOT comma)
 
 Example:
 "find a job for chef in dubai"
 → "chef dubai"
 
-STRICT OUTPUT (NO TEXT, ONLY JSON):
+STRICT JSON ONLY:
 
 {{
 "intent": "SEARCH",
@@ -289,26 +278,37 @@ STRICT OUTPUT (NO TEXT, ONLY JSON):
             model="google/gemma-2b-it",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=220,
-            temperature=0  
+            temperature=0
         )
 
         text = response["choices"][0]["message"]["content"].strip()
 
-        import re
         match = re.search(r'\{.*\}', text, re.DOTALL)
-
         if match:
             data = json.loads(match.group())
 
-            rq = data.get("rephrased_query", "").lower()
+            # 🔥 FIX: normalize keywords (remove commas completely)
+            keywords = data.get("keywords", "")
+            keywords = keywords.replace(",", " ").lower()
+            keywords = " ".join(keywords.split())
 
-            rq = re.sub(r'\bin([a-z]+)', r'in \1', rq)
+            # 🔥 FIX: normalize location
+            location = (data.get("location") or "").lower().strip()
 
-            data["rephrased_query"] = rq.strip()
+            # 🔥 FIX: clean rephrased query
+            rq = (data.get("rephrased_query") or query).lower()
+            rq = re.sub(r'\s+', ' ', rq).strip()
 
-            logger.info(f"Intent detected: {data}")
+            cleaned = {
+                "intent": data.get("intent", "SEARCH"),
+                "type": data.get("type", "article"),
+                "keywords": keywords,
+                "location": location,
+                "rephrased_query": rq
+            }
 
-            return data
+            logger.info(f"Intent detected: {cleaned}")
+            return cleaned
 
         raise ValueError("Invalid JSON")
 
@@ -318,9 +318,9 @@ STRICT OUTPUT (NO TEXT, ONLY JSON):
         return {
             "intent": "SEARCH",
             "type": "article",
-            "keywords": query.lower().strip(),
+            "keywords": query.lower(),
             "location": "",
-            "rephrased_query": query.strip()
+            "rephrased_query": query.lower()
         }
 
 def tenant_key(user_id, org_id):
@@ -468,102 +468,86 @@ def search_db(query, intent_type=None, location=None):
     if cached:
         return json.loads(cached)
 
-    remove_location_from_query = query.replace(location, "") if location else query
-    query = remove_location_from_query
-
     conn = db_pool.getconn()
+
     try:
         cur = conn.cursor()
 
-        sql = """
-        SELECT title, content, category_text, location_text, slug
-        FROM master_search_mastersearchindex
-        WHERE is_live = TRUE
-        """
-
-        params = []
-
-        if intent_type == "job":
-            sql += " AND LOWER(category_text) LIKE '%job%'"
-
-        elif intent_type == "article":
-            sql += " AND LOWER(category_text) LIKE '%article%'"
-
-        elif intent_type == "company":
-            sql += " AND LOWER(category_text) LIKE '%company%'"
-
-        elif intent_type == "event":
-            sql += " AND LOWER(category_text) LIKE '%event%'"
-
-        elif intent_type == "supplier":
-            sql += " AND LOWER(category_text) LIKE '%supplier%'"
-
-        elif intent_type == "product":
-            sql += " AND LOWER(category_text) LIKE '%product%'"
-
-        elif intent_type == "awards":
-            sql += " AND LOWER(category_text) LIKE '%award%'"
-
-        elif intent_type == "professional":
-            sql += " AND LOWER(category_text) LIKE '%professional%'"
-
-        if location:
-            sql += " AND LOWER(location_text) LIKE %s"
-            params.append(f"%{location.lower()}%")
+        query = query.replace(",", " ").lower()
 
         words = [
-            w for w in re.split(r"[,\s]+", query.lower())
-            if w and len(w) > 2
+            w.strip()
+            for w in query.split()
+            if w and len(w) > 2 and w != location
         ]
 
-        if words:
-            conditions = []
+        def run_query(use_location=True):
+            sql = """
+            SELECT title, content, category_text, location_text, slug
+            FROM master_search_mastersearchindex
+            WHERE is_live = TRUE
+            """
 
-            for w in words:
-                conditions.append("LOWER(title) LIKE %s")
-                params.append(f"%{w}%")
+            params = []
 
-            for w in words:
-                conditions.append("LOWER(content) LIKE %s")
-                params.append(f"%{w}%")
+            if intent_type:
+                sql += " AND LOWER(category_text) LIKE %s"
+                params.append(f"%{intent_type.lower()}%")
 
-            sql += " AND (" + " OR ".join(conditions) + ")"
+            if use_location and location:
+                sql += " AND LOWER(location_text) LIKE %s"
+                params.append(f"%{location.lower()}%")
 
-        sql += """
-        ORDER BY 
-            CASE 
-                WHEN LOWER(title) LIKE %s THEN 0
-                ELSE 1
-            END
-        LIMIT 6
-        """
+            if words:
+                conditions = []
+                for w in words:
+                    conditions.append("(LOWER(title) LIKE %s OR LOWER(content) LIKE %s)")
+                    params.extend([f"%{w}%", f"%{w}%"])
 
-        if words:
-            params.append(f"%{words[0]}%")
-        else:
-            params.append("%")
+                sql += " AND (" + " OR ".join(conditions) + ")"
 
-        logger.info("SQL: %s", sql)
-        logger.info("Params: %s", params)
+            if words:
+                sql += """
+                ORDER BY 
+                    CASE 
+                        WHEN LOWER(title) LIKE %s THEN 0
+                        WHEN LOWER(content) LIKE %s THEN 1
+                        ELSE 2
+                    END
+                LIMIT 6
+                """
+                params.extend([f"%{words[0]}%", f"%{words[0]}%"])
+            else:
+                sql += " LIMIT 6"
 
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+            logger.info("SQL: %s", sql)
+            logger.info("Params: %s", params)
+
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+            return [{
+                "title": r[0],
+                "content": (r[1] or "")[:150],
+                "category": r[2],
+                "location": r[3],
+                "url": build_url(r[2], r[4])
+            } for r in rows]
+
+        results = run_query(use_location=True)
+
+        if not results and location:
+            logger.warning("[DB FALLBACK] Retrying without location filter")
+            results = run_query(use_location=False)
+
         cur.close()
 
-        result = [{
-            "title": r[0],
-            "content": (r[1] or "")[:150],
-            "category": r[2],
-            "location": r[3],
-            "url": build_url(r[2], r[4])
-        } for r in rows]
+        redis_client.setex(key, CACHE_TTL, json.dumps(results))
 
-        redis_client.setex(key, CACHE_TTL, json.dumps(result))
-
-        return result
+        return results
 
     except Exception as e:
-        print("DB ERROR:", e)
+        logger.error(f"DB ERROR: {e}", exc_info=True)
         return []
 
     finally:
