@@ -156,12 +156,17 @@ Return ONLY JSON.
 
         text = response["choices"][0]["message"]["content"].strip()
 
-        # 🧠 Robust JSON extraction (important for LLM errors)
+        print("intent:", text)
+
         import re
         match = re.search(r'\{.*\}', text, re.DOTALL)
+        print("Intent match:", match.group() if match else "No match")
         if match:
+            print("Matched JSON:", match.group())
+            print("Parsed JSON:", json.loads(match.group()))
             return json.loads(match.group())
         else:
+            print("No valid JSON found")
             raise ValueError("Invalid JSON")
 
     except Exception as e:
