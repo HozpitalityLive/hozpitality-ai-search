@@ -862,7 +862,8 @@ async def websocket_chat(websocket: WebSocket):
 
             logger.debug(f"[BASE QUERY] {base_query}")
 
-            final_query = build_final_query(base_query)
+            # final_query = build_final_query(base_query)
+            final_query = base_query
             intent_type = intent_data.get("type")
 
             q_lower = query.lower()
