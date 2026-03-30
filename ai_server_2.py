@@ -310,6 +310,7 @@ Return ONLY JSON.
         if match:
             print("Matched JSON:", match.group())
             print("Parsed JSON:", json.loads(match.group()))
+            logger.info("Intent detected: %s", json.loads(match.group()))
             return json.loads(match.group())
         else:
             print("No valid JSON found")
