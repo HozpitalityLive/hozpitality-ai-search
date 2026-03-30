@@ -4,7 +4,7 @@ echo "Loading env..."
 source .env
 
 PORT=8000
-CONTAINER_NAME="vllm-gemma"
+CONTAINER_NAME="vllm-mistral"
 
 echo "Stopping old container..."
 
@@ -21,9 +21,8 @@ docker run -d \
   -e HUGGING_FACE_HUB_TOKEN=$HF_TOKEN \
   --ipc=host \
   vllm/vllm-openai:latest \
-  google/gemma-2b-it \
+  mistralai/Mistral-7B-Instruct-v0.2 \
   --dtype half \
   --max-model-len 4096 \
-  --gpu-memory-utilization 0.8 \
-  --max-num-seqs 5
-
+  --gpu-memory-utilization 0.9 \
+  --max-num-seqs 10
