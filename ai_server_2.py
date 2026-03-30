@@ -115,6 +115,26 @@ def simple_rerank(results, intent_type=None):
 
     return (primary + secondary)[:6]
 
+def detect_mode(query, intent_type, context):
+    q = query.lower().strip()
+
+    if len(q) <= 3 or q in ["hi", "hello", "hey", "ok", "thanks"]:
+        return "chat"
+
+    if intent_type == "faq":
+        return "faq"
+
+    if intent_type in ["professional", "company", "supplier"]:
+        return "profile"
+
+    if intent_type == "job":
+        return "list"
+
+    if len(context) == 1:
+        return "single"
+
+    return "list"
+
 def call_ollama(prompt, stream=False, model="llama3", max_tokens=200):
     url = "http://localhost:11434/api/generate"
 
@@ -132,12 +152,14 @@ def call_ollama(prompt, stream=False, model="llama3", max_tokens=200):
         res = requests.post(url, json=payload, timeout=60)
         return res.json().get("response", "")
 
-    else:
+    def generator():
         with requests.post(url, json=payload, stream=True) as r:
             for line in r.iter_lines():
                 if line:
                     data = json.loads(line.decode("utf-8"))
                     yield data.get("response", "")
+
+    return generator()
 
 def normalize_query_llm(query: str):
     cache_k = cache_key("norm:" + query)
@@ -627,7 +649,7 @@ def search_db(query, intent_type=None, location=None):
         db_pool.putconn(conn)
 
 
-def build_prompt(query, memory, context, intent_type=None):
+def build_prompt(query, memory, context, intent_type=None, mode="list"):
 
     memory_text = "\n".join(memory[-2:]) if memory else ""
 
@@ -651,6 +673,36 @@ Context Data:
 
 Memory:
 {memory_text}
+
+BEHAVIOR MODE: {mode}
+
+IMPORTANT BEHAVIOR RULES:
+
+1. CHAT MODE:
+- If mode = "chat"
+- Respond like ChatGPT (friendly conversation)
+- DO NOT show results
+- Just normal human response
+
+2. SINGLE MODE:
+- If mode = "single"
+- Show ONE detailed result
+- Explain properly (like profile/details page)
+- DO NOT list multiple items
+
+3. PROFILE MODE:
+- Show 1–3 profiles
+- Use avatar style
+
+4. LIST MODE:
+- Show multiple results (jobs/articles)
+
+5. FAQ MODE:
+- Use bullet steps
+
+STRICT:
+- NEVER mix styles
+- NEVER show results in chat mode
 
 STRICT INSTRUCTIONS
 
@@ -829,7 +881,9 @@ def chat(req: ChatRequest):
         answer = "You can check the official website or latest announcements for more details."
     else:
         try:
-            prompt = build_prompt(query, memory, context)
+            mode = detect_mode(query, intent_type, context)
+            prompt = build_prompt(query, memory, context, intent_type, mode)
+
             answer = call_ollama(prompt, model="llama3", max_tokens=200)
         except Exception as e:
             print("LLM error:", e)
@@ -908,7 +962,10 @@ def chat_stream(req: ChatRequest):
     context = rerank(final_query, combined)
 
     memory = retrieve_memory(user_id, org_id, query)
-    prompt = build_prompt(query, memory, context)
+    
+    mode = detect_mode(query, intent_type, context)
+
+    prompt = build_prompt(query, memory, context, intent_type, mode)
 
     def generate():
         for token in call_ollama(prompt, stream=True, model="llama3", max_tokens=200):
@@ -972,6 +1029,20 @@ async def websocket_chat(websocket: WebSocket):
             logger.info(f"[FINAL QUERY] {final_query}")
             logger.info(f"[INTENT TYPE] {intent_type} | Location: {location}")
 
+            mode = detect_mode(query, intent_type, [])
+
+            if mode == "chat":
+                answer = call_ollama(query, model="llama3", max_tokens=150)
+
+                await websocket.send_json({
+                    "type": "final",
+                    "data": {
+                        "type": intent_type or "chat",
+                        "html": answer
+                    },
+                    "conversation_id": conversation_id
+                })
+
             with ThreadPoolExecutor() as executor:
                 db_future = executor.submit(search_db, final_query, intent_type, location)
                 web_future = executor.submit(search_web, final_query)
@@ -1002,7 +1073,9 @@ async def websocket_chat(websocket: WebSocket):
                 logger.warning("[NO RESULTS] Empty context after rerank")
 
             memory = []
-            prompt = build_prompt(query, memory, context, intent_type)
+            mode = detect_mode(query, intent_type, context)
+
+            prompt = build_prompt(query, memory, context, intent_type, mode)
 
             logger.debug(f"[PROMPT GENERATED] Length: {len(prompt)}")
 
