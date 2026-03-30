@@ -231,45 +231,86 @@ def detect_intent_llm(query: str):
     categories = ['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
 
     prompt = f"""
-You are a strict JSON API for search processing.
+You are a STRICT JSON API for search intent classification for a hospitality platform.
 
 User Query: "{query}"
 Categories: {categories}
 
-RULES:
+CRITICAL RULES (FOLLOW STRICTLY):
 
-1. SPELLING FIX ONLY (DO NOT CHANGE STRUCTURE)
+1. SPELLING FIX
+- Fix spelling mistakes ONLY
+- DO NOT change structure or meaning
 
-2. INTENT:
-- FAQ → "how to", "steps", "process"
-- professional → "who is"
-- job → job-related words
-- else SEARCH
+2. INTENT DETECTION
 
-3. TYPE: must be one of {categories}
+A. PROFESSIONAL (VERY IMPORTANT PRIORITY)
+- If query is about a PERSON
+- If query starts with "who is"
+- If query looks like a NAME (2 words like "raj bhatt")
+- If asking about a person profile
 
-4. LOCATION:
-- Extract single city/country word only
+Examples:
+"who is raj bhatt"
+"raj bhatt"
+"vikas khanna chef"
 
-5. KEYWORDS:
-- Extract 2–4 important words
+→ intent = "SEARCH"
+→ type = "professional"
+
+
+B. FAQ
+- Queries starting with:
+  "how to", "how do", "steps", "process"
+
+
+C. JOB
+- ONLY if explicitly job intent:
+  "jobs", "hiring", "vacancy", "apply", "opening"
+
+🚫 IMPORTANT:
+- DO NOT classify as job if person name is present
+- Example:
+  "who is raj bhatt" ❌ NOT job
+
+
+D. COMPANY
+- If searching for company info
+
+
+E. DEFAULT
+- Otherwise → SEARCH + best matching type
+
+3. TYPE
+Must be EXACTLY one of:
+{categories}
+
+4. LOCATION
+- Extract ONLY city or country
+- single word
+- else empty string
+
+5. KEYWORDS
+- 2–4 important words
 - lowercase
 - REMOVE filler words
-- KEEP roles (chef, manager etc.)
-- OUTPUT SPACE SEPARATED (NOT comma)
+- KEEP names and roles
+- SPACE separated (NO commas)
 
-Example:
-"find a job for chef in dubai"
+Examples:
+"who is raj bhatt"
+→ "raj bhatt"
+
+"jobs for chef in dubai"
 → "chef dubai"
 
-STRICT JSON ONLY:
-
+OUTPUT (STRICT JSON ONLY)
 {{
 "intent": "SEARCH",
-"type": "job",
-"keywords": "chef dubai",
-"location": "dubai",
-"rephrased_query": "find a job for chef in dubai"
+"type": "professional",
+"keywords": "raj bhatt",
+"location": "",
+"rephrased_query": "who is raj bhatt"
 }}
 """
 
@@ -287,15 +328,12 @@ STRICT JSON ONLY:
         if match:
             data = json.loads(match.group())
 
-            # 🔥 FIX: normalize keywords (remove commas completely)
             keywords = data.get("keywords", "")
             keywords = keywords.replace(",", " ").lower()
             keywords = " ".join(keywords.split())
 
-            # 🔥 FIX: normalize location
             location = (data.get("location") or "").lower().strip()
 
-            # 🔥 FIX: clean rephrased query
             rq = (data.get("rephrased_query") or query).lower()
             rq = re.sub(r'\s+', ' ', rq).strip()
 
@@ -306,6 +344,14 @@ STRICT JSON ONLY:
                 "location": location,
                 "rephrased_query": rq
             }
+
+            q_lower = query.lower().strip()
+
+            if (
+                q_lower.startswith("who is") or
+                re.match(r"^[a-z]+ [a-z]+$", q_lower)
+            ):
+                cleaned["type"] = "professional"
 
             logger.info(f"Intent detected: {cleaned}")
             return cleaned
