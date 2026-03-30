@@ -4,12 +4,13 @@ echo "Loading env..."
 source .env
 
 PORT=8000
-CONTAINER_NAME="vllm-mistral"
+CONTAINER_NAME="vllm-phi"
+
+echo "Cleaning port..."
+sudo fuser -k $PORT/tcp 2>/dev/null || true
 
 echo "Stopping old container..."
-
-docker stop $CONTAINER_NAME 2>/dev/null || true
-docker rm $CONTAINER_NAME 2>/dev/null || true
+docker rm -f $CONTAINER_NAME 2>/dev/null || true
 
 echo "Starting new container..."
 
@@ -21,8 +22,8 @@ docker run -d \
   -e HUGGING_FACE_HUB_TOKEN=$HF_TOKEN \
   --ipc=host \
   vllm/vllm-openai:latest \
-  mistralai/Mistral-7B-Instruct-v0.2 \
+  microsoft/Phi-3-mini-4k-instruct \
   --dtype half \
-  --max-model-len 4096 \
-  --gpu-memory-utilization 0.9 \
-  --max-num-seqs 10
+  --max-model-len 2048 \
+  --gpu-memory-utilization 0.7 \
+  --max-num-seqs 5
