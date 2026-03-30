@@ -593,17 +593,24 @@ STRICT INSTRUCTIONS:
 
   <!-- RESULTS -->
   <div class="ai-results">
-    Use ANY clean HTML format based on data:
-    - paragraphs OR
-    - cards (div blocks) OR
-    - table OR
-    - list (only if needed)
 
-    Each result MUST include:
-    - Title (clickable <a>)
-    - Short description (1-2 lines)
-    - Optional location
-  </div>
+    For EACH result, you MUST use EXACTLY this structure:
+    
+    <div class="result">
+        <a href="URL">Title (with company name)</a>
+        <p>Short description  (1-2 lines)</p>
+        <span class="location">Location (if available)</span>
+    </div>
+
+    RULES:
+    - Always wrap each item in <div class="result">
+    - ALWAYS include a <p> description (do NOT skip)
+    - Use real URLs from context
+    - Do NOT output raw links without wrapper
+    - Do NOT use lists (<ul>, <li>)
+    - Do NOT skip description
+    </div>
+  
 
   <!-- FOLLOW UP -->
   <div class="ai-followup">
