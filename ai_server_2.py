@@ -564,6 +564,8 @@ async def websocket_chat(websocket: WebSocket):
                     "type": "token",
                     "data": token
                 })
+            
+            print("Full answer:", full)
 
             save_message(conversation_id, "user", query)
             save_message(conversation_id, "assistant", full)
