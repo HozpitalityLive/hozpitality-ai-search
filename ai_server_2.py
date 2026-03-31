@@ -1156,7 +1156,7 @@ async def websocket_chat(websocket: WebSocket):
                         mode
                     )
 
-                    response = call_ollama(prompt, model="hozpitality-llama", max_tokens=500)
+                    response = call_ollama(prompt, model="hozpitality-llama", max_tokens=800)
 
                     clean_html = clean_html_response(response)
 
