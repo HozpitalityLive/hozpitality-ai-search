@@ -1074,7 +1074,7 @@ async def websocket_chat(websocket: WebSocket):
             if not context:
                 logger.warning("[NO RESULTS] Empty context after rerank")
 
-            memory = []
+            memory = retrieve_memory(user_id, org_id, query)
             mode = detect_mode(query, intent_type, context)
 
             prompt = build_prompt(query, memory, context, intent_type, mode)
