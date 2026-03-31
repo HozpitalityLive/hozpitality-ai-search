@@ -1042,6 +1042,8 @@ async def websocket_chat(websocket: WebSocket):
                     },
                     "conversation_id": conversation_id
                 })
+                
+                continue
 
             with ThreadPoolExecutor() as executor:
                 db_future = executor.submit(search_db, final_query, intent_type, location)
