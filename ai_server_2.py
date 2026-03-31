@@ -23,6 +23,9 @@ from dotenv import load_dotenv
 load_dotenv()
 from sentence_transformers import CrossEncoder
 import logging
+import time
+from psycopg2.pool import PoolError
+
 
 LOG_FILE = os.path.join(os.getcwd(), "app.log")
 
@@ -71,10 +74,23 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2")
 EMBED_DIM = embedder.get_sentence_embedding_dimension()
 
 
-db_pool = SimpleConnectionPool(1, 5, **DB_CONFIG)
+db_pool = SimpleConnectionPool(5, 20, **DB_CONFIG)
 
 memory_indexes = {}
 memory_store = {}
+
+
+def get_db_conn_with_retry(retries=3, delay=0.1):
+    for i in range(retries):
+        try:
+            return db_pool.getconn()
+        except PoolError:
+            logger.warning(f"[DB POOL RETRY] attempt {i+1}")
+            time.sleep(delay)
+
+    raise Exception("DB connection pool exhausted after retries")
+
+
 
 def rerank(query, results):
     if not results:
@@ -495,34 +511,51 @@ def get_embedding(text):
     return vec
 
 def create_conversation(user_id, title):
-    conn = db_pool.getconn()
-    cur = conn.cursor()
+    conn = None
+    try:
+        conn = get_db_conn_with_retry()
+        cur = conn.cursor()
 
-    cur.execute("""
-    INSERT INTO master_search_usersearchconversation (user_id, title, created_at, updated_at)
-    VALUES (%s, %s, NOW(), NOW())
-    RETURNING id
-    """, (user_id, title))
+        cur.execute("""
+        INSERT INTO master_search_usersearchconversation (user_id, title, created_at, updated_at)
+        VALUES (%s, %s, NOW(), NOW())
+        RETURNING id
+        """, (user_id, title))
 
-    cid = cur.fetchone()[0]
-    conn.commit()
-    cur.close()
-    db_pool.putconn(conn)
+        cid = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
 
-    return cid
+        return cid
+
+    except Exception as e:
+        logger.error(f"[DB ERROR create_conversation] {e}", exc_info=True)
+        return None
+
+    finally:
+        if conn:
+            db_pool.putconn(conn)
 
 def save_message(conversation_id, role, content):
-    conn = db_pool.getconn()
-    cur = conn.cursor()
+    conn = None
+    try:
+        conn = get_db_conn_with_retry()
+        cur = conn.cursor()
 
-    cur.execute("""
-    INSERT INTO master_search_usersearchmessage (conversation_id, role, content, created_at)
-    VALUES (%s, %s, %s, NOW())
-    """, (conversation_id, role, content))
+        cur.execute("""
+        INSERT INTO master_search_usersearchmessage (conversation_id, role, content, created_at)
+        VALUES (%s, %s, %s, NOW())
+        """, (conversation_id, role, content))
 
-    conn.commit()
-    cur.close()
-    db_pool.putconn(conn)
+        conn.commit()
+        cur.close()
+
+    except Exception as e:
+        logger.error(f"[DB ERROR save_message] {e}", exc_info=True)
+
+    finally:
+        if conn:
+            db_pool.putconn(conn)
 
 def search_web(query):
     key = cache_key("web:" + query)
@@ -600,7 +633,7 @@ def search_db(query, intent_type=None, location=None):
     if cached:
         return json.loads(cached)
 
-    conn = db_pool.getconn()
+    conn = get_db_conn_with_retry()
 
     try:
         cur = conn.cursor()
@@ -1062,7 +1095,10 @@ async def websocket_chat(websocket: WebSocket):
 
             logger.info(f"[QUERY] User:{user_id} Org:{org_id} → {query}")
 
-            conversation_id = data.get("conversation_id") or create_conversation(user_id, query[:30])
+            conversation_id = data.get("conversation_id")
+
+            if not conversation_id:
+                conversation_id = create_conversation(user_id, query[:30])
             logger.debug(f"[CONVERSATION] ID: {conversation_id}")
 
             intent_data = detect_intent_llm(query)
@@ -1242,7 +1278,7 @@ async def websocket_chat(websocket: WebSocket):
 
 @app.get("/conversations/{user_id}")
 def get_conversations(user_id: int):
-    conn = db_pool.getconn()
+    conn = get_db_conn_with_retry()
     cur = conn.cursor()
 
     cur.execute("""
@@ -1262,7 +1298,7 @@ def get_conversations(user_id: int):
 
 @app.get("/history/{user_id}/{conversation_id}")
 def get_history(user_id: int, conversation_id: int):
-    conn = db_pool.getconn()
+    conn = get_db_conn_with_retry()
     cur = conn.cursor()
 
     cur.execute("""
