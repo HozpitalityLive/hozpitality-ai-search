@@ -25,6 +25,8 @@ from sentence_transformers import CrossEncoder
 import logging
 import time
 from psycopg2.pool import PoolError
+from contextlib import contextmanager
+
 
 
 LOG_FILE = os.path.join(os.getcwd(), "app.log")
@@ -78,6 +80,16 @@ db_pool = SimpleConnectionPool(5, 20, **DB_CONFIG)
 
 memory_indexes = {}
 memory_store = {}
+
+
+
+@contextmanager
+def get_db():
+    conn = get_db_conn_with_retry()
+    try:
+        yield conn
+    finally:
+        db_pool.putconn(conn)
 
 
 def get_db_conn_with_retry(retries=3, delay=0.1):
@@ -1278,46 +1290,58 @@ async def websocket_chat(websocket: WebSocket):
 
 @app.get("/conversations/{user_id}")
 def get_conversations(user_id: int):
-    conn = get_db_conn_with_retry()
-    cur = conn.cursor()
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
 
-    cur.execute("""
-    SELECT id, title, updated_at
-    FROM master_search_usersearchconversation
-    WHERE user_id = %s
-    ORDER BY updated_at DESC
-    """, (user_id,))
+            cur.execute("""
+            SELECT id, title, updated_at
+            FROM master_search_usersearchconversation
+            WHERE user_id = %s
+            ORDER BY updated_at DESC
+            """, (user_id,))
 
-    rows = cur.fetchall()
+            rows = cur.fetchall()
+            cur.close()
 
-    return [
-        {"id": r[0], "title": r[1], "updated_at": str(r[2])}
-        for r in rows
-    ]
+            return [
+                {"id": r[0], "title": r[1], "updated_at": str(r[2])}
+                for r in rows
+            ]
+
+    except Exception as e:
+        logger.error(f"[DB ERROR get_conversations] {e}", exc_info=True)
+        return []
 
 
 @app.get("/history/{user_id}/{conversation_id}")
 def get_history(user_id: int, conversation_id: int):
-    conn = get_db_conn_with_retry()
-    cur = conn.cursor()
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
 
-    cur.execute("""
-    SELECT role, content, created_at
-    FROM master_search_usersearchmessage
-    WHERE conversation_id = %s
-    ORDER BY created_at ASC
-    """, (conversation_id,))
+            cur.execute("""
+            SELECT role, content, created_at
+            FROM master_search_usersearchmessage
+            WHERE conversation_id = %s
+            ORDER BY created_at ASC
+            """, (conversation_id,))
 
-    rows = cur.fetchall()
+            rows = cur.fetchall()
+            cur.close()
 
-    return [
-        {
-            "role": r[0],
-            "content": r[1],
-            "timestamp": str(r[2])
-        }
-        for r in rows
-    ]
+            return [
+                {
+                    "role": r[0],
+                    "content": r[1],
+                    "timestamp": str(r[2])
+                }
+                for r in rows
+            ]
+
+    except Exception as e:
+        logger.error(f"[DB ERROR get_history] {e}", exc_info=True)
+        return []
 
 
 @app.websocket("/ws/test")
