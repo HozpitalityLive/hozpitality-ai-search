@@ -135,7 +135,7 @@ def detect_mode(query, intent_type, context):
 
     return "list"
 
-def call_ollama(prompt, stream=False, model="llama3", max_tokens=200):
+def call_ollama(prompt, stream=False, model="hozpitality-llama", max_tokens=200):
     url = "http://localhost:11434/api/generate"
 
     payload = {
@@ -187,7 +187,7 @@ Return ONLY JSON.
 """
 
     try:
-        res = call_ollama(prompt, model="phi3", max_tokens=60)
+        res = call_ollama(prompt, model="hozpitality-phi3", max_tokens=60)
 
         match = re.search(r'\{[\s\S]*?\}', res)
         if match:
@@ -224,7 +224,7 @@ Return ONLY JSON.
 
     try:
         
-        res = call_ollama(prompt, model="phi3", max_tokens=80)
+        res = call_ollama(prompt, model="hozpitality-phi3", max_tokens=80)
         text = res
         import re
         match = re.search(r'\{.*\}', text, re.DOTALL)
@@ -339,7 +339,7 @@ OUTPUT (STRICT JSON ONLY)
 """
 
     try:
-        answer = call_ollama(prompt, model="llama3", max_tokens=200)
+        answer = call_ollama(prompt, model="hozpitality-llama", max_tokens=200)
 
         match = re.search(r'\{.*\}', answer, re.DOTALL)
         if match:
@@ -884,7 +884,7 @@ def chat(req: ChatRequest):
             mode = detect_mode(query, intent_type, context)
             prompt = build_prompt(query, memory, context, intent_type, mode)
 
-            answer = call_ollama(prompt, model="llama3", max_tokens=200)
+            answer = call_ollama(prompt, model="hozpitality-llama", max_tokens=200)
         except Exception as e:
             print("LLM error:", e)
             answer = "Error generating response."
@@ -968,7 +968,7 @@ def chat_stream(req: ChatRequest):
     prompt = build_prompt(query, memory, context, intent_type, mode)
 
     def generate():
-        for token in call_ollama(prompt, stream=True, model="llama3", max_tokens=200):
+        for token in call_ollama(prompt, stream=True, model="hozpitality-llama", max_tokens=200):
             yield token
 
 
@@ -1032,7 +1032,7 @@ async def websocket_chat(websocket: WebSocket):
             mode = detect_mode(query, intent_type, [])
 
             if mode == "chat":
-                answer = call_ollama(query, model="llama3", max_tokens=150)
+                answer = call_ollama(query, model="hozpitality-llama", max_tokens=150)
 
                 await websocket.send_json({
                     "type": "final",
@@ -1082,7 +1082,7 @@ async def websocket_chat(websocket: WebSocket):
             logger.debug(f"[PROMPT GENERATED] Length: {len(prompt)}")
 
             # 🔹 LLM Call
-            response = call_ollama(prompt, model="llama3", max_tokens=700, stream=True)
+            response = call_ollama(prompt, model="hozpitality-llama", max_tokens=700, stream=True)
 
             full = ""
 
