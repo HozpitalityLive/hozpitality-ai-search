@@ -1,6 +1,5 @@
 # ai_server_2.py
 
-import asyncio
 import re
 import json
 from cachetools import LRUCache
@@ -1245,36 +1244,20 @@ async def websocket_chat(websocket: WebSocket):
 
             prompt = build_prompt(query, memory, context, intent_type, mode)
 
-            logger.debug(f"[PROMPT GENERATED] Length: {len(prompt)}")
-
-            response = call_ollama(
-                prompt,
-                model="hozpitality-llama",
-                max_tokens=300,   
-                stream=True
-            )
-
-            full = ""
 
             try:
-                for token in response:
-                    if not token:
-                        continue
+                response = call_ollama(
+                    prompt,
+                    model="hozpitality-llama",
+                    max_tokens=250
+                )
 
-                    full += token
-
-                    await websocket.send_text(json.dumps({
-                        "type": "token",
-                        "data": token
-                    }))
-                    
-                    await asyncio.sleep(0.01)
+                clean_html = clean_html_response(response)
 
             except Exception as e:
-                logger.error(f"[STREAM ERROR] {e}")
-                full = "Something went wrong while generating response."
+                logger.error(f"[LLM ERROR] {e}")
+                clean_html = "Something went wrong. Please try again."
 
-            clean_html = clean_html_response(full)
 
             await websocket.send_json({
                 "type": "final",
@@ -1285,15 +1268,19 @@ async def websocket_chat(websocket: WebSocket):
                 "conversation_id": conversation_id
             })
 
+
+            # 🔥 SAVE DATA
             save_message(conversation_id, "user", query)
-            save_message(conversation_id, "assistant", full)
+            save_message(conversation_id, "assistant", clean_html)
 
             store_memory(user_id, org_id, query)
-            store_memory(user_id, org_id, full)
+            store_memory(user_id, org_id, clean_html)
 
-            store_last_ai_response(user_id, org_id, full)
+            store_last_ai_response(user_id, org_id, clean_html)
             store_last_context(user_id, org_id, intent_type, context)
 
+
+            # 🔥 DONE SIGNAL
             await websocket.send_json({
                 "type": "done",
                 "conversation_id": conversation_id
