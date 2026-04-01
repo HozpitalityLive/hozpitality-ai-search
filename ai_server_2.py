@@ -1348,3 +1348,8 @@ def get_history(user_id: int, conversation_id: int):
 async def ws_test(websocket: WebSocket):
     await websocket.accept()
     await websocket.send_text("connected")
+
+
+@app.get("/")
+def health():
+    return {"status": "ok"}
