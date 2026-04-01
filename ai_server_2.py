@@ -349,73 +349,98 @@ def build_final_query(query: str):
 
 
 def detect_intent_llm(query: str):
-    categories = ['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
 
     prompt = f"""
 You are a STRICT JSON API for search intent classification for a hospitality platform.
 
 User Query: "{query}"
-Categories: {categories}
 
-CRITICAL RULES (FOLLOW STRICTLY):
+Categories:
+['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
+
+========================
+CRITICAL RULES (STRICT)
+========================
 
 1. SPELLING FIX
 - Fix spelling mistakes ONLY
-- DO NOT change structure or meaning
+- DO NOT change meaning
 
-2. INTENT DETECTION
+----------------------------------------
 
-A. PROFESSIONAL (VERY IMPORTANT PRIORITY)
-- If query is about a PERSON
-- If query starts with "who is"
-- If query looks like a NAME (2 words like "raj bhatt")
-- If asking about a person profile
+2. INTENT DETECTION (PRIORITY ORDER)
+
+A. 🏆 AWARDS (HIGHEST PRIORITY)
+- If query contains ANY of:
+  "award", "awards", "nomination", "winner", "recognition", "voting"
+- EVEN if vague → MUST classify as "awards"
+
+Examples:
+"hospitality awards"
+"tell me about awards"
+"award winners 2024"
+→ type = "awards"
+
+🚫 IMPORTANT:
+- If "award" is present → NEVER classify as "professional"
+
+----------------------------------------
+
+B. 👤 PROFESSIONAL
+- ONLY if clearly about a PERSON
+- Query is:
+  - a full name (2 words)
+  - starts with "who is"
+  - name + role
 
 Examples:
 "who is raj bhatt"
-"raj bhatt"
 "vikas khanna chef"
-
-→ intent = "SEARCH"
 → type = "professional"
 
+🚫 DO NOT trigger if query is generic (no clear person)
 
-B. FAQ
+----------------------------------------
+
+C. 💼 JOB
+- ONLY if explicit hiring intent:
+  "jobs", "job", "hiring", "vacancy", "apply", "opening"
+
+----------------------------------------
+
+D. ❓ FAQ
 - Queries starting with:
   "how to", "how do", "steps", "process"
 
+----------------------------------------
 
-C. JOB
-- ONLY if explicitly job intent:
-  "jobs", "hiring", "vacancy", "apply", "opening"
+E. 🏢 COMPANY
+- If searching for a company or brand
 
-🚫 IMPORTANT:
-- DO NOT classify as job if person name is present
-- Example:
-  "who is raj bhatt" ❌ NOT job
+----------------------------------------
 
+F. DEFAULT
+- Choose best matching category from list
 
-D. COMPANY
-- If searching for company info
-
-
-E. DEFAULT
-- Otherwise → SEARCH + best matching type
+----------------------------------------
 
 3. TYPE
 Must be EXACTLY one of:
-{categories}
+['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
+
+----------------------------------------
 
 4. LOCATION
-- Extract ONLY city or country
-- single word
-- else empty string
+- Extract ONLY city or country (single word)
+- Else return ""
+
+----------------------------------------
 
 5. KEYWORDS
 - 2–4 important words
 - lowercase
 - REMOVE filler words
-- KEEP names and roles
+- KEEP names and core terms
 - SPACE separated (NO commas)
 
 Examples:
@@ -425,13 +450,16 @@ Examples:
 "jobs for chef in dubai"
 → "chef dubai"
 
-OUTPUT (STRICT JSON ONLY)
+----------------------------------------
+
+OUTPUT (STRICT JSON ONLY):
+
 {{
 "intent": "SEARCH",
-"type": "professional",
-"keywords": "raj bhatt",
+"type": "awards",
+"keywords": "hospitality awards",
 "location": "",
-"rephrased_query": "who is raj bhatt"
+"rephrased_query": "tell me about hospitality awards"
 }}
 """
 
@@ -1173,18 +1201,6 @@ async def websocket_chat(websocket: WebSocket):
 
                     continue
 
-            q_lower = query.lower()
-
-            if any(k in q_lower for k in ["job", "jobs", "hiring", "vacancy"]):
-                intent_type = "job"
-
-            elif any(k in q_lower for k in ["event", "events", "conference", "expo"]):
-                intent_type = "event"
-
-            elif any(q_lower.startswith(x) for x in [
-                "how to", "how do", "how can", "steps to", "process"
-            ]):
-                intent_type = "faq"
 
             location = intent_data.get("location")
 
