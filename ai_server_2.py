@@ -160,6 +160,9 @@ def detect_mode(query, intent_type, context):
 
     if len(context) == 1:
         return "single"
+    
+    if intent_type == "awards":
+        return "chat" 
 
     return "list"
 
@@ -203,10 +206,19 @@ Classify if this is a follow-up.
 
 RULES:
 
-FOLLOW-UP = TRUE if:
-- short replies: yes, ok, sure, continue
-- vague replies: "tell me more", "details"
-- refers to previous answer
+FOLLOW-UP = TRUE ONLY if:
+- very short replies: yes, ok, continue, show more
+- clearly refers to previous answer WITHOUT new topic
+
+FOLLOW-UP = FALSE if:
+- contains ANY domain keywords (awards, jobs, company, event, etc.)
+- contains a full sentence query
+- introduces a new topic
+
+IMPORTANT:
+"tell me about awards"
+"I want to know more about awards"
+→ MUST be FALSE (new query, NOT follow-up)
 
 FOLLOW-UP = FALSE if:
 - new entity (new name, new job, new topic)
@@ -381,10 +393,9 @@ Examples:
 "award winners 2024"
 → type = "awards"
 
-🚫 IMPORTANT:
+IMPORTANT:
 - If "award" is present → NEVER classify as "professional"
 
-----------------------------------------
 
 B. 👤 PROFESSIONAL
 - ONLY if clearly about a PERSON
@@ -398,43 +409,36 @@ Examples:
 "vikas khanna chef"
 → type = "professional"
 
-🚫 DO NOT trigger if query is generic (no clear person)
+DO NOT trigger if query is generic (no clear person)
 
-----------------------------------------
 
-C. 💼 JOB
+C.  JOB
 - ONLY if explicit hiring intent:
   "jobs", "job", "hiring", "vacancy", "apply", "opening"
 
-----------------------------------------
 
-D. ❓ FAQ
+D.  FAQ
 - Queries starting with:
   "how to", "how do", "steps", "process"
 
-----------------------------------------
 
-E. 🏢 COMPANY
+E.  COMPANY
 - If searching for a company or brand
 
-----------------------------------------
 
 F. DEFAULT
 - Choose best matching category from list
 
-----------------------------------------
 
 3. TYPE
 Must be EXACTLY one of:
 ['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
 
-----------------------------------------
 
 4. LOCATION
 - Extract ONLY city or country (single word)
 - Else return ""
 
-----------------------------------------
 
 5. KEYWORDS
 - 2–4 important words
@@ -711,9 +715,13 @@ def search_db(query, intent_type=None, location=None):
             """
             params = []
 
+            
             if intent_type:
-                sql += " AND LOWER(category_text) LIKE %s"
-                params.append(f"%{intent_type.lower()}%")
+                if intent_type == "awards":
+                    sql += " AND LOWER(category_text) = 'awards'"  
+                else:
+                    sql += " AND LOWER(category_text) LIKE %s"
+                    params.append(f"%{intent_type.lower()}%")
 
             if location:
                 sql += " AND LOWER(location_text) LIKE %s"
@@ -724,26 +732,44 @@ def search_db(query, intent_type=None, location=None):
         if full_phrase:
             sql, params = base_sql()
 
-            sql += """
-            AND (
-                LOWER(title) LIKE %s
-                OR LOWER(content) LIKE %s
-            )
-            ORDER BY 
-                CASE 
-                    WHEN LOWER(title) = %s THEN 0
-                    WHEN LOWER(title) LIKE %s THEN 1
-                    ELSE 2
-                END
-            LIMIT 6
-            """
+            if intent_type == "awards":
+                sql += """
+                AND LOWER(title) LIKE %s
+                ORDER BY 
+                    CASE 
+                        WHEN LOWER(title) = %s THEN 0
+                        WHEN LOWER(title) LIKE %s THEN 1
+                        ELSE 2
+                    END
+                LIMIT 6
+                """
 
-            params.extend([
-                f"%{full_phrase}%",
-                f"%{full_phrase}%",
-                full_phrase,
-                f"%{full_phrase}%"
-            ])
+                params.extend([
+                    f"%{full_phrase}%",
+                    full_phrase,
+                    f"%{full_phrase}%"
+                ])
+            else:
+                sql += """
+                AND (
+                    LOWER(title) LIKE %s
+                    OR LOWER(content) LIKE %s
+                )
+                ORDER BY 
+                    CASE 
+                        WHEN LOWER(title) = %s THEN 0
+                        WHEN LOWER(title) LIKE %s THEN 1
+                        ELSE 2
+                    END
+                LIMIT 6
+                """
+
+                params.extend([
+                    f"%{full_phrase}%",
+                    f"%{full_phrase}%",
+                    full_phrase,
+                    f"%{full_phrase}%"
+                ])
 
             results = execute(sql, params)
 
@@ -755,8 +781,12 @@ def search_db(query, intent_type=None, location=None):
 
             conditions = []
             for w in words:
-                conditions.append("(LOWER(title) LIKE %s OR LOWER(content) LIKE %s)")
-                params.extend([f"%{w}%", f"%{w}%"])
+                if intent_type == "awards":
+                    conditions.append("LOWER(title) LIKE %s")
+                    params.append(f"%{w}%")
+                else:
+                    conditions.append("(LOWER(title) LIKE %s OR LOWER(content) LIKE %s)")
+                    params.extend([f"%{w}%", f"%{w}%"])
 
             sql += " AND " + " AND ".join(conditions)
             sql += " LIMIT 6"
@@ -1156,6 +1186,12 @@ async def websocket_chat(websocket: WebSocket):
 
             logger.info(f"[FOLLOWUP DETECT] {followup}")
 
+            if followup.get("is_followup") and any(
+                k in query.lower() for k in ["award", "job", "company", "event"]
+            ):
+                logger.warning("Forcing follow-up FALSE due to new topic")
+                followup["is_followup"] = False
+
             if followup.get("is_followup"):
                 last_ctx = get_last_context(user_id, org_id)
 
@@ -1243,7 +1279,8 @@ async def websocket_chat(websocket: WebSocket):
 
             elif intent_type == "faq":
                 combined = db_context if len(db_context) >= 2 else db_context + web_context[:2]
-
+            elif intent_type == "awards":
+                combined = db_context
             else:
                 combined = db_context + web_context[:2]
 
