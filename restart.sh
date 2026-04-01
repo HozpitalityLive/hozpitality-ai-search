@@ -4,15 +4,9 @@ echo "================================="
 echo "Restarting AI server..."
 echo "================================="
 
-# Stop existing server
+# Stop existing uvicorn
 echo "Stopping existing server..."
 pkill -f "uvicorn main:main_app" || true
-
-sleep 2
-
-# Kill port 80 just in case
-echo "Freeing port 80..."
-sudo fuser -k 80/tcp || true
 
 sleep 2
 
@@ -23,11 +17,12 @@ source /home/dev/hozpitality-ai-search/env/bin/activate
 # Verify uvicorn exists
 which uvicorn
 
-echo "Starting AI server..."
+echo "Starting AI server on port 9000..."
 
 nohup uvicorn main:main_app \
   --host 0.0.0.0 \
-  --port 80 \
+  --port 9000 \
+  --workers 2 \
   --access-log \
   --log-level info \
   > ai_server.log 2>&1 &
