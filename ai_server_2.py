@@ -1,5 +1,6 @@
 # ai_server_2.py
 
+import asyncio
 import re
 import json
 from cachetools import LRUCache
@@ -1262,16 +1263,27 @@ async def websocket_chat(websocket: WebSocket):
 
                     full += token
 
-                    await websocket.send_json({
+                    await websocket.send_text(json.dumps({
                         "type": "token",
                         "data": token
-                    })
+                    }))
+                    
+                    await asyncio.sleep(0.01)
 
             except Exception as e:
                 logger.error(f"[STREAM ERROR] {e}")
                 full = "Something went wrong while generating response."
 
             clean_html = clean_html_response(full)
+
+            await websocket.send_json({
+                "type": "final",
+                "data": {
+                    "type": intent_type or "chat",
+                    "html": clean_html
+                },
+                "conversation_id": conversation_id
+            })
 
             save_message(conversation_id, "user", query)
             save_message(conversation_id, "assistant", full)
