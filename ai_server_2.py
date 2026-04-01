@@ -177,7 +177,7 @@ def call_ollama(prompt, stream=False, model="hozpitality-llama", max_tokens=200)
     }
 
     if not stream:
-        res = requests.post(url, json=payload, timeout=60)
+        res = requests.post(url, json=payload, timeout=180)
         return res.json().get("response", "")
 
     def generator():
@@ -1246,26 +1246,32 @@ async def websocket_chat(websocket: WebSocket):
 
             logger.debug(f"[PROMPT GENERATED] Length: {len(prompt)}")
 
-            # 🔹 LLM Call
-            response = call_ollama(prompt, model="hozpitality-llama", max_tokens=700, stream=True)
+            response = call_ollama(
+                prompt,
+                model="hozpitality-llama",
+                max_tokens=300,   
+                stream=True
+            )
 
             full = ""
 
-            for token in response:
-                full += token
+            try:
+                for token in response:
+                    if not token:
+                        continue
+
+                    full += token
+
+                    await websocket.send_json({
+                        "type": "token",
+                        "data": token
+                    })
+
+            except Exception as e:
+                logger.error(f"[STREAM ERROR] {e}")
+                full = "Something went wrong while generating response."
 
             clean_html = clean_html_response(full)
-
-            logger.info(f"[RESPONSE GENERATED] Length: {len(clean_html)}")
-
-            await websocket.send_json({
-                "type": "final",
-                "data": {
-                    "type": intent_type or "chat",
-                    "html": clean_html
-                },
-                "conversation_id": conversation_id
-            })
 
             save_message(conversation_id, "user", query)
             save_message(conversation_id, "assistant", full)
