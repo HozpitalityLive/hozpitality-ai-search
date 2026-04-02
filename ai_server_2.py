@@ -812,6 +812,78 @@ def search_db(query, intent_type=None, location=None):
         db_pool.putconn(conn)
 
 
+def generate_ai_fallback(query: str):
+    prompt = f"""
+You are an AI assistant for Hozpitality.com.
+
+User Query: "{query}"
+
+GOAL:
+- Answer like ChatGPT (helpful, clear, complete)
+- BUT strictly within Hozpitality platform
+
+
+STRICT RULES:
+
+- NEVER mention external platforms:
+  Indeed, LinkedIn, Glassdoor, Naukri, Monster
+
+- NEVER say:
+  "search online", "use other websites"
+
+
+INSTEAD:
+
+- Explain using Hozpitality features:
+  - job search
+  - filters (location, role)
+  - applying to jobs
+  - company profiles
+
+
+STYLE:
+
+- Friendly and natural
+- Step-by-step if needed
+- Practical guidance
+
+
+OUTPUT:
+- HTML ONLY (no markdown)
+
+FORMAT:
+
+<div class="ai-response">
+  <div class="ai-intro">
+    <p>Helpful introduction</p>
+  </div>
+
+  <div class="ai-results">
+    <ul>
+      <li>Step 1</li>
+      <li>Step 2</li>
+    </ul>
+  </div>
+
+  <div class="ai-followup">
+    <p><strong>Follow-up:</strong> Ask something relevant</p>
+  </div>
+</div>
+"""
+
+    try:
+        response = call_ollama(
+            prompt,
+            model="hozpitality-llama",
+            max_tokens=250
+        )
+        return clean_html_response(response)
+
+    except Exception as e:
+        logger.error(f"[AI FALLBACK ERROR] {e}")
+        return "<div class='ai-response'><p>Sorry, something went wrong.</p></div>"
+
+
 def build_prompt(query, memory, context, intent_type=None, mode="list"):
 
     memory_text = "\n".join(memory[-2:]) if memory else ""
@@ -1300,7 +1372,7 @@ async def websocket_chat(websocket: WebSocket):
                 combined = db_context
 
             elif intent_type == "faq":
-                combined = db_context if len(db_context) >= 2 else db_context + web_context[:2]
+                combined = db_context
             elif intent_type == "awards":
                 combined = db_context
             else:
@@ -1312,7 +1384,35 @@ async def websocket_chat(websocket: WebSocket):
             logger.debug(f"[RERANKED COUNT] {len(context)}")
 
             if not context:
-                logger.warning("[NO RESULTS] Empty context after rerank")
+                logger.warning("[NO RESULTS] → switching to AI mode")
+
+                clean_html = generate_ai_fallback(query)
+
+                await websocket.send_json({
+                    "type": "final",
+                    "data": {
+                        "type": intent_type or "chat",
+                        "html": clean_html
+                    },
+                    "conversation_id": conversation_id
+                })
+
+                # SAVE
+                save_message(conversation_id, "user", query)
+                save_message(conversation_id, "assistant", clean_html)
+
+                store_memory(user_id, org_id, query)
+                store_memory(user_id, org_id, clean_html)
+
+                store_last_ai_response(user_id, org_id, clean_html)
+                store_last_context(user_id, org_id, intent_type, [])
+
+                await websocket.send_json({
+                    "type": "done",
+                    "conversation_id": conversation_id
+                })
+
+                continue
 
             memory = retrieve_memory(user_id, org_id, query)
             mode = detect_mode(query, intent_type, context)
