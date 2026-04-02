@@ -370,64 +370,54 @@ User Query: "{query}"
 Categories:
 ['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
 
-========================
 CRITICAL RULES (STRICT)
-========================
 
-1. SPELLING FIX
-- Fix spelling mistakes ONLY
-- DO NOT change meaning
+1. DO NOT CHANGE MEANING
+- DO NOT rewrite the topic
+- DO NOT introduce new words
+- DO NOT hallucinate categories
 
-----------------------------------------
 
-2. INTENT DETECTION (PRIORITY ORDER)
+2. INTENT DETECTION (STRICT PRIORITY)
 
-A. 🏆 AWARDS (HIGHEST PRIORITY)
+A. JOB (HIGHEST PRIORITY)
 - If query contains ANY of:
-  "award", "awards", "nomination", "winner", "recognition", "voting"
-- EVEN if vague → MUST classify as "awards"
-
-Examples:
-"hospitality awards"
-"tell me about awards"
-"award winners 2024"
-→ type = "awards"
+  "job", "jobs", "hiring", "vacancy", "opening", "career", "work"
+→ MUST classify as "job"
 
 IMPORTANT:
-- If "award" is present → NEVER classify as "professional"
+- This OVERRIDES FAQ
+- Example:
+  "how do i find a job in la" → job
 
 
-B. 👤 PROFESSIONAL
+B. AWARDS
+- ONLY if query contains:
+  "award", "awards", "nomination", "winner", "recognition", "voting"
+
+NEVER classify as "awards" if these words are NOT present
+
+
+C. PROFESSIONAL
 - ONLY if clearly about a PERSON
-- Query is:
-  - a full name (2 words)
+- Query:
+  - full name (2 words)
   - starts with "who is"
-  - name + role
-
-Examples:
-"who is raj bhatt"
-"vikas khanna chef"
-→ type = "professional"
-
-DO NOT trigger if query is generic (no clear person)
 
 
-C.  JOB
-- ONLY if explicit hiring intent:
-  "jobs", "job", "hiring", "vacancy", "apply", "opening"
+D. FAQ
+- ONLY if:
+  - starts with "how to", "how do", "steps", "process"
+  AND
+  - does NOT contain job keywords
 
 
-D.  FAQ
-- Queries starting with:
-  "how to", "how do", "steps", "process"
-
-
-E.  COMPANY
-- If searching for a company or brand
+E. COMPANY
+- If searching for a company/brand
 
 
 F. DEFAULT
-- Choose best matching category from list
+- Choose best matching category
 
 
 3. TYPE
@@ -436,7 +426,7 @@ Must be EXACTLY one of:
 
 
 4. LOCATION
-- Extract ONLY city or country (single word)
+- Extract ONLY city or country
 - Else return ""
 
 
@@ -444,26 +434,27 @@ Must be EXACTLY one of:
 - 2–4 important words
 - lowercase
 - REMOVE filler words
-- KEEP names and core terms
-- SPACE separated (NO commas)
+- DO NOT invent new words
 
 Examples:
-"who is raj bhatt"
-→ "raj bhatt"
+"who is raj bhatt" → "raj bhatt"
+"jobs for chef in dubai" → "chef dubai"
 
-"jobs for chef in dubai"
-→ "chef dubai"
+HARD CONSTRAINTS:
 
-----------------------------------------
+- If "job" exists → type MUST be "job"
+- If "award" NOT in query → type MUST NOT be "awards"
+- NEVER change domain (job → awards is INVALID)
+
 
 OUTPUT (STRICT JSON ONLY):
 
 {{
 "intent": "SEARCH",
-"type": "awards",
-"keywords": "hospitality awards",
-"location": "",
-"rephrased_query": "tell me about hospitality awards"
+"type": "job",
+"keywords": "job los angeles",
+"location": "los angeles",
+"rephrased_query": "{query}"
 }}
 """
 
@@ -1053,9 +1044,9 @@ def chat(req: ChatRequest):
         combined = db_context
 
     elif intent_type == "faq":
-        if len(db_context) < 2:
-            combined = db_context + web_context[:2]
-        else:
+        # if len(db_context) < 2:
+        #     combined = db_context + web_context[:2]
+        # else:
             combined = db_context
 
     else:
