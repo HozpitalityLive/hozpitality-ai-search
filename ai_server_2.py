@@ -370,89 +370,66 @@ User Query: "{query}"
 Categories:
 ['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
 
-CRITICAL RULES (STRICT)
+CORE INSTRUCTION
 
-1. DO NOT CHANGE MEANING
-- DO NOT rewrite the topic
-- DO NOT introduce new words
-- DO NOT hallucinate categories
+- Understand what the USER actually wants (intent), not just keywords
+- Classify into ONE best category from the list
+- DO NOT rely on rigid keyword priority
+- Use semantic understanding
 
+INTENT GUIDELINES
 
-2. INTENT DETECTION (STRICT PRIORITY)
+1. JOB
+- User is searching for job listings
+- Examples:
+  "hotel jobs in dubai"
+  "chef hiring uae"
 
-A. JOB (HIGHEST PRIORITY)
-- If query contains ANY of:
-  "job", "jobs", "hiring", "vacancy", "opening", "career", "work"
-→ MUST classify as "job"
-
-IMPORTANT:
-- This OVERRIDES FAQ
-- Example:
-  "how do i find a job in la" → job
-
-
-B. AWARDS
-- ONLY if query contains:
-  "award", "awards", "nomination", "winner", "recognition", "voting"
-
-NEVER classify as "awards" if these words are NOT present
-
-
-C. PROFESSIONAL
-- ONLY if clearly about a PERSON
-- Query:
-  - full name (2 words)
-  - starts with "who is"
-
-
-D. FAQ
-- ONLY if:
-  - starts with "how to", "how do", "steps", "process"
-  AND
-  - does NOT contain job keywords
-
-
-E. COMPANY
-- If searching for a company/brand
-
-
-F. DEFAULT
-- Choose best matching category
-
-
-3. TYPE
-Must be EXACTLY one of:
-['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
-
-
-4. LOCATION
-- Extract ONLY city or country
-- Else return ""
-
-
-5. KEYWORDS
-- 2–4 important words
-- lowercase
-- REMOVE filler words
-- DO NOT invent new words
+2. FAQ
+- User is asking HOW / guidance / steps
+- Even if "job" is mentioned
 
 Examples:
-"who is raj bhatt" → "raj bhatt"
-"jobs for chef in dubai" → "chef dubai"
+"how do i find a job in la"
+"how to apply for hotel jobs"
+→ type = "faq"
 
-HARD CONSTRAINTS:
+3. PROFESSIONAL
+- About a person
 
-- If "job" exists → type MUST be "job"
-- If "award" NOT in query → type MUST NOT be "awards"
-- NEVER change domain (job → awards is INVALID)
+4. COMPANY
+- About a company or brand
+
+5. AWARDS
+- ONLY if query explicitly mentions:
+  "award", "awards", "nomination", "winner"
+
+6. DEFAULT
+- Choose best fit
+
+STRICT RULES
+
+- DO NOT hallucinate categories
+- DO NOT change query meaning
+- DO NOT force classification based on one keyword
+- Use full query meaning
+
+LOCATION
+- Extract city or country if present
+- Else ""
+
+KEYWORDS
+- 2–4 important words
+- lowercase
+- no commas
 
 
 OUTPUT (STRICT JSON ONLY):
 
 {{
 "intent": "SEARCH",
-"type": "job",
-"keywords": "job los angeles",
+"type": "faq",
+"keywords": "find job los angeles",
 "location": "los angeles",
 "rephrased_query": "{query}"
 }}
