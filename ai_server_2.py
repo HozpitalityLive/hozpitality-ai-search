@@ -26,10 +26,24 @@ import logging
 import time
 from psycopg2.pool import PoolError
 from contextlib import contextmanager
+from site_context import SITE_CONTEXT , ADDITIONAL_INSTRUCTION
 
 
 
 LOG_FILE = os.path.join(os.getcwd(), "app.log")
+
+AGENT_TOOLS = [
+    {"name": "job", "desc": "search jobs"},
+    {"name": "article", "desc": "search articles"},
+    {"name": "professional", "desc": "search people"},
+    {"name": "company", "desc": "search companies"},
+    {"name": "event", "desc": "search events"},
+    {"name": "supplier", "desc": "search suppliers"},
+    {"name": "product", "desc": "search products"},
+    {"name": "awards", "desc": "search awards"},
+    {"name": "faq", "desc": "answer how-to questions"}
+]
+
 
 logger = logging.getLogger("ai-websocket")
 logger.setLevel(logging.DEBUG)  
@@ -81,7 +95,16 @@ db_pool = SimpleConnectionPool(5, 20, **DB_CONFIG)
 memory_indexes = {}
 memory_store = {}
 
+def execute_agent_tool(tool, query, location=None):
+    try:
+        if tool == "faq":
+            return generate_ai_fallback(query)
 
+        return search_db(query, tool, location)
+
+    except Exception as e:
+        logger.error(f"[AGENT TOOL ERROR] {e}")
+        return []
 
 @contextmanager
 def get_db():
@@ -101,6 +124,60 @@ def get_db_conn_with_retry(retries=3, delay=0.1):
             time.sleep(delay)
 
     raise Exception("DB connection pool exhausted after retries")
+
+def agent_decide(query: str):
+    prompt = f"""
+You are an AI agent for Hozpitality.com.
+
+User Query: "{query}"
+
+Categories:
+['job', 'article', 'professional', 'faq', 'company', 'event', 'supplier', 'product', 'awards']
+
+
+GOAL:
+- Understand what user REALLY wants
+- Choose ONLY ONE category
+
+RULES:
+
+- "how", "steps", "process" → faq
+- job search → job
+- company/brand → company
+- person → professional
+- awards → ONLY if word exists
+- otherwise choose best match
+
+IMPORTANT:
+
+- DO NOT hallucinate
+- DO NOT misclassify job ↔ faq blindly
+- Use meaning
+
+RETURN JSON ONLY:
+
+{{
+  "type": "job",
+  "query": "chef jobs",
+  "location": "dubai"
+}}
+"""
+
+    try:
+        res = call_ollama(prompt, model="hozpitality-llama", max_tokens=120)
+
+        match = re.search(r'\{.*\}', res, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+
+    except Exception as e:
+        logger.error(f"[AGENT ERROR] {e}")
+
+    return {
+        "type": "faq",
+        "query": query,
+        "location": ""
+    }
 
 
 
@@ -333,7 +410,7 @@ Return ONLY JSON.
 
     try:
         
-        res = call_ollama(prompt, model="hozpitality-phi3", max_tokens=80)
+        res = call_ollama(prompt, model="hozpitality-phi3", max_tokens=100)
         text = res
         import re
         match = re.search(r'\{.*\}', text, re.DOTALL)
@@ -436,7 +513,7 @@ OUTPUT (STRICT JSON ONLY):
 """
 
     try:
-        answer = call_ollama(prompt, model="hozpitality-llama", max_tokens=200)
+        answer = call_ollama(prompt, model="hozpitality-llama", max_tokens=300)
 
         match = re.search(r'\{.*\}', answer, re.DOTALL)
         if match:
@@ -794,6 +871,7 @@ def generate_ai_fallback(query: str):
 You are an AI assistant for Hozpitality.com.
 
 User Query: "{query}"
+Platform Context: {SITE_CONTEXT}
 
 GOAL:
 - Answer like ChatGPT (helpful, clear, complete)
@@ -885,6 +963,8 @@ Context Data:
 
 Memory:
 {memory_text}
+
+ADDITIONAL_INSTRUCTION: {ADDITIONAL_INSTRUCTION}
 
 BEHAVIOR MODE: {mode}
 
@@ -1320,7 +1400,7 @@ async def websocket_chat(websocket: WebSocket):
             mode = detect_mode(query, intent_type, [])
 
             if mode == "chat":
-                answer = call_ollama(query, model="hozpitality-llama", max_tokens=150)
+                answer = call_ollama(query, model="hozpitality-llama", max_tokens=800)
 
                 await websocket.send_json({
                     "type": "final",
@@ -1401,7 +1481,7 @@ async def websocket_chat(websocket: WebSocket):
                 response = call_ollama(
                     prompt,
                     model="hozpitality-llama",
-                    max_tokens=250
+                    max_tokens=800
                 )
 
                 clean_html = clean_html_response(response)
