@@ -1318,8 +1318,11 @@ async def websocket_chat(websocket: WebSocket):
 
             conversation_id = data.get("conversation_id")
 
-            if not conversation_id:
-                conversation_id = create_conversation(user_id, query[:30])
+            if user_id != 0:
+                if not conversation_id:
+                    conversation_id = create_conversation(user_id, query[:30])
+            else:
+                conversation_id = None
             logger.debug(f"[CONVERSATION] ID: {conversation_id}")
 
             intent_data = detect_intent_llm(query)
@@ -1502,14 +1505,16 @@ async def websocket_chat(websocket: WebSocket):
 
 
             # 🔥 SAVE DATA
-            save_message(conversation_id, "user", query)
-            save_message(conversation_id, "assistant", clean_html)
+            if user_id != 0 and conversation_id:
+                save_message(conversation_id, "user", query)
+                save_message(conversation_id, "assistant", clean_html)
 
-            store_memory(user_id, org_id, query)
-            store_memory(user_id, org_id, clean_html)
+            if user_id != 0:
+                store_memory(user_id, org_id, query)
+                store_memory(user_id, org_id, clean_html)
 
-            store_last_ai_response(user_id, org_id, clean_html)
-            store_last_context(user_id, org_id, intent_type, context)
+                store_last_ai_response(user_id, org_id, clean_html)
+                store_last_context(user_id, org_id, intent_type, context)
 
 
             # 🔥 DONE SIGNAL
