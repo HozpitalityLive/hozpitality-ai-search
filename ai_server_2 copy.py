@@ -71,6 +71,56 @@ redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 CACHE_TTL = 600
 
+SEMANTIC_THRESHOLD = 0.92  # similarity threshold
+
+def semantic_cache_search(query):
+    try:
+        q_vec = np.array(get_embedding(query))
+
+        keys = redis_client.keys("sem:*")
+
+        best_score = 0
+        best_value = None
+
+        for key in keys:
+            data = redis_client.get(key)
+            if not data:
+                continue
+
+            obj = json.loads(data)
+            stored_vec = np.array(obj["embedding"])
+
+            score = np.dot(q_vec, stored_vec)
+
+            if score > best_score:
+                best_score = score
+                best_value = obj
+
+        if best_score > SEMANTIC_THRESHOLD:
+            return best_value["response"]
+
+    except Exception as e:
+        logger.error(f"[SEMANTIC CACHE ERROR] {e}")
+
+    return None
+
+
+def semantic_cache_store(query, response):
+    try:
+        vec = get_embedding(query).tolist()
+
+        key = "sem:" + hashlib.md5(query.encode()).hexdigest()
+
+        redis_client.setex(key, 3600, json.dumps({
+            "query": query,
+            "embedding": vec,
+            "response": response
+        }))
+
+    except Exception as e:
+        logger.error(f"[SEMANTIC CACHE STORE ERROR] {e}")
+
+
 reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
 DB_CONFIG = {
@@ -1297,175 +1347,319 @@ def chat_stream(req: ChatRequest):
 
     return StreamingResponse(generate(), media_type="text/plain")
 
+def smart_router(query, last_ai=""):
+    prompt = f"""
+You are an AI router.
+
+User Query: "{query}"
+Previous Response: "{last_ai[:200]}"
+
+Return JSON:
+
+{{
+  "intent": "job|company|professional|faq|article|event|supplier|product|awards",
+  "query": "clean optimized query",
+  "is_followup": true/false,
+  "mode": "chat|list|profile|single"
+}}
+
+Rules:
+- Understand meaning
+- Keep query clean
+- Detect followup correctly
+
+JSON ONLY.
+"""
+
+    res = call_ollama(prompt, model="hozpitality-phi3", max_tokens=80)
+
+    match = re.search(r'\{.*\}', res, re.DOTALL)
+    return json.loads(match.group()) if match else {
+        "intent": "article",
+        "query": query,
+        "is_followup": False,
+        "mode": "list"
+    }
+
+async def stream_llm(websocket, prompt, model="hozpitality-llama"):
+    full_text = ""
+
+    for token in call_ollama(prompt, stream=True, model=model, max_tokens=200):
+        full_text += token
+
+        await websocket.send_json({
+            "type": "token",
+            "data": token
+        })
+
+    return full_text
+
+def fast_rank(results):
+    return results[:6]
+
+# @app.websocket("/ws/chat")
+# async def websocket_chat(websocket: WebSocket):
+
+#     origin = websocket.headers.get("origin")
+#     logger.info(f"[WS CONNECT] Origin: {origin}")
+
+#     await websocket.accept()
+
+#     try:
+#         while True:
+#             data = await websocket.receive_json()
+#             logger.debug(f"[WS RECEIVED] Raw Data: {data}")
+
+#             query = data["query"]
+#             user_id = data["user_id"]
+#             org_id = data["org_id"]
+
+#             logger.info(f"[QUERY] User:{user_id} Org:{org_id} → {query}")
+
+#             conversation_id = data.get("conversation_id")
+
+#             if user_id != 0:
+#                 if not conversation_id:
+#                     conversation_id = create_conversation(user_id, query[:30])
+#             else:
+#                 conversation_id = None
+#             logger.debug(f"[CONVERSATION] ID: {conversation_id}")
+
+#             intent_data = detect_intent_llm(query)
+#             logger.debug(f"[INTENT] {intent_data}")
+
+#             base_query = intent_data.get("keywords") or query
+
+#             logger.debug(f"[BASE QUERY] {base_query}")
+
+#             final_query = base_query
+#             intent_type = intent_data.get("type")
+
+#             last_ai = get_last_ai_response(user_id, org_id)
+#             followup = detect_followup_llm(query, last_ai)
+
+#             logger.info(f"[FOLLOWUP DETECT] {followup}")
+
+#             if followup.get("is_followup") and any(
+#                 k in query.lower() for k in ["award", "job", "company", "event"]
+#             ):
+#                 logger.warning("Forcing follow-up FALSE due to new topic")
+#                 followup["is_followup"] = False
+
+#             if followup.get("is_followup"):
+#                 last_ctx = get_last_context(user_id, org_id)
+
+#                 if last_ctx:
+#                     intent_type = last_ctx.get("intent")
+#                     context = last_ctx.get("context")
+
+#                     logger.info("[FOLLOW-UP MODE ACTIVATED]")
+
+#                     ftype = followup.get("type")
+
+#                     if ftype == "expand":
+#                         mode = "single"
+#                     elif ftype == "refine":
+#                         mode = "list"
+#                     elif ftype == "chat":
+#                         mode = "chat"
+#                     else:
+#                         mode = "single"
+
+#                     prompt = build_prompt(
+#                         query,
+#                         retrieve_memory(user_id, org_id, query),
+#                         context,
+#                         intent_type,
+#                         mode
+#                     )
+
+#                     response = call_ollama(prompt, model="hozpitality-llama", max_tokens=800)
+
+#                     clean_html = clean_html_response(response)
+
+#                     await websocket.send_json({
+#                         "type": "final",
+#                         "data": {
+#                             "type": intent_type,
+#                             "html": clean_html
+#                         },
+#                         "conversation_id": conversation_id
+#                     })
+
+#                     store_last_ai_response(user_id, org_id, response)
+
+#                     continue
+
+
+#             location = intent_data.get("location")
+
+#             if location:
+#                 final_query += f" {location}"
+
+#             logger.info(f"[FINAL QUERY] {final_query}")
+#             logger.info(f"[INTENT TYPE] {intent_type} | Location: {location}")
+            
+#             mode = detect_mode(query, intent_type, [])
+
+#             if mode == "chat":
+#                 answer = call_ollama(query, model="hozpitality-llama", max_tokens=800)
+
+#                 await websocket.send_json({
+#                     "type": "final",
+#                     "data": {
+#                         "type": intent_type or "chat",
+#                         "html": answer
+#                     },
+#                     "conversation_id": conversation_id
+#                 })
+                
+#                 continue
+
+#             with ThreadPoolExecutor() as executor:
+#                 db_future = executor.submit(search_db, final_query, intent_type, location)
+#                 web_future = executor.submit(search_web, final_query)
+
+#                 done, _ = wait([db_future, web_future], timeout=2)
+
+#                 db_context = db_future.result()
+#                 web_context = web_future.result() if web_future in done else []
+
+#             logger.debug(f"[DB RESULTS COUNT] {len(db_context)}")
+#             logger.debug(f"[WEB RESULTS COUNT] {len(web_context)}")
+
+#             if intent_type in ["job", "company", "professional"]:
+#                 combined = db_context
+
+#             elif intent_type == "faq":
+#                 combined = db_context
+#             elif intent_type == "awards":
+#                 combined = db_context
+#             else:
+#                 combined = db_context + web_context[:2]
+
+#             logger.debug(f"[COMBINED COUNT] {len(combined)}")
+
+#             context = rerank(final_query, combined)
+#             logger.debug(f"[RERANKED COUNT] {len(context)}")
+
+#             if not context:
+#                 logger.warning("[NO RESULTS] → switching to AI mode")
+
+#                 clean_html = generate_ai_fallback(query)
+
+#                 await websocket.send_json({
+#                     "type": "final",
+#                     "data": {
+#                         "type": intent_type or "chat",
+#                         "html": clean_html
+#                     },
+#                     "conversation_id": conversation_id
+#                 })
+
+#                 # SAVE
+#                 save_message(conversation_id, "user", query)
+#                 save_message(conversation_id, "assistant", clean_html)
+
+#                 store_memory(user_id, org_id, query)
+#                 store_memory(user_id, org_id, clean_html)
+
+#                 store_last_ai_response(user_id, org_id, clean_html)
+#                 store_last_context(user_id, org_id, intent_type, [])
+
+#                 await websocket.send_json({
+#                     "type": "done",
+#                     "conversation_id": conversation_id
+#                 })
+
+#                 continue
+
+#             memory = retrieve_memory(user_id, org_id, query)
+#             mode = detect_mode(query, intent_type, context)
+
+#             prompt = build_prompt(query, memory, context, intent_type, mode)
+
+
+#             try:
+#                 response = call_ollama(
+#                     prompt,
+#                     model="hozpitality-llama",
+#                     max_tokens=800
+#                 )
+
+#                 clean_html = clean_html_response(response)
+
+#             except Exception as e:
+#                 logger.error(f"[LLM ERROR] {e}")
+#                 clean_html = "Something went wrong. Please try again."
+
+
+#             await websocket.send_json({
+#                 "type": "final",
+#                 "data": {
+#                     "type": intent_type or "chat",
+#                     "html": clean_html
+#                 },
+#                 "conversation_id": conversation_id
+#             })
+
+
+#             # 🔥 SAVE DATA
+#             if user_id != 0 and conversation_id:
+#                 save_message(conversation_id, "user", query)
+#                 save_message(conversation_id, "assistant", clean_html)
+
+#             if user_id != 0:
+#                 store_memory(user_id, org_id, query)
+#                 store_memory(user_id, org_id, clean_html)
+
+#                 store_last_ai_response(user_id, org_id, clean_html)
+#                 store_last_context(user_id, org_id, intent_type, context)
+
+
+#             # 🔥 DONE SIGNAL
+#             await websocket.send_json({
+#                 "type": "done",
+#                 "conversation_id": conversation_id
+#             })
+
+#     except WebSocketDisconnect:
+#         logger.warning("[WS DISCONNECTED]")
+
+#     except Exception as e:
+#         logger.error(f"[WS ERROR] {str(e)}", exc_info=True)
+
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
-
-    origin = websocket.headers.get("origin")
-    logger.info(f"[WS CONNECT] Origin: {origin}")
 
     await websocket.accept()
 
     try:
         while True:
             data = await websocket.receive_json()
-            logger.debug(f"[WS RECEIVED] Raw Data: {data}")
 
             query = data["query"]
             user_id = data["user_id"]
             org_id = data["org_id"]
 
-            logger.info(f"[QUERY] User:{user_id} Org:{org_id} → {query}")
-
             conversation_id = data.get("conversation_id")
 
-            if user_id != 0:
-                if not conversation_id:
-                    conversation_id = create_conversation(user_id, query[:30])
-            else:
-                conversation_id = None
-            logger.debug(f"[CONVERSATION] ID: {conversation_id}")
-
-            intent_data = detect_intent_llm(query)
-            logger.debug(f"[INTENT] {intent_data}")
-
-            base_query = intent_data.get("keywords") or query
-
-            logger.debug(f"[BASE QUERY] {base_query}")
-
-            final_query = base_query
-            intent_type = intent_data.get("type")
+            if user_id != 0 and not conversation_id:
+                conversation_id = create_conversation(user_id, query[:30])
 
             last_ai = get_last_ai_response(user_id, org_id)
-            followup = detect_followup_llm(query, last_ai)
 
-            logger.info(f"[FOLLOWUP DETECT] {followup}")
+            cached_response = semantic_cache_search(query)
 
-            if followup.get("is_followup") and any(
-                k in query.lower() for k in ["award", "job", "company", "event"]
-            ):
-                logger.warning("Forcing follow-up FALSE due to new topic")
-                followup["is_followup"] = False
-
-            if followup.get("is_followup"):
-                last_ctx = get_last_context(user_id, org_id)
-
-                if last_ctx:
-                    intent_type = last_ctx.get("intent")
-                    context = last_ctx.get("context")
-
-                    logger.info("[FOLLOW-UP MODE ACTIVATED]")
-
-                    ftype = followup.get("type")
-
-                    if ftype == "expand":
-                        mode = "single"
-                    elif ftype == "refine":
-                        mode = "list"
-                    elif ftype == "chat":
-                        mode = "chat"
-                    else:
-                        mode = "single"
-
-                    prompt = build_prompt(
-                        query,
-                        retrieve_memory(user_id, org_id, query),
-                        context,
-                        intent_type,
-                        mode
-                    )
-
-                    response = call_ollama(prompt, model="hozpitality-llama", max_tokens=800)
-
-                    clean_html = clean_html_response(response)
-
-                    await websocket.send_json({
-                        "type": "final",
-                        "data": {
-                            "type": intent_type,
-                            "html": clean_html
-                        },
-                        "conversation_id": conversation_id
-                    })
-
-                    store_last_ai_response(user_id, org_id, response)
-
-                    continue
-
-
-            location = intent_data.get("location")
-
-            if location:
-                final_query += f" {location}"
-
-            logger.info(f"[FINAL QUERY] {final_query}")
-            logger.info(f"[INTENT TYPE] {intent_type} | Location: {location}")
-            
-            mode = detect_mode(query, intent_type, [])
-
-            if mode == "chat":
-                answer = call_ollama(query, model="hozpitality-llama", max_tokens=800)
-
+            if cached_response:
                 await websocket.send_json({
                     "type": "final",
                     "data": {
-                        "type": intent_type or "chat",
-                        "html": answer
+                        "type": "cached",
+                        "html": cached_response
                     },
                     "conversation_id": conversation_id
                 })
-                
-                continue
-
-            with ThreadPoolExecutor() as executor:
-                db_future = executor.submit(search_db, final_query, intent_type, location)
-                web_future = executor.submit(search_web, final_query)
-
-                done, _ = wait([db_future, web_future], timeout=2)
-
-                db_context = db_future.result()
-                web_context = web_future.result() if web_future in done else []
-
-            logger.debug(f"[DB RESULTS COUNT] {len(db_context)}")
-            logger.debug(f"[WEB RESULTS COUNT] {len(web_context)}")
-
-            if intent_type in ["job", "company", "professional"]:
-                combined = db_context
-
-            elif intent_type == "faq":
-                combined = db_context
-            elif intent_type == "awards":
-                combined = db_context
-            else:
-                combined = db_context + web_context[:2]
-
-            logger.debug(f"[COMBINED COUNT] {len(combined)}")
-
-            context = rerank(final_query, combined)
-            logger.debug(f"[RERANKED COUNT] {len(context)}")
-
-            if not context:
-                logger.warning("[NO RESULTS] → switching to AI mode")
-
-                clean_html = generate_ai_fallback(query)
-
-                await websocket.send_json({
-                    "type": "final",
-                    "data": {
-                        "type": intent_type or "chat",
-                        "html": clean_html
-                    },
-                    "conversation_id": conversation_id
-                })
-
-                # SAVE
-                save_message(conversation_id, "user", query)
-                save_message(conversation_id, "assistant", clean_html)
-
-                store_memory(user_id, org_id, query)
-                store_memory(user_id, org_id, clean_html)
-
-                store_last_ai_response(user_id, org_id, clean_html)
-                store_last_context(user_id, org_id, intent_type, [])
 
                 await websocket.send_json({
                     "type": "done",
@@ -1474,60 +1668,69 @@ async def websocket_chat(websocket: WebSocket):
 
                 continue
 
+            analysis = smart_router(query, last_ai)
+
+            intent_type = analysis.get("intent", "article")
+            final_query = analysis.get("query", query)
+            mode = analysis.get("mode", "list")
+
+            with ThreadPoolExecutor() as executor:
+                db_future = executor.submit(search_db, final_query, intent_type, "")
+                done, _ = wait([db_future], timeout=2)
+
+                db_context = db_future.result()
+
+            context = fast_rank(db_context)
+
+            if not context:
+                clean_html = generate_ai_fallback(query)
+
+                await websocket.send_json({
+                    "type": "final",
+                    "data": {"type": intent_type, "html": clean_html},
+                    "conversation_id": conversation_id
+                })
+
+                continue
+
             memory = retrieve_memory(user_id, org_id, query)
-            mode = detect_mode(query, intent_type, context)
 
             prompt = build_prompt(query, memory, context, intent_type, mode)
 
-
             try:
-                response = call_ollama(
-                    prompt,
-                    model="hozpitality-llama",
-                    max_tokens=800
-                )
-
-                clean_html = clean_html_response(response)
+                full_response = await stream_llm(websocket, prompt)
+                clean_html = clean_html_response(full_response)
+                semantic_cache_store(query, clean_html)
 
             except Exception as e:
-                logger.error(f"[LLM ERROR] {e}")
-                clean_html = "Something went wrong. Please try again."
-
+                clean_html = "Something went wrong."
 
             await websocket.send_json({
                 "type": "final",
                 "data": {
-                    "type": intent_type or "chat",
+                    "type": intent_type,
                     "html": clean_html
                 },
                 "conversation_id": conversation_id
             })
 
-
-            # 🔥 SAVE DATA
             if user_id != 0 and conversation_id:
                 save_message(conversation_id, "user", query)
                 save_message(conversation_id, "assistant", clean_html)
 
-            if user_id != 0:
                 store_memory(user_id, org_id, query)
                 store_memory(user_id, org_id, clean_html)
 
                 store_last_ai_response(user_id, org_id, clean_html)
                 store_last_context(user_id, org_id, intent_type, context)
 
-
-            # 🔥 DONE SIGNAL
             await websocket.send_json({
                 "type": "done",
                 "conversation_id": conversation_id
             })
 
     except WebSocketDisconnect:
-        logger.warning("[WS DISCONNECTED]")
-
-    except Exception as e:
-        logger.error(f"[WS ERROR] {str(e)}", exc_info=True)
+        pass
 
 
 @app.get("/conversations/{user_id}")
