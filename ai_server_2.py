@@ -486,6 +486,14 @@ Examples:
 6. DEFAULT
 - Choose best fit
 
+STRICT CATEGORY PRIORITY:
+- If the query is a company name or has a space joined (like 'hotelsmarters'), type MUST be 'company'.
+- 'professional' is ONLY for individual human names (e.g., 'Raj Bhatt').
+- If the query contains "nominate", "nomination", "award", or "awards", type MUST be 'awards'.
+- If the query contains "job", "jobs", "hiring", "vacancy", or "openings", type MUST be 'job'. 
+- DO NOT classify as 'professional' even if it's two words (like 'waiter jobs'). 'professional' is ONLY for specific person names.
+- If it starts with "how to", "how do I", intent is 'FAQ' and type is 'faq'.
+
 STRICT RULES
 
 - DO NOT hallucinate categories
@@ -493,24 +501,35 @@ STRICT RULES
 - DO NOT force classification based on one keyword
 - Use full query meaning
 
+SPACE-INSENSITIVE SEARCH (COMPANY/BRAND):
+
+- If the query is two words that seem like one brand (e.g., 'hotel smarters', 'hozpitality plus'), JOIN them in keywords.
+- Example: "hotel smarters" -> type: "company", keywords: "hotelsmarters". 
+
+KEYWORD EXTRACTION (STRICT):
+- If 'type' is 'supplier', REMOVE words like 'supplier', 'suppliers' from keywords.
+- If 'type' is 'job', REMOVE 'job', 'jobs', 'hiring' from keywords.
+- If 'type' is 'event', REMOVE 'event', 'events' from keywords.
+- Example: "furniture suppliers" -> type: "supplier", keywords: "furniture".
+
 LOCATION
 - Extract city or country if present
 - Else ""
 
 KEYWORDS
-- 2–4 important words
-- lowercase
-- no commas
+- 1-3 core industry words (e.g., "waiter", "front office")
+- DO NOT include the category name in keywords.
+- REMOVE category/type words (e.g., if type is job, keywords should not have "job")
+- lowercase, no commas
 
 
 OUTPUT (STRICT JSON ONLY):
-
 {{
 "intent": "SEARCH",
-"type": "faq",
-"keywords": "find job los angeles",
-"location": "los angeles",
-"rephrased_query": "{query}"
+"type": "the_detected_category",
+"keywords": "the_extracted_keywords",
+"location": "the_detected_location",
+"rephrased_query": "the_rephrased_user_query"
 }}
 """
 
@@ -540,10 +559,9 @@ OUTPUT (STRICT JSON ONLY):
 
             q_lower = query.lower().strip()
 
-            if (
-                q_lower.startswith("who is") or
-                re.match(r"^[a-z]+ [a-z]+$", q_lower)
-            ):
+            if q_lower.startswith("who is") :
+            #     re.match(r"^[a-z]+ [a-z]+$", q_lower)
+            # ):
                 cleaned["type"] = "professional"
 
             logger.info(f"Intent detected: {cleaned}")
@@ -718,17 +736,166 @@ def build_url(category, slug):
 
     return ""
 
+# def search_db(query, intent_type=None, location=None):
+#     key = cache_key(f"db:{query}:{intent_type}:{location}")
+#     cached = redis_client.get(key)
+#     if cached:
+#         return json.loads(cached)
+
+#     conn = get_db_conn_with_retry()
+
+#     try:
+#         cur = conn.cursor()
+
+#         query = query.replace(",", " ").lower().strip()
+
+#         words = [
+#             w.strip()
+#             for w in query.split()
+#             if w and len(w) > 2 and w != location
+#         ]
+
+#         full_phrase = " ".join(words)
+
+#         def execute(sql, params):
+#             logger.info("SQL: %s", sql)
+#             logger.info("Params: %s", params)
+
+#             cur.execute(sql, params)
+#             rows = cur.fetchall()
+
+#             return [{
+#                 "title": r[0],
+#                 "content": (r[1] or "")[:150],
+#                 "category": r[2],
+#                 "location": r[3],
+#                 "url": build_url(r[2], r[4])
+#             } for r in rows]
+
+#         def base_sql():
+#             sql = """
+#             SELECT title, content, category_text, location_text, slug
+#             FROM master_search_mastersearchindex
+#             WHERE is_live = TRUE
+#             """
+#             params = []
+
+            
+#             if intent_type:
+#                 if intent_type == "awards":
+#                     sql += " AND LOWER(category_text) = 'awards'"  
+#                 else:
+#                     sql += " AND LOWER(category_text) LIKE %s"
+#                     params.append(f"%{intent_type.lower()}%")
+
+#             if location:
+#                 sql += " AND LOWER(location_text) LIKE %s"
+#                 params.append(f"%{location.lower()}%")
+
+#             return sql, params
+
+#         if full_phrase:
+#             sql, params = base_sql()
+
+#             if intent_type == "awards":
+#                 sql += """
+#                 AND LOWER(title) LIKE %s
+#                 ORDER BY 
+#                     CASE 
+#                         WHEN LOWER(title) = %s THEN 0
+#                         WHEN LOWER(title) LIKE %s THEN 1
+#                         ELSE 2
+#                     END
+#                 LIMIT 6
+#                 """
+
+#                 params.extend([
+#                     f"%{full_phrase}%",
+#                     full_phrase,
+#                     f"%{full_phrase}%"
+#                 ])
+#             else:
+#                 sql += """
+#                 AND (
+#                     LOWER(title) LIKE %s
+#                     OR LOWER(content) LIKE %s
+#                 )
+#                 ORDER BY 
+#                     CASE 
+#                         WHEN LOWER(title) = %s THEN 0
+#                         WHEN LOWER(title) LIKE %s THEN 1
+#                         ELSE 2
+#                     END
+#                 LIMIT 6
+#                 """
+
+#                 params.extend([
+#                     f"%{full_phrase}%",
+#                     f"%{full_phrase}%",
+#                     full_phrase,
+#                     f"%{full_phrase}%"
+#                 ])
+
+#             results = execute(sql, params)
+
+#             if results:
+#                 return results
+
+#         if words:
+#             sql, params = base_sql()
+
+#             conditions = []
+#             for w in words:
+#                 if intent_type == "awards":
+#                     conditions.append("LOWER(title) LIKE %s")
+#                     params.append(f"%{w}%")
+#                 else:
+#                     conditions.append("(LOWER(title) LIKE %s OR LOWER(content) LIKE %s)")
+#                     params.extend([f"%{w}%", f"%{w}%"])
+
+#             sql += " AND " + " AND ".join(conditions)
+#             sql += " LIMIT 6"
+
+#             results = execute(sql, params)
+
+#             if results:
+#                 return results
+
+#         if words:
+#             sql, params = base_sql()
+
+#             conditions = []
+#             for w in words:
+#                 conditions.append("(LOWER(title) LIKE %s OR LOWER(content) LIKE %s)")
+#                 params.extend([f"%{w}%", f"%{w}%"])
+
+#             sql += " AND (" + " OR ".join(conditions) + ")"
+#             sql += " LIMIT 6"
+
+#             results = execute(sql, params)
+
+#             return results
+
+#         return []
+
+#     except Exception as e:
+#         logger.error(f"DB ERROR: {e}", exc_info=True)
+#         return []
+
+#     finally:
+#         db_pool.putconn(conn)
+
 def search_db(query, intent_type=None, location=None):
     key = cache_key(f"db:{query}:{intent_type}:{location}")
     cached = redis_client.get(key)
     if cached:
+        logger.info(f"[CACHE HIT] Returning results for: {query}")
         return json.loads(cached)
 
     conn = get_db_conn_with_retry()
 
     try:
         cur = conn.cursor()
-
         query = query.replace(",", " ").lower().strip()
 
         words = [
@@ -740,133 +907,146 @@ def search_db(query, intent_type=None, location=None):
         full_phrase = " ".join(words)
 
         def execute(sql, params):
+            logger.info("--- STARTING DB EXECUTION ---")
             logger.info("SQL: %s", sql)
             logger.info("Params: %s", params)
 
             cur.execute(sql, params)
             rows = cur.fetchall()
+            
+            logger.info(f"[DB RAW COUNT]: {len(rows)} results found in database")
 
-            return [{
-                "title": r[0],
-                "content": (r[1] or "")[:150],
-                "category": r[2],
-                "location": r[3],
-                "url": build_url(r[2], r[4])
-            } for r in rows]
+            mapped_results = []
+            for r in rows:
+                mapped_results.append({
+                    "title": r[0],
+                    "content": (r[1] or "")[:150],
+                    "category": r[2],
+                    "location": r[3],
+                    "url": build_url(r[2], r[4]),
+                    "is_paid": r[5] is not None,
+                    "package_id": r[5]
+                })
+
+            if mapped_results:
+                logger.info("--- RAW RESULTS BEFORE SORTING ---")
+                for i, res in enumerate(mapped_results[:5], 1):
+                    logger.info(f"Row {i}: {res['title']} | Paid: {res['is_paid']} | PkgID: {res.get('package_id')}")
+
+                from ai_server_2 import apply_priority_sorting 
+                sorted_results = apply_priority_sorting(mapped_results)
+
+                logger.info("--- RESULTS AFTER PRIORITY SORTING ---")
+                for i, res in enumerate(sorted_results[:5], 1):
+                    logger.info(f"Sorted {i}: {res['title']} | Paid: {res['is_paid']}")
+                
+                return sorted_results
+            
+            return []
 
         def base_sql():
             sql = """
-            SELECT title, content, category_text, location_text, slug
-            FROM master_search_mastersearchindex
-            WHERE is_live = TRUE
+            SELECT msi.title, msi.content, msi.category_text, msi.location_text, msi.slug, ua.package_id
+            FROM master_search_mastersearchindex msi
+            LEFT JOIN user_accounts ua ON msi.user_name = ua.username
+            WHERE msi.is_live = TRUE
             """
             params = []
 
-            
             if intent_type:
                 if intent_type == "awards":
-                    sql += " AND LOWER(category_text) = 'awards'"  
+                    sql += " AND LOWER(msi.category_text) = 'awards'"  
                 else:
-                    sql += " AND LOWER(category_text) LIKE %s"
+                    sql += " AND LOWER(msi.category_text) LIKE %s"
                     params.append(f"%{intent_type.lower()}%")
 
             if location:
-                sql += " AND LOWER(location_text) LIKE %s"
+                sql += " AND LOWER(msi.location_text) LIKE %s"
                 params.append(f"%{location.lower()}%")
 
             return sql, params
 
+        results = []
+        
+        # Scenario 1: Full Phrase Search
         if full_phrase:
+            logger.info(f"[SEARCH STAGE]: Trying Full Phrase Match for '{full_phrase}'")
             sql, params = base_sql()
-
             if intent_type == "awards":
-                sql += """
-                AND LOWER(title) LIKE %s
-                ORDER BY 
-                    CASE 
-                        WHEN LOWER(title) = %s THEN 0
-                        WHEN LOWER(title) LIKE %s THEN 1
-                        ELSE 2
-                    END
-                LIMIT 6
-                """
-
-                params.extend([
-                    f"%{full_phrase}%",
-                    full_phrase,
-                    f"%{full_phrase}%"
-                ])
+                # Added Priority Sorting in ORDER BY
+                sql += """ AND LOWER(msi.title) LIKE %s 
+                           ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), 
+                           CASE WHEN LOWER(msi.title) = %s THEN 0 ELSE 1 END LIMIT 100"""
+                params.extend([f"%{full_phrase}%", full_phrase])
             else:
+                # Added Priority Sorting in ORDER BY
                 sql += """
-                AND (
-                    LOWER(title) LIKE %s
-                    OR LOWER(content) LIKE %s
-                )
+                AND (LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)
                 ORDER BY 
+                    (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END),
                     CASE 
-                        WHEN LOWER(title) = %s THEN 0
-                        WHEN LOWER(title) LIKE %s THEN 1
+                        WHEN LOWER(msi.title) = %s THEN 0
+                        WHEN LOWER(msi.title) LIKE %s THEN 1
                         ELSE 2
-                    END
-                LIMIT 6
+                    END,
+                    msi.id DESC
+                LIMIT 100
                 """
-
-                params.extend([
-                    f"%{full_phrase}%",
-                    f"%{full_phrase}%",
-                    full_phrase,
-                    f"%{full_phrase}%"
-                ])
-
+                params.extend([f"%{full_phrase}%", f"%{full_phrase}%", full_phrase, f"%{full_phrase}%"])
             results = execute(sql, params)
 
-            if results:
-                return results
-
-        if words:
+        # Scenario 2: All Words Match (AND)
+        if not results and words:
+            logger.info(f"[SEARCH STAGE]: Full phrase failed. Trying AND condition for words: {words}")
             sql, params = base_sql()
-
             conditions = []
             for w in words:
                 if intent_type == "awards":
-                    conditions.append("LOWER(title) LIKE %s")
+                    conditions.append("LOWER(msi.title) LIKE %s")
                     params.append(f"%{w}%")
                 else:
-                    conditions.append("(LOWER(title) LIKE %s OR LOWER(content) LIKE %s)")
+                    conditions.append("(LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)")
                     params.extend([f"%{w}%", f"%{w}%"])
-
-            sql += " AND " + " AND ".join(conditions)
-            sql += " LIMIT 6"
-
+            
+            # Added ORDER BY for Paid Priority
+            sql += " AND " + " AND ".join(conditions) + " ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), msi.id DESC LIMIT 100"
             results = execute(sql, params)
 
-            if results:
-                return results
-
-        if words:
+        # Scenario 3: Any Word Match (OR)
+        if not results and words:
+            logger.info(f"[SEARCH STAGE]: AND match failed. Trying OR condition for words: {words}")
             sql, params = base_sql()
-
             conditions = []
             for w in words:
-                conditions.append("(LOWER(title) LIKE %s OR LOWER(content) LIKE %s)")
+                conditions.append("(LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)")
                 params.extend([f"%{w}%", f"%{w}%"])
-
-            sql += " AND (" + " OR ".join(conditions) + ")"
-            sql += " LIMIT 6"
-
+            
+            # Added ORDER BY for Paid Priority
+            sql += " AND (" + " OR ".join(conditions) + ") ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), msi.id DESC LIMIT 100"
             results = execute(sql, params)
 
-            return results
+        if not results:
+            logger.warning(f"[SEARCH RESULT]: No records found in DB for query '{query}'")
+        else:
+            logger.info(f"[SEARCH RESULT]: Successfully returning {len(results)} results from DB")
 
-        return []
+        return results
 
     except Exception as e:
-        logger.error(f"DB ERROR: {e}", exc_info=True)
+        logger.error(f"DB ERROR in search_db: {e}", exc_info=True)
         return []
 
     finally:
-        db_pool.putconn(conn)
+        if conn:
+            db_pool.putconn(conn)
 
+def apply_priority_sorting(results):
+    if not results:
+        return []
+    
+    sorted_results = sorted(results, key=lambda x: 0 if x.get("is_paid") else 1)
+    
+    return sorted_results[:6]
 
 def generate_ai_fallback(query: str):
     prompt = f"""
@@ -1203,6 +1383,8 @@ def chat(req: ChatRequest):
 
     context = rerank(final_query, combined)
 
+    context = apply_priority_sorting(context)
+
     if not context:
         answer = "You can check the official website or latest announcements for more details."
     else:
@@ -1287,6 +1469,8 @@ def chat_stream(req: ChatRequest):
 
     context = rerank(final_query, combined)
 
+    context = apply_priority_sorting(context)
+
     memory = retrieve_memory(user_id, org_id, query)
     
     mode = detect_mode(query, intent_type, context)
@@ -1300,237 +1484,6 @@ def chat_stream(req: ChatRequest):
 
     return StreamingResponse(generate(), media_type="text/plain")
 
-# @app.websocket("/ws/chat")
-# async def websocket_chat(websocket: WebSocket):
-
-#     origin = websocket.headers.get("origin")
-#     logger.info(f"[WS CONNECT] Origin: {origin}")
-
-#     await websocket.accept()
-
-#     try:
-#         while True:
-#             data = await websocket.receive_json()
-#             logger.debug(f"[WS RECEIVED] Raw Data: {data}")
-
-#             query = data["query"]
-#             user_id = data["user_id"]
-#             org_id = data["org_id"]
-
-#             logger.info(f"[QUERY] User:{user_id} Org:{org_id} : {query}")
-
-#             conversation_id = data.get("conversation_id")
-
-#             if user_id != 0:
-#                 if not conversation_id:
-#                     conversation_id = create_conversation(user_id, query[:30])
-#             else:
-#                 conversation_id = None
-#             logger.debug(f"[CONVERSATION] ID: {conversation_id}")
-
-#             intent_data = detect_intent_llm(query)
-#             logger.debug(f"[INTENT] {intent_data}")
-
-#             base_query = intent_data.get("keywords") or query
-
-#             logger.debug(f"[BASE QUERY] {base_query}")
-
-#             final_query = base_query
-#             intent_type = intent_data.get("type")
-
-#             last_ai = get_last_ai_response(user_id, org_id)
-#             followup = detect_followup_llm(query, last_ai)
-
-#             logger.info(f"[FOLLOWUP DETECT] {followup}")
-
-#             if followup.get("is_followup") and any(
-#                 k in query.lower() for k in ["award", "job", "company", "event"]
-#             ):
-#                 logger.warning("Forcing follow-up FALSE due to new topic")
-#                 followup["is_followup"] = False
-
-#             if followup.get("is_followup"):
-#                 last_ctx = get_last_context(user_id, org_id)
-
-#                 if last_ctx:
-#                     intent_type = last_ctx.get("intent")
-#                     context = last_ctx.get("context")
-
-#                     logger.info("[FOLLOW-UP MODE ACTIVATED]")
-
-#                     ftype = followup.get("type")
-
-#                     if ftype == "expand":
-#                         mode = "single"
-#                     elif ftype == "refine":
-#                         mode = "list"
-#                     elif ftype == "chat":
-#                         mode = "chat"
-#                     else:
-#                         mode = "single"
-
-#                     prompt = build_prompt(
-#                         query,
-#                         retrieve_memory(user_id, org_id, query),
-#                         context,
-#                         intent_type,
-#                         mode
-#                     )
-
-#                     response = call_ollama(prompt, model="hozpitality-llama", max_tokens=800)
-
-#                     clean_html = clean_html_response(response)
-
-#                     await websocket.send_json({
-#                         "type": "final",
-#                         "data": {
-#                             "type": intent_type,
-#                             "html": clean_html
-#                         },
-#                         "conversation_id": conversation_id
-#                     })
-
-#                     store_last_ai_response(user_id, org_id, response)
-
-#                     continue
-
-
-#             location = intent_data.get("location")
-
-#             if location:
-#                 final_query += f" {location}"
-
-#             logger.info(f"[FINAL QUERY] {final_query}")
-#             logger.info(f"[INTENT TYPE] {intent_type} | Location: {location}")
-            
-#             mode = detect_mode(query, intent_type, [])
-
-#             if mode == "chat":
-#                 answer = call_ollama(query, model="hozpitality-llama", max_tokens=800)
-
-#                 await websocket.send_json({
-#                     "type": "final",
-#                     "data": {
-#                         "type": intent_type or "chat",
-#                         "html": answer
-#                     },
-#                     "conversation_id": conversation_id
-#                 })
-                
-#                 continue
-
-#             with ThreadPoolExecutor() as executor:
-#                 db_future = executor.submit(search_db, final_query, intent_type, location)
-#                 web_future = executor.submit(search_web, final_query)
-
-#                 done, _ = wait([db_future, web_future], timeout=2)
-
-#                 db_context = db_future.result()
-#                 web_context = web_future.result() if web_future in done else []
-
-#             logger.debug(f"[DB RESULTS COUNT] {len(db_context)}")
-#             logger.debug(f"[WEB RESULTS COUNT] {len(web_context)}")
-
-#             if intent_type in ["job", "company", "professional"]:
-#                 combined = db_context
-
-#             elif intent_type == "faq":
-#                 combined = db_context
-#             elif intent_type == "awards":
-#                 combined = db_context
-#             else:
-#                 combined = db_context + web_context[:2]
-
-#             logger.debug(f"[COMBINED COUNT] {len(combined)}")
-
-#             context = rerank(final_query, combined)
-#             logger.debug(f"[RERANKED COUNT] {len(context)}")
-
-#             if not context:
-#                 logger.warning("[NO RESULTS] → switching to AI mode")
-
-#                 clean_html = generate_ai_fallback(query)
-
-#                 await websocket.send_json({
-#                     "type": "final",
-#                     "data": {
-#                         "type": intent_type or "chat",
-#                         "html": clean_html
-#                     },
-#                     "conversation_id": conversation_id
-#                 })
-
-#                 # SAVE
-#                 save_message(conversation_id, "user", query)
-#                 save_message(conversation_id, "assistant", clean_html)
-
-#                 store_memory(user_id, org_id, query)
-#                 store_memory(user_id, org_id, clean_html)
-
-#                 store_last_ai_response(user_id, org_id, clean_html)
-#                 store_last_context(user_id, org_id, intent_type, [])
-
-#                 await websocket.send_json({
-#                     "type": "done",
-#                     "conversation_id": conversation_id
-#                 })
-
-#                 continue
-
-#             memory = retrieve_memory(user_id, org_id, query)
-#             mode = detect_mode(query, intent_type, context)
-
-#             prompt = build_prompt(query, memory, context, intent_type, mode)
-
-
-#             try:
-#                 response = call_ollama(
-#                     prompt,
-#                     model="hozpitality-llama",
-#                     max_tokens=800
-#                 )
-
-#                 clean_html = clean_html_response(response)
-
-#             except Exception as e:
-#                 logger.error(f"[LLM ERROR] {e}")
-#                 clean_html = "Something went wrong. Please try again."
-
-
-#             await websocket.send_json({
-#                 "type": "final",
-#                 "data": {
-#                     "type": intent_type or "chat",
-#                     "html": clean_html
-#                 },
-#                 "conversation_id": conversation_id
-#             })
-
-
-#             # 🔥 SAVE DATA
-#             if user_id != 0 and conversation_id:
-#                 save_message(conversation_id, "user", query)
-#                 save_message(conversation_id, "assistant", clean_html)
-
-#             if user_id != 0:
-#                 store_memory(user_id, org_id, query)
-#                 store_memory(user_id, org_id, clean_html)
-
-#                 store_last_ai_response(user_id, org_id, clean_html)
-#                 store_last_context(user_id, org_id, intent_type, context)
-
-
-#             # 🔥 DONE SIGNAL
-#             await websocket.send_json({
-#                 "type": "done",
-#                 "conversation_id": conversation_id
-#             })
-
-#     except WebSocketDisconnect:
-#         logger.warning("[WS DISCONNECTED]")
-
-#     except Exception as e:
-#         logger.error(f"[WS ERROR] {str(e)}", exc_info=True)
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
@@ -1587,6 +1540,8 @@ async def websocket_chat(websocket: WebSocket):
                 if last_ctx:
                     intent_type = last_ctx.get("intent")
                     context = last_ctx.get("context")
+
+                    context = apply_priority_sorting(context)
 
                     logger.info("[FOLLOW-UP MODE ACTIVATED]")
 
@@ -1656,6 +1611,33 @@ async def websocket_chat(websocket: WebSocket):
 
             context = rerank(final_query, combined)
 
+            context = apply_priority_sorting(context)
+
+            # --- ADDED: About Us Check Start ---
+            about_us_intro = ""
+            # Hum sirf specific types ke liye about_us dikhana chahte hain
+            if intent_type in ["company", "professional", "supplier"] and context:
+                try:
+                    # 'context' usually contains search results, we take the first one
+                    first_hit = context[0] 
+                    
+                    # Agar aapka search_db 'about_us' fetch karke context mein daal raha hai
+                    raw_about = first_hit.get('about_us')
+                    
+                    if raw_about and len(str(raw_about)) > 20:
+                        import re, html
+                        # HTML saaf karo
+                        clean_about = re.sub(r'<[^>]+>', '', html.unescape(str(raw_about))).strip()
+                        # Pehle 3 sentences uthao
+                        sentences = re.split(r'\.(?=\s|$)', clean_about)
+                        about_us_intro = '. '.join([s.strip() for s in sentences if s.strip()][:3])
+                        if about_us_intro and not about_us_intro.endswith('.'):
+                            about_us_intro += '.'
+                        
+                        logger.info(f"[DB INTRO] Found about_us for {first_hit.get('title')}")
+                except Exception as e:
+                    logger.error(f"Error extracting about_us: {e}")
+
             # --- NO RESULTS / FALLBACK ---
             if not context:
                 logger.warning("[NO RESULTS] - switching to AI mode")
@@ -1680,17 +1662,27 @@ async def websocket_chat(websocket: WebSocket):
             prompt = build_prompt(query, memory, context, intent_type, mode)
 
             try:
-                full_response = ""
-                # Looping through generator chunks
-                for chunk in call_ollama(prompt, stream=True, model="hozpitality-llama", max_tokens=800):
-                    full_response += chunk
+                if about_us_intro:
+                    # Agar About Us mil gaya, toh AI stream nahi karenge, seedha response bhejenge
+                    full_response = about_us_intro
                     await websocket.send_json({
                         "type": "token", 
-                        "data": {"type": intent_type or "chat", "html": chunk},
+                        "data": {"type": intent_type or "chat", "html": about_us_intro},
                         "conversation_id": conversation_id
                     })
-                
-                clean_html = clean_html_response(full_response)
+                    clean_html = about_us_intro
+                else:
+                    # Agar About Us nahi mila, tab purana LLM stream chalega
+                    prompt = build_prompt(query, memory, context, intent_type, mode)
+                    full_response = ""
+                    for chunk in call_ollama(prompt, stream=True, model="hozpitality-llama", max_tokens=800):
+                        full_response += chunk
+                        await websocket.send_json({
+                            "type": "token", 
+                            "data": {"type": intent_type or "chat", "html": chunk},
+                            "conversation_id": conversation_id
+                        })
+                    clean_html = clean_html_response(full_response)
 
             except Exception as e:
                 logger.error(f"[LLM ERROR] {e}")
