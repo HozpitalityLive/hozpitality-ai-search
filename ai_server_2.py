@@ -288,8 +288,8 @@ def call_ollama(prompt, stream=True, model="hozpitality-llama", max_tokens=600):
                 if not token:
                     continue
 
-                for piece in smart_chunk(token, 12):
-                    yield piece
+                if token:
+                    yield token
 
     return generator()
 
