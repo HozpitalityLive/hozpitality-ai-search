@@ -1352,11 +1352,11 @@ async def websocket_chat(websocket: WebSocket):
             intent_data = detect_intent_llm(query)
             logger.debug(f"[INTENT] {intent_data}")
 
-            await websocket.send_json({
-                "type": "start",
-                "message": "Thinking...",
-                "conversation_id": conversation_id
-            })
+            # await websocket.send_json({
+            #     "type": "start",
+            #     "message": "Thinking...",
+            #     "conversation_id": conversation_id
+            # })
 
             base_query = intent_data.get("keywords") or query
 
