@@ -8292,3 +8292,499 @@ json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes:
 2026-04-15 19:59:23,735 | INFO | ai-websocket | --- LLM STREAMING FINISHED ---
 2026-04-15 19:59:23,735 | WARNING | ai-websocket | ALERT: LLM might have ignored the fixed intro.
 2026-04-15 20:05:57,794 | WARNING | ai-websocket | [WS DISCONNECTED]
+2026-04-15 20:08:55,895 | INFO | ai-websocket | [WS CONNECT] Origin: None
+2026-04-15 20:08:58,301 | DEBUG | ai-websocket | [WS RECEIVED] Raw Data: {'query': 'chandan roy', 'user_id': 402981, 'org_id': 1, 'conversation_id': ''}
+2026-04-15 20:08:58,302 | INFO | ai-websocket | [QUERY] User:402981 Org:1 : chandan roy
+2026-04-15 20:08:59,469 | DEBUG | ai-websocket | [CONVERSATION] ID: 610
+2026-04-15 20:09:44,614 | INFO | ai-websocket | Intent detected: {'intent': 'SEARCH', 'type': 'professional', 'keywords': 'chandan roy', 'location': '', 'rephrased_query': 'chandan roy'}
+2026-04-15 20:09:44,615 | DEBUG | ai-websocket | [INTENT] {'intent': 'SEARCH', 'type': 'professional', 'keywords': 'chandan roy', 'location': '', 'rephrased_query': 'chandan roy'}
+2026-04-15 20:09:44,616 | DEBUG | ai-websocket | [BASE QUERY] chandan roy
+2026-04-15 20:10:07,958 | ERROR | ai-websocket | Followup detect error: Expecting ',' delimiter: line 3 column 23 (char 48)
+2026-04-15 20:10:07,958 | INFO | ai-websocket | [FOLLOWUP DETECT] {'is_followup': False, 'type': 'switch'}
+2026-04-15 20:10:07,958 | INFO | ai-websocket | [FINAL QUERY] chandan roy
+2026-04-15 20:10:07,958 | INFO | ai-websocket | [INTENT TYPE] professional | Location: 
+2026-04-15 20:10:08,295 | INFO | ai-websocket | [SEARCH STAGE]: Trying Full Phrase Match for 'chandan roy'
+2026-04-15 20:10:08,295 | INFO | ai-websocket | --- STARTING DB EXECUTION ---
+2026-04-15 20:10:08,295 | INFO | ai-websocket | SQL: 
+            SELECT
+                msi.title,
+                msi.content,
+                msi.category_text,
+                msi.location_text,
+                msi.slug,
+                ua.package_id,
+                COALESCE(NULLIF(ua.about_us, ''), msi.content, '') as about_us
+            FROM master_search_mastersearchindex msi
+            LEFT JOIN user_accounts ua ON (
+                msi.user_name = ua.username
+                OR LOWER(msi.title) = LOWER(ua.company_name)
+            )
+            WHERE msi.is_live = TRUE
+         AND LOWER(msi.category_text) LIKE %s
+                AND (LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)
+                ORDER BY 
+                    (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END),
+                    CASE 
+                        WHEN LOWER(msi.title) = %s THEN 0
+                        WHEN LOWER(msi.title) LIKE %s THEN 1
+                        ELSE 2
+                    END,
+                    msi.id DESC
+                LIMIT 100
+                
+2026-04-15 20:10:08,305 | INFO | ai-websocket | Params: ['%professional%', '%chandan roy%', '%chandan roy%', 'chandan roy', '%chandan roy%']
+2026-04-15 20:10:11,726 | INFO | ai-websocket | [DB RAW COUNT]: 1 results found in database
+2026-04-15 20:10:11,727 | INFO | ai-websocket | DEBUG DB DATA -> Title: Chandan Roy | Original Content: 
+        Chandan Roy
+        
+        IT Assistant...
+2026-04-15 20:10:11,729 | INFO | ai-websocket | --- RAW RESULTS BEFORE SORTING ---
+2026-04-15 20:10:11,729 | INFO | ai-websocket | Row 1: Chandan Roy | Paid: False | PkgID: None
+2026-04-15 20:10:11,729 | INFO | ai-websocket | --- RESULTS AFTER PRIORITY SORTING (SENT TO LLM) ---
+2026-04-15 20:10:11,730 | INFO | ai-websocket | Sorted 1: Chandan Roy | Content: 
+        Chandan Roy
+        
+        IT Assistant
+        Skills: 
+        Location: Mumbai
+        Name: Chandan Roy
+        Industries: Association
+2026-04-15 20:10:11,731 | INFO | ai-websocket | [SEARCH RESULT]: Successfully returning 1 results from DB
+2026-04-15 20:10:12,919 | INFO | ai-websocket | --- STARTING UNIVERSAL EXTRACTION (1 results) ---
+2026-04-15 20:10:12,919 | INFO | ai-websocket | SUCCESS: Intro extracted for Chandan Roy
+2026-04-15 20:10:12,919 | INFO | ai-websocket | Instruction attached to Prompt: [FIXED INTRO & CARD PROTECT]
+2026-04-15 20:10:12,919 | INFO | ai-websocket | --- LLM STREAMING STARTED ---
+2026-04-15 20:10:23,494 | INFO | ai-websocket | --- LLM STREAMING FINISHED ---
+2026-04-15 20:10:23,494 | WARNING | ai-websocket | ALERT: LLM might have ignored the fixed intro.
+2026-04-15 20:11:03,960 | DEBUG | ai-websocket | [WS RECEIVED] Raw Data: {'query': 'raj bhatt', 'user_id': 402981, 'org_id': 1, 'conversation_id': ''}
+2026-04-15 20:11:03,960 | INFO | ai-websocket | [QUERY] User:402981 Org:1 : raj bhatt
+2026-04-15 20:11:05,175 | DEBUG | ai-websocket | [CONVERSATION] ID: 611
+2026-04-15 20:11:08,360 | INFO | ai-websocket | Intent detected: {'intent': 'SEARCH', 'type': 'PROFESSIONAL', 'keywords': 'raj bhatt', 'location': '', 'rephrased_query': 'raj bhatt'}
+2026-04-15 20:11:08,360 | DEBUG | ai-websocket | [INTENT] {'intent': 'SEARCH', 'type': 'PROFESSIONAL', 'keywords': 'raj bhatt', 'location': '', 'rephrased_query': 'raj bhatt'}
+2026-04-15 20:11:08,364 | DEBUG | ai-websocket | [BASE QUERY] raj bhatt
+2026-04-15 20:11:11,606 | INFO | ai-websocket | [FOLLOWUP DETECT] {'is_followup': False, 'type': 'switch'}
+2026-04-15 20:11:11,608 | INFO | ai-websocket | [FINAL QUERY] raj bhatt
+2026-04-15 20:11:11,608 | INFO | ai-websocket | [INTENT TYPE] PROFESSIONAL | Location: 
+2026-04-15 20:11:12,096 | INFO | ai-websocket | [SEARCH STAGE]: Trying Full Phrase Match for 'raj bhatt'
+2026-04-15 20:11:12,101 | INFO | ai-websocket | --- STARTING DB EXECUTION ---
+2026-04-15 20:11:12,101 | INFO | ai-websocket | SQL: 
+            SELECT
+                msi.title,
+                msi.content,
+                msi.category_text,
+                msi.location_text,
+                msi.slug,
+                ua.package_id,
+                COALESCE(NULLIF(ua.about_us, ''), msi.content, '') as about_us
+            FROM master_search_mastersearchindex msi
+            LEFT JOIN user_accounts ua ON (
+                msi.user_name = ua.username
+                OR LOWER(msi.title) = LOWER(ua.company_name)
+            )
+            WHERE msi.is_live = TRUE
+         AND LOWER(msi.category_text) LIKE %s
+                AND (LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)
+                ORDER BY 
+                    (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END),
+                    CASE 
+                        WHEN LOWER(msi.title) = %s THEN 0
+                        WHEN LOWER(msi.title) LIKE %s THEN 1
+                        ELSE 2
+                    END,
+                    msi.id DESC
+                LIMIT 100
+                
+2026-04-15 20:11:12,103 | INFO | ai-websocket | Params: ['%professional%', '%raj bhatt%', '%raj bhatt%', 'raj bhatt', '%raj bhatt%']
+2026-04-15 20:11:17,261 | INFO | ai-websocket | [DB RAW COUNT]: 17 results found in database
+2026-04-15 20:11:17,261 | INFO | ai-websocket | DEBUG DB DATA -> Title: Raj Bhatt | Original Content: 
+        Raj Bhatt
+        General Management
+    ...
+2026-04-15 20:11:17,261 | INFO | ai-websocket | DEBUG DB DATA -> Title: DeepakRaj Bhatt | Original Content: 
+        DeepakRaj Bhatt
+        Housekeeping
+    ...
+2026-04-15 20:11:17,261 | INFO | ai-websocket | DEBUG DB DATA -> Title: Dheeraj Bhatt | Original Content: 
+        Dheeraj Bhatt
+        
+        
+        S...
+2026-04-15 20:11:17,261 | INFO | ai-websocket | DEBUG DB DATA -> Title: Deepak Raj Bhatt | Original Content: 
+        Deepak Raj Bhatt
+        
+        
+      ...
+2026-04-15 20:11:17,261 | INFO | ai-websocket | DEBUG DB DATA -> Title: Neeraj Bhatt | Original Content: 
+        Neeraj Bhatt
+        
+        
+        Sk...
+2026-04-15 20:11:17,275 | INFO | ai-websocket | DEBUG DB DATA -> Title: Prakash raj Bhattarai | Original Content: 
+        Prakash raj Bhattarai
+        
+        
+ ...
+2026-04-15 20:11:17,276 | INFO | ai-websocket | DEBUG DB DATA -> Title: Eika Raj bhatta | Original Content: 
+        Eika Raj bhatta
+        Housekeeping
+    ...
+2026-04-15 20:11:17,276 | INFO | ai-websocket | DEBUG DB DATA -> Title: Suraj Bhattrai | Original Content: 
+        Suraj Bhattrai
+        Head Office & Admi...
+2026-04-15 20:11:17,276 | INFO | ai-websocket | DEBUG DB DATA -> Title: DHIRGA RAJ BHATTARAI | Original Content: 
+        DHIRGA RAJ BHATTARAI
+        Food and Bev...
+2026-04-15 20:11:17,278 | INFO | ai-websocket | DEBUG DB DATA -> Title: Neeraj Bhatt | Original Content: 
+        Neeraj Bhatt
+        Food and Beverage Se...
+2026-04-15 20:11:17,278 | INFO | ai-websocket | DEBUG DB DATA -> Title: Prem Raj Bhatt | Original Content: 
+        Prem Raj Bhatt
+        Chefs-Kitchen
+    ...
+2026-04-15 20:11:17,280 | INFO | ai-websocket | DEBUG DB DATA -> Title: Nabraj Bhattarai | Original Content: 
+        Nabraj Bhattarai
+        Chefs-Kitchen
+  ...
+2026-04-15 20:11:17,284 | INFO | ai-websocket | DEBUG DB DATA -> Title: janak raj bhatt | Original Content: 
+        janak raj bhatt
+        Housekeeping
+    ...
+2026-04-15 20:11:17,284 | INFO | ai-websocket | DEBUG DB DATA -> Title: Suraj Bhattarai | Original Content: 
+        Suraj Bhattarai
+        Food and Beverage...
+2026-04-15 20:11:17,284 | INFO | ai-websocket | DEBUG DB DATA -> Title: Shiraj Bhattarai | Original Content: 
+        Shiraj Bhattarai
+        Front of House
+ ...
+2026-04-15 20:11:17,284 | INFO | ai-websocket | DEBUG DB DATA -> Title: Bedhraj Bhattarai | Original Content: 
+        Bedhraj Bhattarai
+        Housekeeping
+  ...
+2026-04-15 20:11:17,284 | INFO | ai-websocket | DEBUG DB DATA -> Title: Suraj Bhattacharya | Original Content: 
+        Suraj Bhattacharya
+        Housekeeping
+ ...
+2026-04-15 20:11:17,293 | INFO | ai-websocket | --- RAW RESULTS BEFORE SORTING ---
+2026-04-15 20:11:17,295 | INFO | ai-websocket | Row 1: Raj Bhatt | Paid: True | PkgID: 5
+2026-04-15 20:11:17,295 | INFO | ai-websocket | Row 2: DeepakRaj Bhatt | Paid: False | PkgID: None
+2026-04-15 20:11:17,299 | INFO | ai-websocket | Row 3: Dheeraj Bhatt | Paid: False | PkgID: None
+2026-04-15 20:11:17,299 | INFO | ai-websocket | Row 4: Deepak Raj Bhatt | Paid: False | PkgID: None
+2026-04-15 20:11:17,302 | INFO | ai-websocket | Row 5: Neeraj Bhatt | Paid: False | PkgID: None
+2026-04-15 20:11:17,304 | INFO | ai-websocket | --- RESULTS AFTER PRIORITY SORTING (SENT TO LLM) ---
+2026-04-15 20:11:17,304 | INFO | ai-websocket | Sorted 1: Raj Bhatt | Content: 
+        Raj Bhatt
+        General Management
+        CEO
+        Skills: Leadership, Hotel Management, HR, Consulting
+        Location: Los Angeles, 
+2026-04-15 20:11:17,304 | INFO | ai-websocket | Sorted 2: DeepakRaj Bhatt | Content: 
+        DeepakRaj Bhatt
+        Housekeeping
+        Housekeeping Supervisor
+        Skills: 
+        Location: Dubai - United Arab Emirates
+        
+2026-04-15 20:11:17,304 | INFO | ai-websocket | Sorted 3: Dheeraj Bhatt | Content: 
+        Dheeraj Bhatt
+        
+        
+        Skills: 
+        Location: Delhi
+        Name: Dheeraj Bhatt
+        Industries: Hotels & Resorts
+   
+2026-04-15 20:11:17,304 | INFO | ai-websocket | Sorted 4: Deepak Raj Bhatt | Content: 
+        Deepak Raj Bhatt
+        
+        
+        Skills: 
+        Location: Haridwar
+        Name: Deepak Raj Bhatt
+        Industries: Hotels & Re
+2026-04-15 20:11:17,309 | INFO | ai-websocket | Sorted 5: Neeraj Bhatt | Content: 
+        Neeraj Bhatt
+        
+        
+        Skills: 
+        Location: nan
+        Name: Neeraj Bhatt
+        Industries: Hotels & Resorts
+       
+2026-04-15 20:11:17,309 | INFO | ai-websocket | [SEARCH RESULT]: Successfully returning 6 results from DB
+2026-04-15 20:11:17,762 | INFO | ai-websocket | --- STARTING UNIVERSAL EXTRACTION (6 results) ---
+2026-04-15 20:11:17,764 | INFO | ai-websocket | SUCCESS: Intro extracted for Raj Bhatt
+2026-04-15 20:11:17,808 | INFO | ai-websocket | Instruction attached to Prompt: [FIXED INTRO & CARD PROTECT]
+2026-04-15 20:11:17,809 | INFO | ai-websocket | --- LLM STREAMING STARTED ---
+2026-04-15 20:11:40,979 | INFO | ai-websocket | --- LLM STREAMING FINISHED ---
+2026-04-15 20:11:40,980 | INFO | ai-websocket | SUCCESS: DB Intro found in LLM response!
+2026-04-15 20:13:14,941 | DEBUG | ai-websocket | [WS RECEIVED] Raw Data: {'query': 'hotel smarters', 'user_id': 402981, 'org_id': 1, 'conversation_id': ''}
+2026-04-15 20:13:14,941 | INFO | ai-websocket | [QUERY] User:402981 Org:1 : hotel smarters
+2026-04-15 20:13:16,130 | DEBUG | ai-websocket | [CONVERSATION] ID: 612
+2026-04-15 20:13:21,134 | INFO | ai-websocket | Intent detected: {'intent': 'SEARCH', 'type': 'company', 'keywords': 'hotelsmarters', 'location': '', 'rephrased_query': 'hotel smarters'}
+2026-04-15 20:13:21,135 | DEBUG | ai-websocket | [INTENT] {'intent': 'SEARCH', 'type': 'company', 'keywords': 'hotelsmarters', 'location': '', 'rephrased_query': 'hotel smarters'}
+2026-04-15 20:13:21,135 | DEBUG | ai-websocket | [BASE QUERY] hotelsmarters
+2026-04-15 20:13:24,432 | INFO | ai-websocket | [FOLLOWUP DETECT] {'is_followup': False, 'type': 'switch'}
+2026-04-15 20:13:24,432 | INFO | ai-websocket | [FINAL QUERY] hotelsmarters
+2026-04-15 20:13:24,432 | INFO | ai-websocket | [INTENT TYPE] company | Location: 
+2026-04-15 20:13:24,749 | INFO | ai-websocket | [SEARCH STAGE]: Trying Full Phrase Match for 'hotelsmarters'
+2026-04-15 20:13:24,749 | INFO | ai-websocket | --- STARTING DB EXECUTION ---
+2026-04-15 20:13:24,749 | INFO | ai-websocket | SQL: 
+            SELECT
+                msi.title,
+                msi.content,
+                msi.category_text,
+                msi.location_text,
+                msi.slug,
+                ua.package_id,
+                COALESCE(NULLIF(ua.about_us, ''), msi.content, '') as about_us
+            FROM master_search_mastersearchindex msi
+            LEFT JOIN user_accounts ua ON (
+                msi.user_name = ua.username
+                OR LOWER(msi.title) = LOWER(ua.company_name)
+            )
+            WHERE msi.is_live = TRUE
+         AND LOWER(msi.category_text) LIKE %s
+                AND (LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)
+                ORDER BY 
+                    (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END),
+                    CASE 
+                        WHEN LOWER(msi.title) = %s THEN 0
+                        WHEN LOWER(msi.title) LIKE %s THEN 1
+                        ELSE 2
+                    END,
+                    msi.id DESC
+                LIMIT 100
+                
+2026-04-15 20:13:24,749 | INFO | ai-websocket | Params: ['%company%', '%hotelsmarters%', '%hotelsmarters%', 'hotelsmarters', '%hotelsmarters%']
+2026-04-15 20:13:26,759 | INFO | ai-websocket | [DB RAW COUNT]: 1 results found in database
+2026-04-15 20:13:26,759 | INFO | ai-websocket | DEBUG DB DATA -> Title: HotelSmarters | Original Content: 
+        HotelSmarters
+        Partnership Manger
+...
+2026-04-15 20:13:26,759 | INFO | ai-websocket | --- RAW RESULTS BEFORE SORTING ---
+2026-04-15 20:13:26,763 | INFO | ai-websocket | Row 1: HotelSmarters | Paid: False | PkgID: None
+2026-04-15 20:13:26,763 | INFO | ai-websocket | --- RESULTS AFTER PRIORITY SORTING (SENT TO LLM) ---
+2026-04-15 20:13:26,763 | INFO | ai-websocket | Sorted 1: HotelSmarters | Content: 
+        HotelSmarters
+        Partnership Manger
+        Website: https://hotelsmarters.com/
+        Location: Delaware City, DE, USA United States
+ 
+2026-04-15 20:13:26,763 | INFO | ai-websocket | [SEARCH RESULT]: Successfully returning 1 results from DB
+2026-04-15 20:13:27,314 | INFO | ai-websocket | --- STARTING UNIVERSAL EXTRACTION (1 results) ---
+2026-04-15 20:13:27,314 | INFO | ai-websocket | SUCCESS: Intro extracted for HotelSmarters
+2026-04-15 20:13:27,352 | INFO | ai-websocket | Instruction attached to Prompt: [FIXED INTRO & CARD PROTECT]
+2026-04-15 20:13:27,352 | INFO | ai-websocket | --- LLM STREAMING STARTED ---
+2026-04-15 20:13:41,242 | INFO | ai-websocket | --- LLM STREAMING FINISHED ---
+2026-04-15 20:13:41,245 | INFO | ai-websocket | SUCCESS: DB Intro found in LLM response!
+2026-04-15 20:14:15,452 | DEBUG | ai-websocket | [WS RECEIVED] Raw Data: {'query': 'accors', 'user_id': 402981, 'org_id': 1, 'conversation_id': ''}
+2026-04-15 20:14:15,452 | INFO | ai-websocket | [QUERY] User:402981 Org:1 : accors
+2026-04-15 20:14:16,884 | DEBUG | ai-websocket | [CONVERSATION] ID: 613
+2026-04-15 20:14:22,073 | INFO | ai-websocket | Intent detected: {'intent': 'SEARCH', 'type': 'company', 'keywords': 'accors', 'location': '', 'rephrased_query': 'accors'}
+2026-04-15 20:14:22,073 | DEBUG | ai-websocket | [INTENT] {'intent': 'SEARCH', 'type': 'company', 'keywords': 'accors', 'location': '', 'rephrased_query': 'accors'}
+2026-04-15 20:14:22,073 | DEBUG | ai-websocket | [BASE QUERY] accors
+2026-04-15 20:14:25,583 | INFO | ai-websocket | [FOLLOWUP DETECT] {'is_followup': False, 'type': 'switch'}
+2026-04-15 20:14:25,583 | INFO | ai-websocket | [FINAL QUERY] accors
+2026-04-15 20:14:25,583 | INFO | ai-websocket | [INTENT TYPE] company | Location: 
+2026-04-15 20:14:26,277 | INFO | ai-websocket | [SEARCH STAGE]: Trying Full Phrase Match for 'accors'
+2026-04-15 20:14:26,277 | INFO | ai-websocket | --- STARTING DB EXECUTION ---
+2026-04-15 20:14:26,277 | INFO | ai-websocket | SQL: 
+            SELECT
+                msi.title,
+                msi.content,
+                msi.category_text,
+                msi.location_text,
+                msi.slug,
+                ua.package_id,
+                COALESCE(NULLIF(ua.about_us, ''), msi.content, '') as about_us
+            FROM master_search_mastersearchindex msi
+            LEFT JOIN user_accounts ua ON (
+                msi.user_name = ua.username
+                OR LOWER(msi.title) = LOWER(ua.company_name)
+            )
+            WHERE msi.is_live = TRUE
+         AND LOWER(msi.category_text) LIKE %s
+                AND (LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)
+                ORDER BY 
+                    (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END),
+                    CASE 
+                        WHEN LOWER(msi.title) = %s THEN 0
+                        WHEN LOWER(msi.title) LIKE %s THEN 1
+                        ELSE 2
+                    END,
+                    msi.id DESC
+                LIMIT 100
+                
+2026-04-15 20:14:26,284 | INFO | ai-websocket | Params: ['%company%', '%accors%', '%accors%', 'accors', '%accors%']
+2026-04-15 20:14:29,019 | INFO | ai-websocket | [DB RAW COUNT]: 0 results found in database
+2026-04-15 20:14:29,020 | INFO | ai-websocket | [SEARCH STAGE]: Full phrase failed. Trying AND condition for words: ['accors']
+2026-04-15 20:14:29,020 | INFO | ai-websocket | --- STARTING DB EXECUTION ---
+2026-04-15 20:14:29,020 | INFO | ai-websocket | SQL: 
+            SELECT
+                msi.title,
+                msi.content,
+                msi.category_text,
+                msi.location_text,
+                msi.slug,
+                ua.package_id,
+                COALESCE(NULLIF(ua.about_us, ''), msi.content, '') as about_us
+            FROM master_search_mastersearchindex msi
+            LEFT JOIN user_accounts ua ON (
+                msi.user_name = ua.username
+                OR LOWER(msi.title) = LOWER(ua.company_name)
+            )
+            WHERE msi.is_live = TRUE
+         AND LOWER(msi.category_text) LIKE %s AND (LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s) ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), msi.id DESC LIMIT 100
+2026-04-15 20:14:29,020 | INFO | ai-websocket | Params: ['%company%', '%accors%', '%accors%']
+2026-04-15 20:14:29,502 | INFO | ai-websocket | [DB RAW COUNT]: 0 results found in database
+2026-04-15 20:14:29,502 | INFO | ai-websocket | [SEARCH STAGE]: AND match failed. Trying OR condition for words: ['accors']
+2026-04-15 20:14:29,503 | INFO | ai-websocket | --- STARTING DB EXECUTION ---
+2026-04-15 20:14:29,503 | INFO | ai-websocket | SQL: 
+            SELECT
+                msi.title,
+                msi.content,
+                msi.category_text,
+                msi.location_text,
+                msi.slug,
+                ua.package_id,
+                COALESCE(NULLIF(ua.about_us, ''), msi.content, '') as about_us
+            FROM master_search_mastersearchindex msi
+            LEFT JOIN user_accounts ua ON (
+                msi.user_name = ua.username
+                OR LOWER(msi.title) = LOWER(ua.company_name)
+            )
+            WHERE msi.is_live = TRUE
+         AND LOWER(msi.category_text) LIKE %s AND ((LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)) ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), msi.id DESC LIMIT 100
+2026-04-15 20:14:29,503 | INFO | ai-websocket | Params: ['%company%', '%accors%', '%accors%']
+2026-04-15 20:14:29,980 | INFO | ai-websocket | [DB RAW COUNT]: 0 results found in database
+2026-04-15 20:14:29,980 | WARNING | ai-websocket | [SEARCH RESULT]: No records found in DB for query 'accors'
+2026-04-15 20:14:30,328 | WARNING | ai-websocket | ALERT: No valid intro could be built for accors
+2026-04-15 20:14:30,328 | WARNING | ai-websocket | [NO RESULTS] - switching to AI mode
+2026-04-15 20:15:25,448 | DEBUG | ai-websocket | [WS RECEIVED] Raw Data: {'query': 'marriot international', 'user_id': 402981, 'org_id': 1, 'conversation_id': ''}
+2026-04-15 20:15:25,448 | INFO | ai-websocket | [QUERY] User:402981 Org:1 : marriot international
+2026-04-15 20:15:26,414 | DEBUG | ai-websocket | [CONVERSATION] ID: 614
+2026-04-15 20:15:29,772 | INFO | ai-websocket | Intent detected: {'intent': 'SEARCH', 'type': 'company', 'keywords': 'marriot international', 'location': '', 'rephrased_query': 'marriot international'}
+2026-04-15 20:15:29,772 | DEBUG | ai-websocket | [INTENT] {'intent': 'SEARCH', 'type': 'company', 'keywords': 'marriot international', 'location': '', 'rephrased_query': 'marriot international'}
+2026-04-15 20:15:29,772 | DEBUG | ai-websocket | [BASE QUERY] marriot international
+2026-04-15 20:15:33,047 | INFO | ai-websocket | [FOLLOWUP DETECT] {'is_followup': False, 'type': 'switch'}
+2026-04-15 20:15:33,047 | INFO | ai-websocket | [FINAL QUERY] marriot international
+2026-04-15 20:15:33,047 | INFO | ai-websocket | [INTENT TYPE] company | Location: 
+2026-04-15 20:15:33,516 | INFO | ai-websocket | [SEARCH STAGE]: Trying Full Phrase Match for 'marriot international'
+2026-04-15 20:15:33,522 | INFO | ai-websocket | --- STARTING DB EXECUTION ---
+2026-04-15 20:15:33,522 | INFO | ai-websocket | SQL: 
+            SELECT
+                msi.title,
+                msi.content,
+                msi.category_text,
+                msi.location_text,
+                msi.slug,
+                ua.package_id,
+                COALESCE(NULLIF(ua.about_us, ''), msi.content, '') as about_us
+            FROM master_search_mastersearchindex msi
+            LEFT JOIN user_accounts ua ON (
+                msi.user_name = ua.username
+                OR LOWER(msi.title) = LOWER(ua.company_name)
+            )
+            WHERE msi.is_live = TRUE
+         AND LOWER(msi.category_text) LIKE %s
+                AND (LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)
+                ORDER BY 
+                    (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END),
+                    CASE 
+                        WHEN LOWER(msi.title) = %s THEN 0
+                        WHEN LOWER(msi.title) LIKE %s THEN 1
+                        ELSE 2
+                    END,
+                    msi.id DESC
+                LIMIT 100
+                
+2026-04-15 20:15:33,525 | INFO | ai-websocket | Params: ['%company%', '%marriot international%', '%marriot international%', 'marriot international', '%marriot international%']
+2026-04-15 20:15:34,296 | INFO | ai-websocket | [DB RAW COUNT]: 0 results found in database
+2026-04-15 20:15:34,296 | INFO | ai-websocket | [SEARCH STAGE]: Full phrase failed. Trying AND condition for words: ['marriot', 'international']
+2026-04-15 20:15:34,296 | INFO | ai-websocket | --- STARTING DB EXECUTION ---
+2026-04-15 20:15:34,296 | INFO | ai-websocket | SQL: 
+            SELECT
+                msi.title,
+                msi.content,
+                msi.category_text,
+                msi.location_text,
+                msi.slug,
+                ua.package_id,
+                COALESCE(NULLIF(ua.about_us, ''), msi.content, '') as about_us
+            FROM master_search_mastersearchindex msi
+            LEFT JOIN user_accounts ua ON (
+                msi.user_name = ua.username
+                OR LOWER(msi.title) = LOWER(ua.company_name)
+            )
+            WHERE msi.is_live = TRUE
+         AND LOWER(msi.category_text) LIKE %s AND (LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s) AND (LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s) ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), msi.id DESC LIMIT 100
+2026-04-15 20:15:34,296 | INFO | ai-websocket | Params: ['%company%', '%marriot%', '%marriot%', '%international%', '%international%']
+2026-04-15 20:15:35,540 | INFO | ai-websocket | [DB RAW COUNT]: 6 results found in database
+2026-04-15 20:15:35,547 | INFO | ai-websocket | DEBUG DB DATA -> Title: MarriottHotelAlForsan | Original Content: 
+        Marriott Hotel Al Forsan
+        Director...
+2026-04-15 20:15:35,549 | INFO | ai-websocket | DEBUG DB DATA -> Title: Amalz Hotels | Original Content: 
+        Amalz Hotels
+        
+        Website: 
+ ...
+2026-04-15 20:15:35,551 | INFO | ai-websocket | DEBUG DB DATA -> Title: Islamabad Marriott Hotel | Original Content: 
+        Islamabad Marriott Hotel
+        
+       ...
+2026-04-15 20:15:35,551 | INFO | ai-websocket | DEBUG DB DATA -> Title: Marriott International | Original Content: 
+        Marriott International
+        
+        W...
+2026-04-15 20:15:35,555 | INFO | ai-websocket | DEBUG DB DATA -> Title: Blu Intelligent Solutions General Trading LLC. | Original Content: 
+        Blu Intelligent Solutions General Trading...
+2026-04-15 20:15:35,556 | INFO | ai-websocket | DEBUG DB DATA -> Title: Sheraton Gateway LAX | Original Content: 
+        Sheraton Gateway LAX
+        Director of ...
+2026-04-15 20:15:35,563 | INFO | ai-websocket | --- RAW RESULTS BEFORE SORTING ---
+2026-04-15 20:15:35,564 | INFO | ai-websocket | Row 1: MarriottHotelAlForsan | Paid: True | PkgID: 1
+2026-04-15 20:15:35,564 | INFO | ai-websocket | Row 2: Amalz Hotels | Paid: True | PkgID: 1
+2026-04-15 20:15:35,566 | INFO | ai-websocket | Row 3: Islamabad Marriott Hotel | Paid: True | PkgID: 1
+2026-04-15 20:15:35,566 | INFO | ai-websocket | Row 4: Marriott International | Paid: True | PkgID: 1
+2026-04-15 20:15:35,568 | INFO | ai-websocket | Row 5: Blu Intelligent Solutions General Trading LLC. | Paid: True | PkgID: 1
+2026-04-15 20:15:35,570 | INFO | ai-websocket | --- RESULTS AFTER PRIORITY SORTING (SENT TO LLM) ---
+2026-04-15 20:15:35,572 | INFO | ai-websocket | Sorted 1: MarriottHotelAlForsan | Content: 
+        Marriott Hotel Al Forsan
+        Director of PR & Marketing
+        Website: 
+        Location: Abu Dhabi United Arab Emirates
+        Name: 
+2026-04-15 20:15:35,572 | INFO | ai-websocket | Sorted 2: Amalz Hotels | Content: 
+        Amalz Hotels
+        
+        Website: 
+        Location:  United States
+        Name: Amalz Hotels
+        Industries: Hotels & Resorts, Roo
+2026-04-15 20:15:35,575 | INFO | ai-websocket | Sorted 3: Islamabad Marriott Hotel | Content: 
+        Islamabad Marriott Hotel
+        
+        Website: 
+        Location: Islamabad Pakistan
+        Name: Islamabad Marriott Hotel
+        Indus
+2026-04-15 20:15:35,577 | INFO | ai-websocket | Sorted 4: Marriott International | Content: 
+        Marriott International
+        
+        Website: 
+        Location:  United States
+        Name: Marriott International
+        Industries: H
+2026-04-15 20:15:35,577 | INFO | ai-websocket | Sorted 5: Blu Intelligent Solutions General Trading LLC. | Content: 
+        Blu Intelligent Solutions General Trading LLC.
+        
+        Website: 
+        Location: Dubai United Arab Emirates
+        Name: Blu Inte
+2026-04-15 20:15:35,578 | INFO | ai-websocket | [SEARCH RESULT]: Successfully returning 6 results from DB
+2026-04-15 20:15:36,319 | INFO | ai-websocket | --- STARTING UNIVERSAL EXTRACTION (6 results) ---
+2026-04-15 20:15:36,321 | INFO | ai-websocket | SUCCESS: Intro extracted for Marriott International
+2026-04-15 20:15:36,359 | INFO | ai-websocket | Instruction attached to Prompt: [FIXED INTRO & CARD PROTECT]
+2026-04-15 20:15:36,359 | INFO | ai-websocket | --- LLM STREAMING STARTED ---
+2026-04-15 20:15:59,461 | INFO | ai-websocket | --- LLM STREAMING FINISHED ---
+2026-04-15 20:15:59,461 | INFO | ai-websocket | SUCCESS: DB Intro found in LLM response!
