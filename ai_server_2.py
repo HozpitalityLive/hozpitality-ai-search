@@ -918,14 +918,18 @@ def search_db(query, intent_type=None, location=None):
 
             mapped_results = []
             for r in rows:
+                # --- DEBUG LOG: Isse terminal mein original DB content dikhega ---
+                logger.info(f"DEBUG DB DATA -> Title: {r[0]} | Original Content: {(r[1] or '')[:50]}...")
+
                 mapped_results.append({
                     "title": r[0],
-                    "content": (r[1] or "")[:150],
+                    "content": (r[1] or "")[:150], # Card layout ke liye r[1] hi rakha hai
                     "category": r[2],
                     "location": r[3],
                     "url": build_url(r[2], r[4]),
                     "is_paid": r[5] is not None,
-                    "package_id": r[5]
+                    "package_id": r[5],
+                    "about_us": r[6].strip() if r[6] else ""  # Backend intro logic ke liye r[6]
                 })
 
             if mapped_results:
@@ -936,9 +940,10 @@ def search_db(query, intent_type=None, location=None):
                 from ai_server_2 import apply_priority_sorting 
                 sorted_results = apply_priority_sorting(mapped_results)
 
-                logger.info("--- RESULTS AFTER PRIORITY SORTING ---")
+                logger.info("--- RESULTS AFTER PRIORITY SORTING (SENT TO LLM) ---")
                 for i, res in enumerate(sorted_results[:5], 1):
-                    logger.info(f"Sorted {i}: {res['title']} | Paid: {res['is_paid']}")
+                    # --- FINAL CHECK: Check if content is still original here ---
+                    logger.info(f"Sorted {i}: {res['title']} | Content: {res['content']}")
                 
                 return sorted_results
             
@@ -946,11 +951,21 @@ def search_db(query, intent_type=None, location=None):
 
         def base_sql():
             sql = """
-            SELECT msi.title, msi.content, msi.category_text, msi.location_text, msi.slug, ua.package_id
+            SELECT
+                msi.title,
+                msi.content,
+                msi.category_text,
+                msi.location_text,
+                msi.slug,
+                ua.package_id,
+                COALESCE(NULLIF(ua.about_us, ''), msi.content, '') as about_us
             FROM master_search_mastersearchindex msi
-            LEFT JOIN user_accounts ua ON msi.user_name = ua.username
+            LEFT JOIN user_accounts ua ON (
+                msi.user_name = ua.username
+                OR LOWER(msi.title) = LOWER(ua.company_name)
+            )
             WHERE msi.is_live = TRUE
-            """
+        """
             params = []
 
             if intent_type:
@@ -973,13 +988,11 @@ def search_db(query, intent_type=None, location=None):
             logger.info(f"[SEARCH STAGE]: Trying Full Phrase Match for '{full_phrase}'")
             sql, params = base_sql()
             if intent_type == "awards":
-                # Added Priority Sorting in ORDER BY
                 sql += """ AND LOWER(msi.title) LIKE %s 
-                           ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), 
-                           CASE WHEN LOWER(msi.title) = %s THEN 0 ELSE 1 END LIMIT 100"""
+                            ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), 
+                            CASE WHEN LOWER(msi.title) = %s THEN 0 ELSE 1 END LIMIT 100"""
                 params.extend([f"%{full_phrase}%", full_phrase])
             else:
-                # Added Priority Sorting in ORDER BY
                 sql += """
                 AND (LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)
                 ORDER BY 
@@ -1008,7 +1021,6 @@ def search_db(query, intent_type=None, location=None):
                     conditions.append("(LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)")
                     params.extend([f"%{w}%", f"%{w}%"])
             
-            # Added ORDER BY for Paid Priority
             sql += " AND " + " AND ".join(conditions) + " ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), msi.id DESC LIMIT 100"
             results = execute(sql, params)
 
@@ -1021,7 +1033,6 @@ def search_db(query, intent_type=None, location=None):
                 conditions.append("(LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)")
                 params.extend([f"%{w}%", f"%{w}%"])
             
-            # Added ORDER BY for Paid Priority
             sql += " AND (" + " OR ".join(conditions) + ") ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), msi.id DESC LIMIT 100"
             results = execute(sql, params)
 
@@ -1505,6 +1516,9 @@ async def websocket_chat(websocket: WebSocket):
 
             conversation_id = data.get("conversation_id")
 
+            about_us_intro = ""
+            final_instruction = ""
+
             if user_id != 0:
                 if not conversation_id:
                     conversation_id = create_conversation(user_id, query[:30])
@@ -1542,6 +1556,7 @@ async def websocket_chat(websocket: WebSocket):
                     context = last_ctx.get("context")
 
                     context = apply_priority_sorting(context)
+                    logger.info(f"DEBUG: context[0] about_us content -> {context[0].get('about_us')}")
 
                     logger.info("[FOLLOW-UP MODE ACTIVATED]")
 
@@ -1613,30 +1628,47 @@ async def websocket_chat(websocket: WebSocket):
 
             context = apply_priority_sorting(context)
 
-            # --- ADDED: About Us Check Start ---
-            about_us_intro = ""
-            # Hum sirf specific types ke liye about_us dikhana chahte hain
-            if intent_type in ["company", "professional", "supplier"] and context:
+            # --- UNIVERSAL INTRO EXTRACTION (Bina Tags ki rukawat ke) ---
+            if intent_type and intent_type.lower() in ["company", "professional", "supplier"] and context:
                 try:
-                    # 'context' usually contains search results, we take the first one
-                    first_hit = context[0] 
+                    import re, html
+                    logger.info(f"--- STARTING UNIVERSAL EXTRACTION ({len(context)} results) ---")
                     
-                    # Agar aapka search_db 'about_us' fetch karke context mein daal raha hai
-                    raw_about = first_hit.get('about_us')
-                    
-                    if raw_about and len(str(raw_about)) > 20:
-                        import re, html
-                        # HTML saaf karo
-                        clean_about = re.sub(r'<[^>]+>', '', html.unescape(str(raw_about))).strip()
-                        # Pehle 3 sentences uthao
-                        sentences = re.split(r'\.(?=\s|$)', clean_about)
-                        about_us_intro = '. '.join([s.strip() for s in sentences if s.strip()][:3])
-                        if about_us_intro and not about_us_intro.endswith('.'):
-                            about_us_intro += '.'
+                    for hit in context:
+                        # 1. Kisi bhi field mein data ho, utha lo
+                        raw_about = hit.get('about_us') or hit.get('description') or hit.get('company_profile')
                         
-                        logger.info(f"[DB INTRO] Found about_us for {first_hit.get('title')}")
+                        if raw_about:
+                            # 2. SABSE PEHLE CLEANING (Tags aur Special Chars hatao)
+                            # html.unescape &rsquo; ko ' banayega, re.sub tags ko saaf karega
+                            clean_text = html.unescape(str(raw_about))
+                            clean_text = re.sub(r'<[^>]+>', '', clean_text).strip()
+                            # Extra spaces aur newlines ko single space banao
+                            clean_text = " ".join(clean_text.split())
+
+                            # 3. AB LENGTH CHECK KARO (Sirf asli text count hoga, tags nahi)
+                            if len(clean_text) > 20:
+                                # 4. Sentences mein break karo (max 3 sentences)
+                                sentences = re.split(r'\.(?=\s|$)', clean_text)
+                                about_us_intro = '. '.join([s.strip() for s in sentences if s.strip()][:3])
+                                
+                                if about_us_intro and not about_us_intro.endswith('.'):
+                                    about_us_intro += '.'
+                                
+                                logger.info(f"SUCCESS: Intro extracted for {hit.get('title') or hit.get('company_name')}")
+                                break  # Ek baar valid intro mil gaya toh loop se bahar
+                            else:
+                                logger.warning(f"Skipping {hit.get('title', 'Unknown')}: Clean text too short.")
+                        else:
+                            logger.debug(f"Result has no about_us field, checking next...")
+
                 except Exception as e:
-                    logger.error(f"Error extracting about_us: {e}")
+                    logger.error(f"Error in universal extraction: {e}")
+
+            if not about_us_intro:
+                logger.warning(f"ALERT: No valid intro could be built for {final_query}")
+
+            # --- NO RESULTS / FALLBACK ---
 
             # --- NO RESULTS / FALLBACK ---
             if not context:
@@ -1656,33 +1688,61 @@ async def websocket_chat(websocket: WebSocket):
                 await websocket.send_json({"type": "done", "conversation_id": conversation_id})
                 continue
 
-            # (Streaming added) ---
+            clean_context_for_prompt = []
+            if context:
+                for item in context:
+                    # Item ko copy karo taaki original context kharab na ho (kyunki wo saving mein chahiye)
+                    item_copy = dict(item) 
+                    if 'about_us' in item_copy:
+                        del item_copy['about_us'] 
+                    clean_context_for_prompt.append(item_copy)
+            else:
+                clean_context_for_prompt = []
+
             memory = retrieve_memory(user_id, org_id, query)
             mode = detect_mode(query, intent_type, context)
-            prompt = build_prompt(query, memory, context, intent_type, mode)
+            
+            final_instruction = ""
+            if about_us_intro:
+                final_instruction = (
+                    f"### SYSTEM MANDATE ###\n"
+                    f"1. START with this intro: '{about_us_intro}'\n"
+                    f"2. AFTER the intro, you MUST list ALL {len(context)} results found in the data below.\n"
+                    f"3. DO NOT skip the first person/company just because they are in the intro.\n"
+                    f"4. Use the EXACT 'content' for each card. DO NOT change a single word.\n"
+                    f"########################\n\n"
+                )
+                logger.info("Instruction attached to Prompt: [FIXED INTRO & CARD PROTECT]")
+
+            prompt = build_prompt(query, memory, context, intent_type, mode) + final_instruction
 
             try:
-                if about_us_intro:
-                    # Agar About Us mil gaya, toh AI stream nahi karenge, seedha response bhejenge
-                    full_response = about_us_intro
+                full_response = ""
+                logger.info("--- LLM STREAMING STARTED ---")
+                
+                # Streaming loop
+                for chunk in call_ollama(prompt, stream=True, model="hozpitality-llama", max_tokens=800):
+                    full_response += chunk
+                    
+                    # Terminal par live dekhne ke liye (sirf development mein use karein)
+                    # print(chunk, end="", flush=True) 
+
                     await websocket.send_json({
                         "type": "token", 
-                        "data": {"type": intent_type or "chat", "html": about_us_intro},
+                        "data": {"type": intent_type or "chat", "html": chunk},
                         "conversation_id": conversation_id
                     })
-                    clean_html = about_us_intro
+                
+                print("\n") # Line break for terminal
+                logger.info("--- LLM STREAMING FINISHED ---")
+                
+                # Check agar intro aya ya nahi
+                if about_us_intro and about_us_intro[:20] in full_response:
+                    logger.info("SUCCESS: DB Intro found in LLM response!")
                 else:
-                    # Agar About Us nahi mila, tab purana LLM stream chalega
-                    prompt = build_prompt(query, memory, context, intent_type, mode)
-                    full_response = ""
-                    for chunk in call_ollama(prompt, stream=True, model="hozpitality-llama", max_tokens=800):
-                        full_response += chunk
-                        await websocket.send_json({
-                            "type": "token", 
-                            "data": {"type": intent_type or "chat", "html": chunk},
-                            "conversation_id": conversation_id
-                        })
-                    clean_html = clean_html_response(full_response)
+                    logger.warning("ALERT: LLM might have ignored the fixed intro.")
+
+                clean_html = clean_html_response(full_response)
 
             except Exception as e:
                 logger.error(f"[LLM ERROR] {e}")
