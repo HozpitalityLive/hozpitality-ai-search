@@ -13,6 +13,7 @@ from psycopg2.pool import SimpleConnectionPool
 import psycopg2
 import torch
 from sentence_transformers import SentenceTransformer
+import traceback
 
 print("🔥 CUDA AVAILABLE:", torch.cuda.is_available())
 print("🔥 GPU NAME:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
@@ -315,7 +316,8 @@ async def ws_search(ws: WebSocket):
                     results = personalize(user_id, results)
                 except Exception as e:
                     print("❌ SEARCH ERROR:", e)
-                    await ws.send_json({"type": "error", "message": "Search failed"})
+                    traceback.print_exc()
+                    await ws.send_json({"type": "error","message": str(e)})
                     continue
 
                 total = len(results)
