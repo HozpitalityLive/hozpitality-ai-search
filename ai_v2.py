@@ -260,33 +260,46 @@ def click(user_id: int, category: str):
 async def ws_search(ws: WebSocket):
     await ws.accept()
 
-    while True:
-        data = await ws.receive_json()
+    try:
+        while True:
+            data = await ws.receive_json()
+            print("📩 RAW:", data)
 
-        query = data["query"]
-        user_id = data.get("user_id", 0)
+            query = data["query"]
+            user_id = data.get("user_id", 0)
 
-        results = hybrid_search(query)
-        results = personalize(user_id, results)
+            results = hybrid_search(query)
+            results = personalize(user_id, results)
 
-        for r in results[:10]:
+            for r in results[:10]:
+                await ws.send_json({
+                    "type": "result",
+                    "data": r
+                })
+
+            answer = generate_answer(query, results)
+
+            for chunk in answer.split():
+                await ws.send_json({
+                    "type": "token",
+                    "data": chunk + " "
+                })
+
             await ws.send_json({
-                "type": "result",
-                "data": r
+                "type": "done",
+                "total": len(results)
             })
 
-        answer = generate_answer(query, results)
-
-        for chunk in answer.split():
-            await ws.send_json({
-                "type": "token",
-                "data": chunk + " "
-            })
+    except Exception as e:
+        print("❌ WS ERROR:", str(e))
 
         await ws.send_json({
-            "type": "done",
-            "total": len(results)
+            "status": "error",
+            "message": str(e)
         })
+
+    finally:
+        await ws.close()
 
 
 @app.on_event("startup")
