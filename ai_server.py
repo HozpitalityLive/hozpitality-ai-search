@@ -164,7 +164,7 @@ RETURN JSON ONLY:
 """
 
     try:
-        res = call_ollama(prompt, stream=False,model="hozpitality-llama", max_tokens=120)
+        res = call_ollama(prompt, stream=False,model="llama3-hoz", max_tokens=120)
 
         match = re.search(r'\{.*\}', res, re.DOTALL)
         if match:
@@ -243,7 +243,7 @@ def detect_mode(query, intent_type, context):
 
     return "list"
 
-def call_ollama(prompt, stream=True, model="hozpitality-llama", max_tokens=800):
+def call_ollama(prompt, stream=True, model="llama3-hoz", max_tokens=800):
     url = "http://localhost:11434/api/generate"
 
     payload = {
@@ -318,7 +318,7 @@ OUTPUT JSON:
 """
 
     try:
-        res = call_ollama(prompt, stream=False,model="hozpitality-phi3", max_tokens=60)
+        res = call_ollama(prompt, stream=False,model="phi3-hoz", max_tokens=60)
 
         match = re.search(r'\{.*\}', res, re.DOTALL)
         if match:
@@ -375,7 +375,7 @@ Return ONLY JSON.
 """
 
     try:
-        res = call_ollama(prompt,stream=False, model="hozpitality-phi3", max_tokens=60)
+        res = call_ollama(prompt,stream=False, model="phi3-hoz", max_tokens=60)
 
         match = re.search(r'\{[\s\S]*?\}', res)
         if match:
@@ -412,7 +412,7 @@ Return ONLY JSON.
 
     try:
         
-        res = call_ollama(prompt,stream=False, model="hozpitality-phi3", max_tokens=100)
+        res = call_ollama(prompt,stream=False, model="phi3-hoz", max_tokens=100)
         text = res
         import re
         match = re.search(r'\{.*\}', text, re.DOTALL)
@@ -534,7 +534,7 @@ OUTPUT (STRICT JSON ONLY):
 """
 
     try:
-        answer = call_ollama(prompt, model="hozpitality-llama", max_tokens=300,stream=False)
+        answer = call_ollama(prompt, model="llama3-hoz", max_tokens=300,stream=False)
 
         match = re.search(r'\{.*\}', answer, re.DOTALL)
         if match:
@@ -1122,7 +1122,7 @@ FORMAT:
     try:
         response = call_ollama(
             prompt,
-            model="hozpitality-llama",
+            model="llama3-hoz",
             max_tokens=250,
             stream=False
         )
@@ -1403,7 +1403,7 @@ def chat(req: ChatRequest):
             mode = detect_mode(query, intent_type, context)
             prompt = build_prompt(query, memory, context, intent_type, mode)
 
-            answer = call_ollama(prompt, model="hozpitality-llama", max_tokens=200)
+            answer = call_ollama(prompt, model="llama3-hoz", max_tokens=200)
         except Exception as e:
             print("LLM error:", e)
             answer = "Error generating response."
@@ -1489,7 +1489,7 @@ def chat_stream(req: ChatRequest):
     prompt = build_prompt(query, memory, context, intent_type, mode)
 
     def generate():
-        for token in call_ollama(prompt, stream=True, model="hozpitality-llama", max_tokens=200):
+        for token in call_ollama(prompt, stream=True, model="llama3-hoz", max_tokens=200):
             yield token
 
 
@@ -1573,7 +1573,7 @@ async def websocket_chat(websocket: WebSocket):
 
                     # START STREAMING FOR FOLLOWUP
                     full_response = ""
-                    for chunk in call_ollama(prompt, stream=True, model="hozpitality-llama", max_tokens=800):
+                    for chunk in call_ollama(prompt, stream=True, model="llama3-hoz", max_tokens=800):
                         full_response += chunk
                         await websocket.send_json({
                             "type": "token", 
@@ -1599,7 +1599,7 @@ async def websocket_chat(websocket: WebSocket):
             # --- DIRECT CHAT MODE (Streaming added) ---
             if mode == "chat":
                 full_response = ""
-                for chunk in call_ollama(query, stream=True, model="hozpitality-llama", max_tokens=800):
+                for chunk in call_ollama(query, stream=True, model="llama3-hoz", max_tokens=800):
                     full_response += chunk
                     await websocket.send_json({
                         "type": "token",
@@ -1721,7 +1721,7 @@ async def websocket_chat(websocket: WebSocket):
                 logger.info("--- LLM STREAMING STARTED ---")
                 
                 # Streaming loop
-                for chunk in call_ollama(prompt, stream=True, model="hozpitality-llama", max_tokens=800):
+                for chunk in call_ollama(prompt, stream=True, model="llama3-hoz", max_tokens=800):
                     full_response += chunk
                     
                     # Terminal par live dekhne ke liye (sirf development mein use karein)
