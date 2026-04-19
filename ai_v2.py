@@ -107,16 +107,21 @@ def understand_query(q):
     return intent
 
 
-def vector_search(query, k=50):
-    q_vec = embedder.encode([query], normalize_embeddings=True)
-    scores, indices = index.search(np.array(q_vec), k)
+def vector_search(query):
+    query_vec = embedder.encode([query])
+    D, I = index.search(query_vec, 10)
 
     results = []
-    for i, idx in enumerate(indices[0]):
-        if idx >= len(documents): continue
-        doc = documents[idx].copy()
-        doc["score"] = float(scores[0][i])
-        results.append(doc)
+
+    for idx in I[0]:
+        if idx == -1:
+            continue
+
+        if 0 <= idx < len(documents):
+            doc = documents[idx].copy()
+            results.append(doc)
+        else:
+            print(f"⚠️ Skipping invalid index: {idx}")
 
     return results
 
@@ -139,7 +144,11 @@ def elastic_search(query):
 
 
 def hybrid_search(query):
-    vec = vector_search(query)
+    try:
+        vec = vector_search(query)
+    except Exception as e:
+        print("❌ VECTOR SEARCH ERROR:", e)
+        vec = []
     esr = elastic_search(query)
 
     combined = {}
