@@ -23,7 +23,7 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2", device=device)
 
 app = FastAPI()
 
-redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
+redis_client = redis.Redis(host="localhost", port=6377, decode_responses=True)
 es = Elasticsearch("http://localhost:9200")
 
 EMBED_DIM = embedder.get_sentence_embedding_dimension()
@@ -79,6 +79,21 @@ def load_data():
     index.add(np.array(vectors))
 
     print(f"✅ Loaded {len(rows)} records")
+
+
+def choose_model(query, results):
+    q = query.lower()
+
+    if len(q) < 40:
+        return "phi3-hoz"
+
+    if any(x in q for x in ["how", "why", "steps", "process"]):
+        return "llama3-hoz"
+
+    if len(results) > 5:
+        return "llama3-hoz"
+
+    return "llama3-hoz"
 
 
 def understand_query(q):
@@ -183,8 +198,12 @@ def generate_answer(query, results):
     for i, r in enumerate(results[:5]):
         context += f"{i+1}. {r['title']} - {r['content']}\n"
 
+    model = choose_model(query, results)
+
+    print(f"🧠 Using model: {model}")
+
     prompt = f"""
-You are a smart AI assistant.
+You are an AI assistant for Hozpitality.
 
 User Query:
 {query}
@@ -192,11 +211,11 @@ User Query:
 Context:
 {context}
 
-Answer like ChatGPT using ONLY context.
+Answer clearly like ChatGPT and helpfully using ONLY context.
 """
 
     res = requests.post(OLLAMA_URL, json={
-        "model": "mistral",
+        "model": model,
         "prompt": prompt,
         "stream": False
     })

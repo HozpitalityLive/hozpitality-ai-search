@@ -22,7 +22,7 @@ services:
     image: redis:7
     container_name: ai-redis
     ports:
-      - "6379:6379"
+      - "6377:6377"
     restart: always
 
   elasticsearch:
@@ -41,6 +41,8 @@ services:
     container_name: ai-ollama
     ports:
       - "11434:11434"
+    volumes:
+      - .:/app
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
