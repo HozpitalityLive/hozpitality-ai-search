@@ -259,46 +259,79 @@ def click(user_id: int, category: str):
 @app.websocket("/ws/ai-search")
 async def ws_search(ws: WebSocket):
     await ws.accept()
+    print("✅ WebSocket connected")
 
     try:
         while True:
-            data = await ws.receive_json()
-            print("📩 RAW:", data)
+            try:
+                raw = await ws.receive_text()
+                print("📩 RAW:", raw)
 
-            query = data["query"]
-            user_id = data.get("user_id", 0)
+                try:
+                    data = json.loads(raw)
+                except Exception:
+                    await ws.send_json({"type": "error", "message": "Invalid JSON"})
+                    continue
 
-            results = hybrid_search(query)
-            results = personalize(user_id, results)
+                query = data.get("query", "").strip()
+                user_id = data.get("user_id", 0)
 
-            for r in results[:10]:
+                if not query:
+                    await ws.send_json({"type": "error", "message": "Query missing"})
+                    continue
+
+                print(f"🔍 Query: {query}")
+
+                try:
+                    results = hybrid_search(query)
+                    results = personalize(user_id, results)
+                except Exception as e:
+                    print("❌ SEARCH ERROR:", e)
+                    await ws.send_json({"type": "error", "message": "Search failed"})
+                    continue
+
+                total = len(results)
+
                 await ws.send_json({
-                    "type": "result",
-                    "data": r
+                    "type": "meta",
+                    "total": total
                 })
 
-            answer = generate_answer(query, results)
+                for r in results[:10]:
+                    await ws.send_json({
+                        "type": "result",
+                        "data": r
+                    })
 
-            for chunk in answer.split():
+                try:
+                    answer = generate_answer(query, results)
+                except Exception as e:
+                    print("❌ LLM ERROR:", e)
+                    answer = "Sorry, unable to generate answer right now."
+
+                for chunk in answer.split():
+                    await ws.send_json({
+                        "type": "token",
+                        "data": chunk + " "
+                    })
+
                 await ws.send_json({
-                    "type": "token",
-                    "data": chunk + " "
+                    "type": "done",
+                    "total": total
                 })
 
-            await ws.send_json({
-                "type": "done",
-                "total": len(results)
-            })
+            except Exception as loop_error:
+                print("❌ LOOP ERROR:", loop_error)
+                await ws.send_json({
+                    "type": "error",
+                    "message": str(loop_error)
+                })
 
     except Exception as e:
-        print("❌ WS ERROR:", str(e))
-
-        await ws.send_json({
-            "status": "error",
-            "message": str(e)
-        })
+        print("❌ WS FATAL ERROR:", str(e))
 
     finally:
+        print("🔌 Connection closed")
         await ws.close()
 
 
