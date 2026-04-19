@@ -4,8 +4,9 @@ uvicorn[standard]
 requests
 pydantic
 
+torch
 sentence-transformers
-faiss-cpu
+faiss-gpu
 numpy<2.0
 
 psycopg2-binary
@@ -13,5 +14,5 @@ python-dotenv
 redis
 
 openai==0.28
-
 cachetools
+elasticsearch

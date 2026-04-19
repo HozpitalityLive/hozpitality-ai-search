@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from ai_server import app as app1
-from ai_server_2 import app as app2
+from ai_v2 import app as app2v2
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import WebSocket
@@ -25,5 +25,6 @@ async def websocket_chat_main(websocket: WebSocket):
     await websocket.accept()
     await websocket.send_text("connected")
 
-main_app.mount("/v2", app2)
+main_app.mount("/v2", app1)
+main_app.mount("/app2v2", app2v2)
 # main_app.mount("", app1)
