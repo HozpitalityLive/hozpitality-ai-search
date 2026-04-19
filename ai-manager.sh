@@ -33,6 +33,9 @@ case $choice in
     docker-compose up -d
     echo "⏳ Waiting..."
     sleep 5
+    docker exec -it ai-ollama ollama pull llama3 || true
+    docker exec -it ai-ollama ollama pull phi3 || true
+
     docker exec -it ai-ollama ollama create llama3-hoz -f /app/Modelfile.llama || true
     docker exec -it ai-ollama ollama create phi3-hoz -f /app/Modelfile.phi3 || true
     echo "✅ Started!"
