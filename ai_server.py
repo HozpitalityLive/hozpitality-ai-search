@@ -67,7 +67,7 @@ if not logger.handlers:
     logger.addHandler(file_handler)
 
 
-redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
+redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 CACHE_TTL = 600
 
@@ -244,7 +244,7 @@ def detect_mode(query, intent_type, context):
     return "list"
 
 def call_ollama(prompt, stream=True, model="llama3-hoz", max_tokens=800):
-    url = "http://localhost:11434/api/generate"
+    url = "http://ollama:11434/api/generate"
 
     payload = {
         "model": model,
