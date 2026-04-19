@@ -23,7 +23,7 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2", device=device)
 
 app = FastAPI()
 
-redis_client = redis.Redis(host="localhost", port=6377, decode_responses=True)
+redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
 es = Elasticsearch("http://localhost:9200")
 
 EMBED_DIM = embedder.get_sentence_embedding_dimension()

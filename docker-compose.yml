@@ -9,9 +9,10 @@ services:
       - "8000:8000"
     env_file:
       - .env
-    runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+    deploy: {}
+    runtime: nvidia
     depends_on:
       - redis
       - elasticsearch
@@ -22,7 +23,7 @@ services:
     image: redis:7
     container_name: ai-redis
     ports:
-      - "6377:6377"
+      - "6377:6379"
     restart: always
 
   elasticsearch:
@@ -43,7 +44,7 @@ services:
       - "11434:11434"
     volumes:
       - .:/app
-    runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+    runtime: nvidia
     restart: always
