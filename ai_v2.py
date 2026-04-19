@@ -23,8 +23,8 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2", device=device)
 
 app = FastAPI()
 
-redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
-es = Elasticsearch("http://localhost:9200")
+redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
+es = Elasticsearch("http://elasticsearch:9200")
 
 EMBED_DIM = embedder.get_sentence_embedding_dimension()
 
@@ -33,7 +33,7 @@ cpu_index = faiss.IndexFlatIP(EMBED_DIM)
 index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
 documents = []
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = "http://ollama:11434/api/generate"
 
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME"),
@@ -46,6 +46,16 @@ DB_CONFIG = {
 db_pool = SimpleConnectionPool(1, 10, **DB_CONFIG)
 
 def load_data():
+    global documents, index
+
+    print("🔄 Resetting index + documents")
+
+    documents = []
+
+    # 🔥 RESET INDEX
+    cpu_index = faiss.IndexFlatIP(EMBED_DIM)
+    index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+
     conn = db_pool.getconn()
     cur = conn.cursor()
 
@@ -68,17 +78,17 @@ def load_data():
             "content": (r[2] or "")[:200],
             "category": r[3],
             "location": r[4],
-            "slug": r[5]
+            "slug": r[5],
+            "score": 1.0  
         }
 
         documents.append(doc)
 
-        es.index(index="hozpitality", id=r[0], document=doc)
-
     vectors = embedder.encode(texts, normalize_embeddings=True)
+
     index.add(np.array(vectors))
 
-    print(f"✅ Loaded {len(rows)} records")
+    print(f"✅ Loaded {len(documents)} records | Index size: {index.ntotal}")
 
 
 def choose_model(query, results):
@@ -117,11 +127,19 @@ def vector_search(query):
         if idx == -1:
             continue
 
-        if 0 <= idx < len(documents):
+        if idx >= index.ntotal:
+            print(f"⚠️ FAISS OUT OF RANGE: {idx} >= {index.ntotal}")
+            continue
+
+        if idx >= len(documents):
+            print(f"⚠️ DOC MISMATCH: {idx} >= {len(documents)}")
+            continue
+
+        try:
             doc = documents[idx].copy()
             results.append(doc)
-        else:
-            print(f"⚠️ Skipping invalid index: {idx}")
+        except Exception as e:
+            print(f"❌ DOC ACCESS ERROR: {idx}", e)
 
     return results
 
@@ -154,6 +172,7 @@ def hybrid_search(query):
     combined = {}
 
     for r in vec:
+        r["score"] = r.get("score", 1.0) 
         combined[r["title"]] = r
         combined[r["title"]]["score"] *= 0.6
 
