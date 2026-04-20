@@ -77,8 +77,8 @@ def  load_data():
     except Exception as e:
         print("❌ ES DELETE ERROR:", e)
 
-    if not es.indices.exists(index="hozpitality"):
-        print("📦 Creating index...")
+    try:
+        print("📦 Creating index (force)...")
 
         es.indices.create(
             index="hozpitality",
@@ -96,6 +96,9 @@ def  load_data():
 
         print("✅ Index created")
 
+    except Exception as e:
+        print("⚠️ Index may already exist or failed:", e)
+
     conn = db_pool.getconn()
     cur = conn.cursor()
 
@@ -108,6 +111,12 @@ def  load_data():
     rows = cur.fetchall()
     texts = []
     actions = []
+
+    print(f"📊 Rows fetched from DB: {len(rows)}")
+
+
+    if not rows:
+        print("❌ NO DATA FROM DB — nothing will be indexed")
 
     for r in rows:
         text = (r[1] or "") + " " + (r[2] or "")
@@ -429,6 +438,8 @@ def startup():
         try:
             if es.ping():
                 print("✅ Elasticsearch ready")
+                print("⏳ Extra wait for ES readiness...")
+                time.sleep(5)
                 break
         except:
             pass
