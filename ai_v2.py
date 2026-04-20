@@ -3,6 +3,7 @@
 import os
 import json
 import faiss
+import time
 import redis
 import numpy as np
 import requests
@@ -73,8 +74,27 @@ def  load_data():
 
     try:
         es.indices.delete(index="hozpitality")
-    except:
-        pass
+    except Exception as e:
+        print("❌ ES DELETE ERROR:", e)
+
+    if not es.indices.exists(index="hozpitality"):
+        print("📦 Creating index...")
+
+        es.indices.create(
+            index="hozpitality",
+            body={
+                "mappings": {
+                    "properties": {
+                        "title": {"type": "text"},
+                        "content": {"type": "text"},
+                        "category": {"type": "keyword"},
+                        "location": {"type": "keyword"}
+                    }
+                }
+            }
+        )
+
+        print("✅ Index created")
 
     conn = db_pool.getconn()
     cur = conn.cursor()
@@ -403,4 +423,17 @@ async def ws_search(ws: WebSocket):
 
 @app.on_event("startup")
 def startup():
+    print("⏳ Waiting for Elasticsearch...")
+
+    for i in range(15):
+        try:
+            if es.ping():
+                print("✅ Elasticsearch ready")
+                break
+        except:
+            pass
+        time.sleep(2)
+    else:
+        print("❌ Elasticsearch not reachable")
+
     load_data()
