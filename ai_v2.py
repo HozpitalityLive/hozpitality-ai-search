@@ -25,13 +25,24 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2", device=device)
 app = FastAPI()
 
 redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
-es = Elasticsearch("http://elasticsearch:9200")
+es = Elasticsearch(
+    "http://elasticsearch:9200",
+    headers={
+        "Accept": "application/vnd.elasticsearch+json; compatible-with=8",
+        "Content-Type": "application/vnd.elasticsearch+json; compatible-with=8",
+    }
+)
 
 EMBED_DIM = embedder.get_sentence_embedding_dimension()
-
-res = faiss.StandardGpuResources()
+global index, res
 cpu_index = faiss.IndexFlatIP(EMBED_DIM)
-index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+if device == "cuda":
+    res = faiss.StandardGpuResources()
+    index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+else:
+    res = None
+    index = cpu_index
+
 documents = []
 
 OLLAMA_URL = "http://ollama:11434/api/generate"
@@ -53,9 +64,12 @@ def load_data():
 
     documents = []
 
-    # 🔥 RESET INDEX
     cpu_index = faiss.IndexFlatIP(EMBED_DIM)
-    index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+
+    if device == "cuda":
+        index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+    else:
+        index = cpu_index
 
     conn = db_pool.getconn()
     cur = conn.cursor()
@@ -119,7 +133,7 @@ def understand_query(q):
 
 
 def vector_search(query):
-    query_vec = embedder.encode([query])
+    query_vec = embedder.encode([query], normalize_embeddings=True)
     D, I = index.search(query_vec, 10)
 
     results = []
