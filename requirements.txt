@@ -15,4 +15,4 @@ redis
 
 openai==0.28
 cachetools
-elasticsearch
+elasticsearch==8.11.0

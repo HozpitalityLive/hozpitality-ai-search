@@ -14,6 +14,7 @@ import psycopg2
 import torch
 from sentence_transformers import SentenceTransformer
 import traceback
+from elasticsearch.helpers import bulk
 
 print("🔥 CUDA AVAILABLE:", torch.cuda.is_available())
 print("🔥 GPU NAME:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
@@ -57,7 +58,7 @@ DB_CONFIG = {
 
 db_pool = SimpleConnectionPool(1, 10, **DB_CONFIG)
 
-def load_data():
+def  load_data():
     global documents, index
 
     print("🔄 Resetting index + documents")
@@ -65,11 +66,15 @@ def load_data():
     documents = []
 
     cpu_index = faiss.IndexFlatIP(EMBED_DIM)
-
     if device == "cuda":
         index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
     else:
         index = cpu_index
+
+    try:
+        es.indices.delete(index="hozpitality")
+    except:
+        pass
 
     conn = db_pool.getconn()
     cur = conn.cursor()
@@ -82,6 +87,7 @@ def load_data():
 
     rows = cur.fetchall()
     texts = []
+    actions = []
 
     for r in rows:
         text = (r[1] or "") + " " + (r[2] or "")
@@ -99,9 +105,25 @@ def load_data():
 
         documents.append(doc)
 
-    vectors = embedder.encode(texts, normalize_embeddings=True)
+        actions.append({
+            "_index": "hozpitality",
+            "_id": r[0],
+            "_source": {
+                "title": r[1],
+                "content": r[2],
+                "category": r[3],
+                "location": r[4]
+            }
+        })
 
+    if actions:
+        bulk(es, actions)
+        es.indices.refresh(index="hozpitality")
+
+    vectors = embedder.encode(texts, normalize_embeddings=True)
     index.add(np.array(vectors))
+
+    db_pool.putconn(conn)
 
     print(f"✅ Loaded {len(documents)} records | Index size: {index.ntotal}")
 
