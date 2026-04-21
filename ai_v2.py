@@ -28,11 +28,7 @@ app = FastAPI()
 
 redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
 es = Elasticsearch(
-    "http://elasticsearch:9200",
-    headers={
-        "Accept": "application/vnd.elasticsearch+json; compatible-with=8",
-        "Content-Type": "application/vnd.elasticsearch+json; compatible-with=8",
-    }
+    "http://elasticsearch:9200"
 )
 
 EMBED_DIM = embedder.get_sentence_embedding_dimension()
