@@ -42,10 +42,41 @@ case $choice in
     ;;
 
   2)
-    echo "🔄 Restarting..."
-    docker-compose down
+    echo "🔄 Restarting (safe mode)..."
+
+    echo "🛑 Stopping containers..."
+    docker-compose down --remove-orphans
+
+    echo "🧹 Cleaning orphan containers using same ports..."
+    docker ps -a --filter "publish=11434" -q | xargs -r docker rm -f
+
+    echo "🧹 Cleaning dangling containers..."
+    docker container prune -f
+
+    echo "🚀 Starting services..."
     docker-compose up -d
-    echo "✅ Restarted!"
+
+    echo "⏳ Waiting for services..."
+    sleep 5
+
+    echo "📊 Checking status..."
+    docker ps
+
+    echo "🔍 Checking ollama..."
+    if docker ps | grep -q ai-ollama; then
+        echo "✅ Ollama running"
+    else
+        echo "❌ Ollama failed (port conflict likely)"
+    fi
+
+    echo "🔍 Checking API..."
+    if docker ps | grep -q ai-search-api; then
+        echo "✅ API running"
+    else
+        echo "❌ API not running"
+    fi
+
+    echo "✅ Restart completed (with validation)"
     ;;
 
   3)
