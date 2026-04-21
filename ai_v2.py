@@ -55,7 +55,7 @@ DB_CONFIG = {
 
 db_pool = SimpleConnectionPool(1, 10, **DB_CONFIG)
 
-def  load_data():
+def load_data():
     global documents, index
 
     print("🔄 Resetting index + documents")
@@ -152,6 +152,19 @@ def  load_data():
 
     print(f"✅ Loaded {len(documents)} records | Index size: {index.ntotal}")
 
+def detect_mode(query: str):
+    q = query.lower().strip()
+
+    if len(q) <= 3 or q in ["hi", "hello", "hey", "ok", "thanks"]:
+        return "chat"
+
+    if any(x in q for x in ["how", "why", "steps", "process"]):
+        return "faq"
+
+    if any(x in q for x in ["job", "jobs", "company", "hotel", "restaurant"]):
+        return "search"
+
+    return "chat"
 
 def choose_model(query, results):
     q = query.lower()
@@ -290,18 +303,29 @@ def generate_answer(query, results):
 
     model = choose_model(query, results)
 
-    print(f"🧠 Using model: {model}")
-
     prompt = f"""
-You are an AI assistant for Hozpitality.
+You are an intelligent AI assistant for Hozpitality.
 
 User Query:
 {query}
 
-Context:
+Context (if available):
 {context}
 
-Answer clearly like ChatGPT and helpfully using ONLY context.
+INSTRUCTIONS:
+
+- If context is relevant → use it
+- If context is empty → answer like ChatGPT
+- Be helpful, natural, conversational
+- Do NOT say "no data found"
+- Do NOT restrict yourself
+
+If results exist:
+- Mention useful insights from data
+
+If no results:
+- Answer intelligently using general knowledge
+
 """
 
     res = requests.post(OLLAMA_URL, json={
@@ -313,31 +337,82 @@ Answer clearly like ChatGPT and helpfully using ONLY context.
     return res.json().get("response", "")
 
 
-@app.get("/ai-search")
-def ai_search(q: str, user_id: int = 0):
+@app.websocket("/ws/ai-search")
+async def ws_search(ws: WebSocket):
+    await ws.accept()
+    print("✅ WebSocket connected")
 
-    cached = get_cache(q)
-    if cached:
-        return json.loads(cached)
+    try:
+        while True:
+            raw = await ws.receive_text()
+            print("📩 RAW:", raw)
 
-    intent = understand_query(q)
+            try:
+                data = json.loads(raw)
+            except:
+                await ws.send_json({"type": "error", "message": "Invalid JSON"})
+                continue
 
-    results = hybrid_search(q)
-    results = personalize(user_id, results)
+            query = data.get("query", "").strip()
+            user_id = data.get("user_id", 0)
 
-    answer = generate_answer(q, results)
+            if not query:
+                await ws.send_json({"type": "error", "message": "Query missing"})
+                continue
 
-    final = {
-        "query": q,
-        "intent": intent,
-        "answer": answer,
-        "total": len(results),
-        "results": results[:10]
-    }
+            print(f"🔍 Query: {query}")
 
-    set_cache(q, final)
+            mode = detect_mode(query)
+            print(f"🧠 MODE: {mode}")
 
-    return final
+            results = []
+            total = 0
+
+            if mode == "search":
+                try:
+                    results = hybrid_search(query)
+                    results = personalize(user_id, results)
+                    total = len(results)
+                except Exception as e:
+                    print("❌ SEARCH ERROR:", e)
+
+                await ws.send_json({
+                    "type": "meta",
+                    "total": total
+                })
+
+                for r in results[:10]:
+                    await ws.send_json({
+                        "type": "result",
+                        "data": r
+                    })
+
+            try:
+                if results:
+                    answer = generate_answer(query, results)
+                else:
+                    answer = generate_answer(query, [])
+            except Exception as e:
+                print("❌ LLM ERROR:", e)
+                answer = "Sorry, I couldn't process that."
+
+            for chunk in answer.split():
+                await ws.send_json({
+                    "type": "token",
+                    "data": chunk + " "
+                })
+
+            await ws.send_json({
+                "type": "done",
+                "total": total
+            })
+
+    except Exception as e:
+        print("❌ WS ERROR:", str(e))
+
+    finally:
+        print("🔌 Connection closed")
+        await ws.close()
 
 
 @app.post("/track-click")
