@@ -428,19 +428,65 @@ async def ws_search(ws: WebSocket):
 
 @app.on_event("startup")
 def startup():
-    print("⏳ Waiting for Elasticsearch...")
+    print("\n🚀 ===== STARTUP BEGIN =====", flush=True)
 
-    for i in range(15):
+    print("⏳ Waiting for Elasticsearch...", flush=True)
+
+    es_ready = False
+
+    for i in range(30):  
         try:
-            if es.ping():
-                print("✅ Elasticsearch ready")
-                print("⏳ Extra wait for ES readiness...")
-                time.sleep(5)
-                break
-        except:
-            pass
-        time.sleep(2)
-    else:
-        print("❌ Elasticsearch not reachable")
+            print(f"🔁 Elasticsearch {i+1}/30 - pinging ES...", flush=True)
 
-    load_data()
+            if es.ping():
+                print("✅ Elasticsearch ping successful", flush=True)
+
+                try:
+                    health = es.cluster.health()
+                    print(f"📊 ES Health: {health['status']}", flush=True)
+                except Exception as e:
+                    print(f"⚠️ Failed to get ES health: {e}", flush=True)
+
+                print("⏳ Extra wait for ES readiness (5s)...", flush=True)
+                time.sleep(5)
+
+                es_ready = True
+                break
+
+        except Exception as e:
+            print(f"❌ ES ping failed: {e}", flush=True)
+
+        time.sleep(2)
+
+    if not es_ready:
+        print("❌ Elasticsearch NOT reachable after retries", flush=True)
+    else:
+        print("✅ Elasticsearch is fully ready", flush=True)
+
+    try:
+        exists = es.indices.exists(index="hozpitality")
+        print(f"🔍 Index exists before load: {exists}", flush=True)
+    except Exception as e:
+        print(f"❌ Failed to check index existence: {e}", flush=True)
+
+    print("🚀 Calling load_data()...", flush=True)
+
+    try:
+        load_data()
+        print("✅ load_data() completed", flush=True)
+    except Exception as e:
+        print("❌ load_data() FAILED:", str(e), flush=True)
+        traceback.print_exc()
+
+    try:
+        exists = es.indices.exists(index="hozpitality")
+        print(f"🔍 Index exists after load: {exists}", flush=True)
+
+        if exists:
+            count = es.count(index="hozpitality")["count"]
+            print(f"📊 Indexed documents: {count}", flush=True)
+
+    except Exception as e:
+        print(f"❌ Post-load verification failed: {e}", flush=True)
+
+    print("🏁 ===== STARTUP END =====\n", flush=True)
