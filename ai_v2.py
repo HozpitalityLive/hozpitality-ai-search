@@ -123,7 +123,12 @@ def load_data(force_reindex=False):
     print(f"📊 Rows fetched: {len(rows)}")
 
     for r in rows:
-        text = (r[1] or "") + " " + (r[2] or "")
+        text = " ".join([
+            r[1] or "",
+            r[2] or "",
+            r[3] or "",   
+            r[4] or "",   
+        ])
         texts.append(text)
 
         doc = {
@@ -640,7 +645,11 @@ async def ws_search(ws: WebSocket):
 
     try:
         while True:
-            raw = await ws.receive_text()
+            try:
+                raw = await ws.receive_text()
+            except:
+                print("⚠️ Client disconnected during receive")
+                break
 
             try:
                 data = json.loads(raw)
@@ -695,8 +704,10 @@ async def ws_search(ws: WebSocket):
                     "data": r
                 })
 
-            if ws.client_state.name == "CONNECTED":
-                await stream_answer(ws, query, results)
+            if ws.client_state.name != "CONNECTED":
+                break
+
+            await stream_answer(ws, query, results)
 
             await safe_send(ws, {
                 "type": "done",
