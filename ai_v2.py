@@ -17,6 +17,7 @@ from sentence_transformers import SentenceTransformer
 import traceback
 from elasticsearch.helpers import bulk
 from ai_server import search_db, apply_priority_sorting
+import asyncio
 
 print("🔥 CUDA AVAILABLE:", torch.cuda.is_available())
 print("🔥 GPU NAME:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
@@ -167,7 +168,8 @@ def load_data(force_reindex=False):
 
 async def safe_send(ws, data):
     try:
-        await ws.send_json(data)
+        if ws.client_state.name == "CONNECTED":
+            await ws.send_json(data)
     except:
         pass
 
@@ -343,7 +345,7 @@ User:
         return text
 
     except Exception as e:
-        print("❌ INTRO ERROR:", e)
+        return ""
 
 # async def stream_answer(ws, query, results):
 #     import httpx
@@ -472,8 +474,8 @@ Context:
 
                 async for line in response.aiter_lines():
 
-                    if ws.client_state.name == "DISCONNECTED":
-                        break
+                    if ws.client_state.name != "CONNECTED":
+                        return
 
                     if not line:
                         continue
@@ -657,7 +659,7 @@ async def ws_search(ws: WebSocket):
 
             intro = ""
             try:
-                intro = generate_intro(query)
+                intro = await asyncio.to_thread(generate_intro, query)
             except:
                 pass
 
@@ -693,7 +695,8 @@ async def ws_search(ws: WebSocket):
                     "data": r
                 })
 
-            await stream_answer(ws, query, results)
+            if ws.client_state.name == "CONNECTED":
+                await stream_answer(ws, query, results)
 
             await safe_send(ws, {
                 "type": "done",
@@ -705,11 +708,7 @@ async def ws_search(ws: WebSocket):
 
     finally:
         print("🔌 Connection closed")
-        try:
-            if ws.client_state.name != "DISCONNECTED":
-                await ws.close()
-        except:
-            pass
+        pass
 
 
 @app.on_event("startup")
