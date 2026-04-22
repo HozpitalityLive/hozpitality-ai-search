@@ -55,45 +55,54 @@ DB_CONFIG = {
 
 db_pool = SimpleConnectionPool(1, 10, **DB_CONFIG)
 
-def load_data():
+def load_data(force_reindex=False):
     global documents, index
 
-    print("🔄 Resetting index + documents")
+    print("🔄 Loading data (optimized mode)")
 
     documents = []
 
+    # 🔹 Reset FAISS only (fast)
     cpu_index = faiss.IndexFlatIP(EMBED_DIM)
     if device == "cuda":
         index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
     else:
         index = cpu_index
 
-    try:
-        es.indices.delete(index="hozpitality")
-    except Exception as e:
-        print("❌ ES DELETE ERROR:", e)
+    # 🔹 Check ES index
+    index_exists = es.indices.exists(index="hozpitality")
 
-    try:
-        print("📦 Creating index (force)...")
+    if force_reindex:
+        print("🔥 FORCE REINDEX → deleting ES index")
+        try:
+            es.indices.delete(index="hozpitality")
+            index_exists = False
+        except Exception as e:
+            print("❌ ES DELETE ERROR:", e)
 
-        es.indices.create(
-            index="hozpitality",
-            body={
-                "mappings": {
-                    "properties": {
-                        "title": {"type": "text"},
-                        "content": {"type": "text"},
-                        "category": {"type": "keyword"},
-                        "location": {"type": "keyword"}
+    # 🔹 Create index ONLY if missing
+    if not index_exists:
+        try:
+            print("📦 Creating ES index...")
+
+            es.indices.create(
+                index="hozpitality",
+                body={
+                    "mappings": {
+                        "properties": {
+                            "title": {"type": "text"},
+                            "content": {"type": "text"},
+                            "category": {"type": "keyword"},
+                            "location": {"type": "keyword"}
+                        }
                     }
                 }
-            }
-        )
+            )
 
-        print("✅ Index created")
+            print("✅ ES index created")
 
-    except Exception as e:
-        print("⚠️ Index may already exist or failed:", e)
+        except Exception as e:
+            print("⚠️ ES create skipped:", e)
 
     conn = db_pool.getconn()
     cur = conn.cursor()
@@ -108,11 +117,7 @@ def load_data():
     texts = []
     actions = []
 
-    print(f"📊 Rows fetched from DB: {len(rows)}")
-
-
-    if not rows:
-        print("❌ NO DATA FROM DB — nothing will be indexed")
+    print(f"📊 Rows fetched: {len(rows)}")
 
     for r in rows:
         text = (r[1] or "") + " " + (r[2] or "")
@@ -125,32 +130,38 @@ def load_data():
             "category": r[3],
             "location": r[4],
             "slug": r[5],
-            "score": 1.0  
+            "score": 1.0
         }
 
         documents.append(doc)
 
-        actions.append({
-            "_index": "hozpitality",
-            "_id": r[0],
-            "_source": {
-                "title": r[1],
-                "content": r[2],
-                "category": r[3],
-                "location": r[4]
-            }
-        })
+        # 🔹 Only index into ES if new or forced
+        if not index_exists or force_reindex:
+            actions.append({
+                "_index": "hozpitality",
+                "_id": r[0],
+                "_source": {
+                    "title": r[1],
+                    "content": r[2],
+                    "category": r[3],
+                    "location": r[4]
+                }
+            })
 
+    # 🔹 Bulk insert only if needed
     if actions:
+        print("⚡ Bulk indexing ES...")
         bulk(es, actions)
         es.indices.refresh(index="hozpitality")
 
+    # 🔹 Build FAISS (always needed)
+    print("⚡ Building FAISS index...")
     vectors = embedder.encode(texts, normalize_embeddings=True)
     index.add(np.array(vectors))
 
     db_pool.putconn(conn)
 
-    print(f"✅ Loaded {len(documents)} records | Index size: {index.ntotal}")
+    print(f"✅ Done | Docs: {len(documents)} | FAISS: {index.ntotal}")
 
 def detect_mode(query: str):
     q = query.lower().strip()
@@ -576,3 +587,10 @@ def startup():
         print(f"❌ Post-load verification failed: {e}", flush=True)
 
     print("🏁 ===== STARTUP END =====\n", flush=True)
+
+
+
+@app.post("/reindex")
+def reindex():
+    load_data(force_reindex=True)
+    return {"status": "reindexed"}

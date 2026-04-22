@@ -16,71 +16,33 @@ main_app = FastAPI()
 # ✅ STARTUP MUST COME BEFORE mount()
 @main_app.on_event("startup")
 def startup():
-    print("\n🚀 ===== MAIN APP STARTUP =====", flush=True)
+    print("\n🚀 FAST STARTUP MODE", flush=True)
 
-    print("⏳ Waiting for Elasticsearch...", flush=True)
-
-    es_ready = False
-
-    for i in range(30):
-        try:
-            print(f"🔁 ES attempt {i+1}/30", flush=True)
-
+    try:
+        # ⚡ fast ES wait
+        es_ready = False
+        for _ in range(5):
             if es.ping():
-                print("✅ Elasticsearch ping successful", flush=True)
-
-                try:
-                    health = es.cluster.health()
-                    print(f"📊 ES Health: {health['status']}", flush=True)
-                except Exception as e:
-                    print(f"⚠️ ES health check failed: {e}", flush=True)
-
-                print("⏳ Extra wait for ES readiness (5s)...", flush=True)
-                time.sleep(5)
-
                 es_ready = True
                 break
+            time.sleep(1)
 
-        except Exception as e:
-            print(f"❌ ES ping error: {e}", flush=True)
+        if not es_ready:
+            print("❌ Elasticsearch not ready → skipping init")
+            return
 
-        time.sleep(2)
-
-    if not es_ready:
-        print("❌ Elasticsearch NOT reachable after retries", flush=True)
-    else:
-        print("✅ Elasticsearch is ready", flush=True)
-
-    # 🔍 Check index BEFORE load
-    try:
         exists = es.indices.exists(index="hozpitality")
-        print(f"🔍 Index exists BEFORE load: {exists}", flush=True)
-    except Exception as e:
-        print(f"❌ Index check failed: {e}", flush=True)
-
-    # 🚀 Load data
-    print("🚀 Running load_data()", flush=True)
-
-    try:
-        load_data()
-        print("✅ load_data() COMPLETED", flush=True)
-    except Exception as e:
-        print("❌ load_data() FAILED:", str(e), flush=True)
-        traceback.print_exc()
-
-    # 🔍 Verify index AFTER load
-    try:
-        exists = es.indices.exists(index="hozpitality")
-        print(f"🔍 Index exists AFTER load: {exists}", flush=True)
 
         if exists:
-            count = es.count(index="hozpitality")["count"]
-            print(f"📊 Indexed documents: {count}", flush=True)
+            print("✅ ES index exists → rebuilding FAISS only")
+            load_data()
+            return
+
+        print("⚡ First time setup → full load_data()")
+        load_data()
 
     except Exception as e:
-        print(f"❌ Post-load verification failed: {e}", flush=True)
-
-    print("🏁 ===== STARTUP COMPLETE =====\n", flush=True)
+        print("❌ Startup error:", e)
 
 
 # ✅ MIDDLEWARE
