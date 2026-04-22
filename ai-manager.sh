@@ -28,55 +28,17 @@ case $choice in
 
   1)
     echo "🔨 Starting system..."
-    docker-compose down
-    docker-compose build --no-cache
-    docker-compose up -d
+    docker-compose up -d --build
     echo "⏳ Waiting..."
     sleep 5
-    docker exec -it ai-ollama ollama pull llama3 || true
-    docker exec -it ai-ollama ollama pull phi3 || true
-
-    docker exec -it ai-ollama ollama create llama3-hoz -f /app/Modelfile.llama || true
-    docker exec -it ai-ollama ollama create phi3-hoz -f /app/Modelfile.phi3 || true
     echo "✅ Started!"
     ;;
 
+
   2)
-    echo "🔄 Restarting (safe mode)..."
-
-    echo "🛑 Stopping containers..."
-    docker-compose down --remove-orphans
-
-    echo "🧹 Cleaning orphan containers using same ports..."
-    docker ps -a --filter "publish=11434" -q | xargs -r docker rm -f
-
-    echo "🧹 Cleaning dangling containers..."
-    docker container prune -f
-
-    echo "🚀 Starting services..."
-    docker-compose up -d
-
-    echo "⏳ Waiting for services..."
-    sleep 5
-
-    echo "📊 Checking status..."
-    docker ps
-
-    echo "🔍 Checking ollama..."
-    if docker ps | grep -q ai-ollama; then
-        echo "✅ Ollama running"
-    else
-        echo "❌ Ollama failed (port conflict likely)"
-    fi
-
-    echo "🔍 Checking API..."
-    if docker ps | grep -q ai-search-api; then
-        echo "✅ API running"
-    else
-        echo "❌ API not running"
-    fi
-
-    echo "✅ Restart completed (with validation)"
+    echo "⚡ Fast Restart..."
+    docker-compose restart
+    echo "✅ Restarted instantly"
     ;;
 
   3)

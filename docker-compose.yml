@@ -11,7 +11,6 @@ services:
       - .env
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-    deploy: {}
     runtime: nvidia
     depends_on:
       - redis
@@ -44,7 +43,11 @@ services:
       - "11434:11434"
     volumes:
       - .:/app
+      - ollama_data:/root/.ollama   
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     runtime: nvidia
     restart: always
+
+volumes:
+  ollama_data:
