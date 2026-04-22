@@ -326,7 +326,6 @@ TASK:
 - Give a helpful, natural intro in 1–2 lines
 - Do NOT repeat the user query
 - Do NOT add explanation
-- Do NOT use bullet points
 - Keep it conversational
 
 User:
@@ -334,24 +333,20 @@ User:
 """,
                 "stream": False
             },
-            timeout=3  
+            timeout=4 
         )
 
         text = res.json().get("response", "").strip()
-
         text = text.replace("\n", " ").strip()
-
-        if text.startswith('"') and text.endswith('"'):
-            text = text[1:-1]
 
         return text
 
     except Exception as e:
         print("❌ INTRO ERROR:", e)
-        return "Let me quickly help you with that..."
 
 async def stream_answer(ws, query, results):
     import httpx
+
     MAX_TOKENS = 700
     count = 0
 
@@ -369,6 +364,7 @@ IMPORTANT:
 - DO NOT repeat the introduction
 - DO NOT restart the answer
 - Assume the answer has already started
+- The introduction is already shown to user
 
 User Query:
 {query}
@@ -385,36 +381,43 @@ Context:
                 json={
                     "model": model,
                     "prompt": prompt,
-                    "stream": True
+                    "stream": True,
+                    "options": {
+                        "num_predict": 700   
+                    }
                 }
             ) as response:
 
                 async for line in response.aiter_lines():
-                    if line:
-                        data = json.loads(line)
 
-                        if "response" in data:
-                            chunk = data["response"]
+                    if ws.client_state.name == "DISCONNECTED":
+                        print("⚠️ Client disconnected → stopping stream")
+                        break
 
-                            count += len(chunk) / 4
+                    if not line:
+                        continue
 
-                            if count > MAX_TOKENS:
-                                break
+                    data = json.loads(line)
 
-                            await safe_send(ws, {
-                                "type": "token",
-                                "data": chunk
-                            })
+                    if "response" in data:
+                        chunk = data["response"]
 
-                        if data.get("done"):
+                        count += len(chunk) / 4
+
+                        if count > MAX_TOKENS:
                             break
+
+                        await safe_send(ws, {
+                            "type": "token",
+                            "data": chunk
+                        })
+
+                    if data.get("done"):
+                        break
 
     except Exception as e:
         print("❌ STREAM ERROR:", e)
-        await safe_send(ws, {
-            "type": "token",
-            "data": "Error generating response"
-        })
+        return   
 
 def generate_answer(query, results):
     context = ""
@@ -497,7 +500,11 @@ async def ws_search(ws: WebSocket):
             results = []
             total = 0
 
-            intro = generate_intro(query)
+            intro = ""
+            try:
+                intro = generate_intro(query)
+            except:
+                pass
 
             if intro:
                 await safe_send(ws,{
@@ -524,7 +531,10 @@ async def ws_search(ws: WebSocket):
                         "data": r
                     })
 
-            await stream_answer(ws, query, results)
+            try:
+                await stream_answer(ws, query, results)
+            except Exception as e:
+                print("❌ STREAM FAIL SAFE:", e)
 
             await safe_send(ws,{
                 "type": "done",
@@ -537,7 +547,8 @@ async def ws_search(ws: WebSocket):
     finally:
         print("🔌 Connection closed")
         try:
-            await ws.close()
+            if ws.client_state.name != "DISCONNECTED":
+                await ws.close()
         except:
             pass
 
