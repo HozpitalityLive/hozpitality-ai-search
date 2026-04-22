@@ -16,6 +16,7 @@ import torch
 from sentence_transformers import SentenceTransformer
 import traceback
 from elasticsearch.helpers import bulk
+from ai_server import search_db, apply_priority_sorting
 
 print("🔥 CUDA AVAILABLE:", torch.cuda.is_available())
 print("🔥 GPU NAME:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
@@ -344,17 +345,99 @@ User:
     except Exception as e:
         print("❌ INTRO ERROR:", e)
 
+# async def stream_answer(ws, query, results):
+#     import httpx
+
+#     MAX_TOKENS = 700
+#     count = 0
+
+#     context = ""
+#     for i, r in enumerate(results[:5]):
+#         context += f"{i+1}. {r['title']} - {r['content']}\n"
+
+#     model = choose_model(query, results)
+
+#     prompt = f"""
+# You are an intelligent AI assistant for Hozpitality.
+
+# IMPORTANT:
+# - Continue the answer naturally
+# - DO NOT repeat the introduction
+# - DO NOT restart the answer
+# - Assume the answer has already started
+# - The introduction is already shown to user
+
+# User Query:
+# {query}
+
+# Context:
+# {context}
+# """
+
+#     try:
+#         async with httpx.AsyncClient(timeout=None) as client:
+#             async with client.stream(
+#                 "POST",
+#                 OLLAMA_URL,
+#                 json={
+#                     "model": model,
+#                     "prompt": prompt,
+#                     "stream": True,
+#                     "options": {
+#                         "num_predict": 700   
+#                     }
+#                 }
+#             ) as response:
+
+#                 async for line in response.aiter_lines():
+
+#                     if ws.client_state.name == "DISCONNECTED":
+#                         print("⚠️ Client disconnected → stopping stream")
+#                         break
+
+#                     if not line:
+#                         continue
+
+#                     data = json.loads(line)
+
+#                     if "response" in data:
+#                         chunk = data["response"]
+
+#                         count += len(chunk) / 4
+
+#                         if count > MAX_TOKENS:
+#                             break
+
+#                         await safe_send(ws, {
+#                             "type": "token",
+#                             "data": chunk
+#                         })
+
+#                     if data.get("done"):
+#                         break
+
+#     except Exception as e:
+#         print("❌ STREAM ERROR:", e)
+#         return   
+
 async def stream_answer(ws, query, results):
     import httpx
 
-    MAX_TOKENS = 700
+    MAX_TOKENS = 1200
     count = 0
 
+    # ✅ Better structured context
     context = ""
     for i, r in enumerate(results[:5]):
-        context += f"{i+1}. {r['title']} - {r['content']}\n"
+        context += f"""
+{i+1}.
+Title: {r.get('title')}
+Category: {r.get('category')}
+Location: {r.get('location')}
+Content: {r.get('content')}
+"""
 
-    model = choose_model(query, results)
+    model = "llama3-hoz" if results else "phi3-hoz"
 
     prompt = f"""
 You are an intelligent AI assistant for Hozpitality.
@@ -362,9 +445,8 @@ You are an intelligent AI assistant for Hozpitality.
 IMPORTANT:
 - Continue the answer naturally
 - DO NOT repeat the introduction
-- DO NOT restart the answer
-- Assume the answer has already started
-- The introduction is already shown to user
+- DO NOT restart
+- Intro is already shown
 
 User Query:
 {query}
@@ -383,7 +465,7 @@ Context:
                     "prompt": prompt,
                     "stream": True,
                     "options": {
-                        "num_predict": 700   
+                        "num_predict": 900
                     }
                 }
             ) as response:
@@ -391,7 +473,6 @@ Context:
                 async for line in response.aiter_lines():
 
                     if ws.client_state.name == "DISCONNECTED":
-                        print("⚠️ Client disconnected → stopping stream")
                         break
 
                     if not line:
@@ -402,8 +483,7 @@ Context:
                     if "response" in data:
                         chunk = data["response"]
 
-                        count += len(chunk) / 4
-
+                        count += len(chunk) / 3
                         if count > MAX_TOKENS:
                             break
 
@@ -417,7 +497,6 @@ Context:
 
     except Exception as e:
         print("❌ STREAM ERROR:", e)
-        return   
 
 def generate_answer(query, results):
     context = ""
@@ -469,6 +548,89 @@ def click(user_id: int, category: str):
     return {"status": "ok"}
 
 
+# @app.websocket("/ws/ai-search")
+# async def ws_search(ws: WebSocket):
+#     await ws.accept()
+#     print("✅ WebSocket connected")
+
+#     try:
+#         while True:
+#             raw = await ws.receive_text()
+#             print("📩 RAW:", raw)
+
+#             try:
+#                 data = json.loads(raw)
+#             except:
+#                 await safe_send(ws,{"type": "error", "message": "Invalid JSON"})
+#                 continue
+
+#             query = data.get("query", "").strip()
+#             user_id = data.get("user_id", 0)
+
+#             if not query:
+#                 await safe_send(ws,{"type": "error", "message": "Query missing"})
+#                 continue
+
+#             print(f"🔍 Query: {query}")
+
+#             mode = detect_mode(query)
+#             print(f"🧠 MODE: {mode}")
+
+#             results = []
+#             total = 0
+
+#             intro = ""
+#             try:
+#                 intro = generate_intro(query)
+#             except:
+#                 pass
+
+#             if intro:
+#                 await safe_send(ws,{
+#                     "type": "token",
+#                     "data": intro + "\n\n"
+#                 })
+
+#             if mode == "search":
+#                 try:
+#                     results = hybrid_search(query)
+#                     results = personalize(user_id, results)
+#                     total = len(results)
+#                 except Exception as e:
+#                     print("❌ SEARCH ERROR:", e)
+
+#                 await safe_send(ws,{
+#                     "type": "meta",
+#                     "total": total
+#                 })
+
+#                 for r in results[:10]:
+#                     await safe_send(ws,{
+#                         "type": "result",
+#                         "data": r
+#                     })
+
+#             try:
+#                 await stream_answer(ws, query, results)
+#             except Exception as e:
+#                 print("❌ STREAM FAIL SAFE:", e)
+
+#             await safe_send(ws,{
+#                 "type": "done",
+#                 "total": total
+#             })
+
+#     except Exception as e:
+#         print("❌ WS ERROR:", str(e))
+
+#     finally:
+#         print("🔌 Connection closed")
+#         try:
+#             if ws.client_state.name != "DISCONNECTED":
+#                 await ws.close()
+#         except:
+#             pass
+
 @app.websocket("/ws/ai-search")
 async def ws_search(ws: WebSocket):
     await ws.accept()
@@ -477,28 +639,21 @@ async def ws_search(ws: WebSocket):
     try:
         while True:
             raw = await ws.receive_text()
-            print("📩 RAW:", raw)
 
             try:
                 data = json.loads(raw)
             except:
-                await safe_send(ws,{"type": "error", "message": "Invalid JSON"})
+                await safe_send(ws, {"type": "error", "message": "Invalid JSON"})
                 continue
 
             query = data.get("query", "").strip()
             user_id = data.get("user_id", 0)
 
             if not query:
-                await safe_send(ws,{"type": "error", "message": "Query missing"})
+                await safe_send(ws, {"type": "error", "message": "Query missing"})
                 continue
 
             print(f"🔍 Query: {query}")
-
-            mode = detect_mode(query)
-            print(f"🧠 MODE: {mode}")
-
-            results = []
-            total = 0
 
             intro = ""
             try:
@@ -507,36 +662,40 @@ async def ws_search(ws: WebSocket):
                 pass
 
             if intro:
-                await safe_send(ws,{
+                await safe_send(ws, {
                     "type": "token",
                     "data": intro + "\n\n"
                 })
 
-            if mode == "search":
-                try:
-                    results = hybrid_search(query)
-                    results = personalize(user_id, results)
-                    total = len(results)
-                except Exception as e:
-                    print("❌ SEARCH ERROR:", e)
-
-                await safe_send(ws,{
-                    "type": "meta",
-                    "total": total
-                })
-
-                for r in results[:10]:
-                    await safe_send(ws,{
-                        "type": "result",
-                        "data": r
-                    })
+            results = []
+            total = 0
 
             try:
-                await stream_answer(ws, query, results)
-            except Exception as e:
-                print("❌ STREAM FAIL SAFE:", e)
+                intent = understand_query(query)
 
-            await safe_send(ws,{
+                results = search_db(query, intent_type=intent)
+
+                results = apply_priority_sorting(results)
+
+                total = len(results)
+
+            except Exception as e:
+                print("❌ SEARCH ERROR:", e)
+
+            await safe_send(ws, {
+                "type": "meta",
+                "total": total
+            })
+
+            for r in results[:10]:
+                await safe_send(ws, {
+                    "type": "result",
+                    "data": r
+                })
+
+            await stream_answer(ws, query, results)
+
+            await safe_send(ws, {
                 "type": "done",
                 "total": total
             })
