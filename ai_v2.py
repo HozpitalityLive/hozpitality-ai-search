@@ -295,6 +295,43 @@ def get_cache(q):
 def set_cache(q, data):
     redis_client.setex(f"search:{q}", 300, json.dumps(data))
 
+def generate_intro(query: str):
+    try:
+        res = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": "phi3-hoz",
+                "prompt": f"""
+You are an AI assistant for Hozpitality.
+
+TASK:
+- Give a helpful, natural intro in 1–2 lines
+- Do NOT repeat the user query
+- Do NOT add explanation
+- Do NOT use bullet points
+- Keep it conversational
+
+User:
+{query}
+""",
+                "stream": False
+            },
+            timeout=3  
+        )
+
+        text = res.json().get("response", "").strip()
+
+        text = text.replace("\n", " ").strip()
+
+        if text.startswith('"') and text.endswith('"'):
+            text = text[1:-1]
+
+        return text
+
+    except Exception as e:
+        print("❌ INTRO ERROR:", e)
+        return "Let me quickly help you with that..."
+
 async def stream_answer(ws, query, results):
     import httpx
 
@@ -307,13 +344,17 @@ async def stream_answer(ws, query, results):
     prompt = f"""
 You are an intelligent AI assistant for Hozpitality.
 
+IMPORTANT:
+- Continue the answer naturally
+- DO NOT repeat the introduction
+- DO NOT restart the answer
+- Assume the answer has already started
+
 User Query:
 {query}
 
 Context:
 {context}
-
-Answer naturally and conversationally.
 """
 
     try:
@@ -428,6 +469,14 @@ async def ws_search(ws: WebSocket):
 
             results = []
             total = 0
+
+            intro = generate_intro(query)
+
+            if intro:
+                await ws.send_json({
+                    "type": "token",
+                    "data": intro + "\n\n"
+                })
 
             if mode == "search":
                 try:
