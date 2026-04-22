@@ -1,14 +1,16 @@
 #!/bin/bash
 
 # ===============================
-# AI SEARCH SYSTEM MANAGER (MENU)
+# AI SEARCH SYSTEM MANAGER (SAFE)
 # ===============================
+
+PROJECT_NAME="ai-search"
 
 while true; do
 
 echo ""
 echo "========================================"
-echo "🚀 AI SEARCH SYSTEM MANAGER"
+echo "🚀 AI SEARCH SYSTEM MANAGER (SAFE MODE)"
 echo "========================================"
 echo "1) 🔨 Start (Build + Run)"
 echo "2) 🔄 Restart"
@@ -18,7 +20,7 @@ echo "5) 📜 Logs"
 echo "6) 🧪 Check GPU"
 echo "7) 📊 Status"
 echo "8) 🧠 Ollama Models"
-echo "9) 🧹 Clean Reset ⚠️"
+echo "9) 🧹 Clean Reset (ONLY THIS PROJECT)"
 echo "0) ❌ Exit"
 echo "========================================"
 
@@ -34,7 +36,6 @@ case $choice in
     echo "✅ Started!"
     ;;
 
-
   2)
     echo "⚡ Fast Restart..."
     docker-compose restart
@@ -42,16 +43,14 @@ case $choice in
     ;;
 
   3)
-    echo "🔥 Full rebuild..."
-    docker-compose down
-    docker system prune -f
+    echo "🔥 Rebuilding ONLY this project..."
     docker-compose build --no-cache
     docker-compose up -d
     echo "✅ Rebuilt!"
     ;;
 
   4)
-    echo "🛑 Stopping..."
+    echo "🛑 Stopping ONLY this project..."
     docker-compose down
     echo "✅ Stopped!"
     ;;
@@ -67,8 +66,8 @@ case $choice in
     ;;
 
   7)
-    echo "📊 Status:"
-    docker ps
+    echo "📊 Status (only project containers):"
+    docker-compose ps
     ;;
 
   8)
@@ -77,13 +76,13 @@ case $choice in
     ;;
 
   9)
-    echo "⚠️ WARNING: This will delete EVERYTHING!"
+    echo "⚠️ WARNING: This will reset ONLY this project (safe)"
     read -p "Are you sure? (yes/no): " confirm
+
     if [ "$confirm" = "yes" ]; then
-      docker-compose down -v
-      docker system prune -af
-      docker volume prune -f
-      echo "✅ Clean reset done!"
+      echo "🧹 Removing ONLY project containers + volumes..."
+      docker-compose down -v   # ✅ only project volumes
+      echo "✅ Clean reset done (safe)"
     else
       echo "❌ Cancelled"
     fi
