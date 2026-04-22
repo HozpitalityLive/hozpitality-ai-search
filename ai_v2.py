@@ -45,6 +45,7 @@ documents = []
 
 OLLAMA_URL = "http://ollama:11434/api/generate"
 
+
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME"),
     "user": os.getenv("DB_USER"),
@@ -162,6 +163,12 @@ def load_data(force_reindex=False):
     db_pool.putconn(conn)
 
     print(f"✅ Done | Docs: {len(documents)} | FAISS: {index.ntotal}")
+
+async def safe_send(ws, data):
+    try:
+        await ws.send_json(data)
+    except:
+        pass
 
 def detect_mode(query: str):
     q = query.lower().strip()
@@ -345,6 +352,8 @@ User:
 
 async def stream_answer(ws, query, results):
     import httpx
+    MAX_TOKENS = 700
+    count = 0
 
     context = ""
     for i, r in enumerate(results[:5]):
@@ -385,9 +394,16 @@ Context:
                         data = json.loads(line)
 
                         if "response" in data:
-                            await ws.send_json({
+                            chunk = data["response"]
+
+                            count += len(chunk) / 4
+
+                            if count > MAX_TOKENS:
+                                break
+
+                            await safe_send(ws, {
                                 "type": "token",
-                                "data": data["response"]
+                                "data": chunk
                             })
 
                         if data.get("done"):
@@ -395,7 +411,7 @@ Context:
 
     except Exception as e:
         print("❌ STREAM ERROR:", e)
-        await ws.send_json({
+        await safe_send(ws, {
             "type": "token",
             "data": "Error generating response"
         })
@@ -463,14 +479,14 @@ async def ws_search(ws: WebSocket):
             try:
                 data = json.loads(raw)
             except:
-                await ws.send_json({"type": "error", "message": "Invalid JSON"})
+                await safe_send(ws,{"type": "error", "message": "Invalid JSON"})
                 continue
 
             query = data.get("query", "").strip()
             user_id = data.get("user_id", 0)
 
             if not query:
-                await ws.send_json({"type": "error", "message": "Query missing"})
+                await safe_send(ws,{"type": "error", "message": "Query missing"})
                 continue
 
             print(f"🔍 Query: {query}")
@@ -484,7 +500,7 @@ async def ws_search(ws: WebSocket):
             intro = generate_intro(query)
 
             if intro:
-                await ws.send_json({
+                await safe_send(ws,{
                     "type": "token",
                     "data": intro + "\n\n"
                 })
@@ -497,20 +513,20 @@ async def ws_search(ws: WebSocket):
                 except Exception as e:
                     print("❌ SEARCH ERROR:", e)
 
-                await ws.send_json({
+                await safe_send(ws,{
                     "type": "meta",
                     "total": total
                 })
 
                 for r in results[:10]:
-                    await ws.send_json({
+                    await safe_send(ws,{
                         "type": "result",
                         "data": r
                     })
 
             await stream_answer(ws, query, results)
 
-            await ws.send_json({
+            await safe_send(ws,{
                 "type": "done",
                 "total": total
             })
@@ -520,7 +536,10 @@ async def ws_search(ws: WebSocket):
 
     finally:
         print("🔌 Connection closed")
-        await ws.close()
+        try:
+            await ws.close()
+        except:
+            pass
 
 
 @app.on_event("startup")
