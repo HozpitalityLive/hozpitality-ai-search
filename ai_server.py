@@ -901,7 +901,7 @@ def search_db(query, intent_type=None, location=None):
         words = [
             w.strip()
             for w in query.split()
-            if w and len(w) > 2 and w != location
+            if w and w != location
         ]
 
         full_phrase = " ".join(words)
@@ -968,9 +968,9 @@ def search_db(query, intent_type=None, location=None):
         """
             params = []
 
-            if intent_type:
+            if intent_type and intent_type != "general":
                 if intent_type == "awards":
-                    sql += " AND LOWER(msi.category_text) = 'awards'"  
+                    sql += " AND LOWER(msi.category_text) = 'awards'"
                 else:
                     sql += " AND LOWER(msi.category_text) LIKE %s"
                     params.append(f"%{intent_type.lower()}%")
@@ -994,7 +994,11 @@ def search_db(query, intent_type=None, location=None):
                 params.extend([f"%{full_phrase}%", full_phrase])
             else:
                 sql += """
-                AND (LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)
+                AND (
+                    LOWER(msi.title) LIKE %s 
+                    OR LOWER(msi.content) LIKE %s
+                    OR LOWER(msi.user_name) LIKE %s
+                )
                 ORDER BY 
                     (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END),
                     CASE 
@@ -1005,7 +1009,11 @@ def search_db(query, intent_type=None, location=None):
                     msi.id DESC
                 LIMIT 100
                 """
-                params.extend([f"%{full_phrase}%", f"%{full_phrase}%", full_phrase, f"%{full_phrase}%"])
+                params.extend([
+                    f"%{full_phrase}%", 
+                    f"%{full_phrase}%", 
+                    f"%{full_phrase}%"
+                ])
             results = execute(sql, params)
 
         # Scenario 2: All Words Match (AND)
@@ -1018,7 +1026,7 @@ def search_db(query, intent_type=None, location=None):
                     conditions.append("LOWER(msi.title) LIKE %s")
                     params.append(f"%{w}%")
                 else:
-                    conditions.append("(LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)")
+                    conditions.append("(LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s OR LOWER(msi.user_name) LIKE %s)")
                     params.extend([f"%{w}%", f"%{w}%"])
             
             sql += " AND " + " AND ".join(conditions) + " ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), msi.id DESC LIMIT 100"
@@ -1030,7 +1038,7 @@ def search_db(query, intent_type=None, location=None):
             sql, params = base_sql()
             conditions = []
             for w in words:
-                conditions.append("(LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s)")
+                conditions.append("(LOWER(msi.title) LIKE %s OR LOWER(msi.content) LIKE %s OR LOWER(msi.user_name) LIKE %s )")
                 params.extend([f"%{w}%", f"%{w}%"])
             
             sql += " AND (" + " OR ".join(conditions) + ") ORDER BY (CASE WHEN ua.package_id > 0 THEN 0 ELSE 1 END), msi.id DESC LIMIT 100"
