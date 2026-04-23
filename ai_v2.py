@@ -321,6 +321,27 @@ def get_cache(q):
 def set_cache(q, data):
     redis_client.setex(f"search:{q}", 300, json.dumps(data))
 
+
+STRICT_DATA_RULES = """
+### DATA INTEGRITY RULES (CRITICAL)
+
+- ONLY use data from CONTEXT
+- DO NOT generate:
+  - salary
+  - benefits
+  - company claims
+  - statistics
+- If data not present → DO NOT mention it
+
+- NEVER assume
+- NEVER estimate
+- NEVER hallucinate
+
+- If unsure → omit
+
+### END RULES
+"""
+
 def generate_intro(query: str):
     try:
         res = requests.post(
@@ -335,6 +356,8 @@ TASK:
 - Do NOT repeat the user query
 - Do NOT add explanation
 - Keep it conversational
+
+{STRICT_DATA_RULES}
 
 User:
 {query}
