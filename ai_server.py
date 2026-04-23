@@ -928,7 +928,19 @@ def search_db(query, intent_type=None, location=None):
                     "location": r[3],
                     "url": build_url(r[2], r[4]),
                     "is_paid": r[5] is not None,
+                    "confidence": "high" if r[5] else "medium",
                     "package_id": r[5],
+                    "sources": [
+                        {
+                            "label": "Hozpitality",
+                            "type": "primary",
+                            "url": build_url(r[2], r[4])
+                        },
+                        {
+                            "label": "Database",
+                            "type": "success"
+                        }
+                    ],
                     "about_us": r[6].strip() if r[6] else ""  # Backend intro logic ke liye r[6]
                 })
 

@@ -701,7 +701,19 @@ async def ws_search(ws: WebSocket):
             for r in results[:10]:
                 await safe_send(ws, {
                     "type": "result",
-                    "data": r
+                    "data": {
+                        **r,
+
+                        "sources": r.get("sources") or [
+                            {
+                                "label": "Hozpitality",
+                                "type": "primary",
+                                "url": r.get("url")
+                            }
+                        ],
+
+                        "confidence": "high" if r.get("is_paid") else "medium"
+                    }
                 })
 
             if ws.client_state.name != "CONNECTED":
