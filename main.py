@@ -16,33 +16,52 @@ main_app = FastAPI()
 # ✅ STARTUP MUST COME BEFORE mount()
 @main_app.on_event("startup")
 def startup():
-    print("\n🚀 FAST STARTUP MODE", flush=True)
+    print("\n🚀 STARTING SYSTEM", flush=True)
 
     try:
-        # ⚡ fast ES wait
         es_ready = False
-        for _ in range(5):
-            if es.ping():
-                es_ready = True
-                break
-            time.sleep(1)
+
+        for i in range(30):
+            try:
+                print(f"⏳ Waiting for ES... {i+1}/30", flush=True)
+
+                if es.ping():
+                    print("✅ Elasticsearch connected", flush=True)
+
+                    time.sleep(5)
+
+                    es_ready = True
+                    break
+
+            except Exception as e:
+                print("❌ ES ping error:", e, flush=True)
+
+            time.sleep(2)
 
         if not es_ready:
-            print("❌ Elasticsearch not ready → skipping init")
-            return
+            print("❌ Elasticsearch NOT ready after retries", flush=True)
+            return  # safe exit
 
         exists = es.indices.exists(index="hozpitality")
 
         if exists:
-            print("✅ ES index exists → rebuilding FAISS only")
-            load_data()
-            return
+            count = es.count(index="hozpitality")["count"]
+            print(f"📊 ES docs: {count}", flush=True)
 
-        print("⚡ First time setup → full load_data()")
-        load_data()
+            if count == 0:
+                print("⚡ Empty index → full load_data()", flush=True)
+                load_data(force_reindex=True)
+            else:
+                print("✅ ES ready → rebuild FAISS only", flush=True)
+                load_data(force_reindex=False)
+
+        else:
+            print("⚡ First time → creating index + FAISS", flush=True)
+            load_data(force_reindex=True)
 
     except Exception as e:
         print("❌ Startup error:", e)
+        traceback.print_exc()
 
 
 # ✅ MIDDLEWARE
