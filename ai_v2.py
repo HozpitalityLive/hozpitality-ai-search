@@ -245,47 +245,6 @@ def vector_search(query):
     return results
 
 
-def elastic_search(query):
-    res = es.search(index="hozpitality", query={
-        "multi_match": {
-            "query": query,
-            "fields": ["title^2", "content"]
-        }
-    }, size=50)
-
-    results = []
-    for hit in res["hits"]["hits"]:
-        doc = hit["_source"]
-        doc["score"] = hit["_score"]
-        results.append(doc)
-
-    return results
-
-
-def hybrid_search(query):
-    try:
-        vec = vector_search(query)
-    except Exception as e:
-        print("❌ VECTOR SEARCH ERROR:", e)
-        vec = []
-    esr = elastic_search(query)
-
-    combined = {}
-
-    for r in vec:
-        r["score"] = r.get("score", 1.0) 
-        combined[r["title"]] = r
-        combined[r["title"]]["score"] *= 0.6
-
-    for r in esr:
-        if r["title"] in combined:
-            combined[r["title"]]["score"] += r["score"] * 0.4
-        else:
-            combined[r["title"]] = r
-
-    return sorted(combined.values(), key=lambda x: x["score"], reverse=True)
-
-
 def personalize(user_id, results):
     key = f"user_pref:{user_id}"
     prefs = redis_client.get(key)
@@ -320,6 +279,7 @@ def get_cache(q):
 
 def set_cache(q, data):
     redis_client.setex(f"search:{q}", 300, json.dumps(data))
+    
 
 
 STRICT_DATA_RULES = """
@@ -375,17 +335,25 @@ User:
     except Exception as e:
         return ""
 
+
 # async def stream_answer(ws, query, results):
 #     import httpx
 
-#     MAX_TOKENS = 700
+#     MAX_TOKENS = 1200
 #     count = 0
 
+#     # ✅ Better structured context
 #     context = ""
 #     for i, r in enumerate(results[:5]):
-#         context += f"{i+1}. {r['title']} - {r['content']}\n"
+#         context += f"""
+# {i+1}.
+# Title: {r.get('title')}
+# Category: {r.get('category')}
+# Location: {r.get('location')}
+# Content: {r.get('content')}
+# """
 
-#     model = choose_model(query, results)
+#     model = "llama3-hoz" if results else "phi3-hoz"
 
 #     prompt = f"""
 # You are an intelligent AI assistant for Hozpitality.
@@ -393,9 +361,8 @@ User:
 # IMPORTANT:
 # - Continue the answer naturally
 # - DO NOT repeat the introduction
-# - DO NOT restart the answer
-# - Assume the answer has already started
-# - The introduction is already shown to user
+# - DO NOT restart
+# - Intro is already shown
 
 # User Query:
 # {query}
@@ -414,16 +381,15 @@ User:
 #                     "prompt": prompt,
 #                     "stream": True,
 #                     "options": {
-#                         "num_predict": 700   
+#                         "num_predict": 900
 #                     }
 #                 }
 #             ) as response:
 
 #                 async for line in response.aiter_lines():
 
-#                     if ws.client_state.name == "DISCONNECTED":
-#                         print("⚠️ Client disconnected → stopping stream")
-#                         break
+#                     if ws.client_state.name != "CONNECTED":
+#                         return
 
 #                     if not line:
 #                         continue
@@ -433,8 +399,7 @@ User:
 #                     if "response" in data:
 #                         chunk = data["response"]
 
-#                         count += len(chunk) / 4
-
+#                         count += len(chunk) / 3
 #                         if count > MAX_TOKENS:
 #                             break
 
@@ -448,7 +413,7 @@ User:
 
 #     except Exception as e:
 #         print("❌ STREAM ERROR:", e)
-#         return   
+
 
 async def stream_answer(ws, query, results):
     import httpx
@@ -456,32 +421,45 @@ async def stream_answer(ws, query, results):
     MAX_TOKENS = 1200
     count = 0
 
-    # ✅ Better structured context
     context = ""
     for i, r in enumerate(results[:5]):
         context += f"""
 {i+1}.
 Title: {r.get('title')}
-Category: {r.get('category')}
-Location: {r.get('location')}
 Content: {r.get('content')}
+Location: {r.get('location')}
+URL: https://www.hozpitality.com/{r.get('slug', '')}
 """
 
     model = "llama3-hoz" if results else "phi3-hoz"
 
     prompt = f"""
-You are an intelligent AI assistant for Hozpitality.
+You are an AI assistant for Hozpitality.
 
-IMPORTANT:
-- Continue the answer naturally
-- DO NOT repeat the introduction
-- DO NOT restart
-- Intro is already shown
+STRICT FORMAT RULES:
+
+- DO NOT output lists
+- DO NOT output bullet points
+- Write natural paragraphs only
+
+LINK RULE (MANDATORY):
+- Use EXACT format:
+<a href="URL" target="_blank">TITLE</a>
+
+- NEVER show raw URL
+- NEVER break HTML
+- ONLY wrap the title
+
+STYLE:
+- Conversational explanation
+- Mention 2–4 relevant items naturally
+- Keep it clean and readable
+
 
 User Query:
 {query}
 
-Context:
+Context Data:
 {context}
 """
 
@@ -494,9 +472,7 @@ Context:
                     "model": model,
                     "prompt": prompt,
                     "stream": True,
-                    "options": {
-                        "num_predict": 900
-                    }
+                    "options": {"num_predict": 900}
                 }
             ) as response:
 
@@ -577,89 +553,243 @@ def click(user_id: int, category: str):
     track_click(user_id, category)
     return {"status": "ok"}
 
+def expand_query_llm(query: str):
+    cache_k = f"expand:{query}"
+    cached = redis_client.get(cache_k)
 
-# @app.websocket("/ws/ai-search")
-# async def ws_search(ws: WebSocket):
-#     await ws.accept()
-#     print("✅ WebSocket connected")
+    if cached:
+        return json.loads(cached)
 
-#     try:
-#         while True:
-#             raw = await ws.receive_text()
-#             print("📩 RAW:", raw)
+    prompt = f"""
+You are a search expansion engine for hospitality platform.
 
-#             try:
-#                 data = json.loads(raw)
-#             except:
-#                 await safe_send(ws,{"type": "error", "message": "Invalid JSON"})
-#                 continue
+User Query: "{query}"
 
-#             query = data.get("query", "").strip()
-#             user_id = data.get("user_id", 0)
+TASK:
+- Normalize query
+- Extract role/job meaning
+- Generate related roles (semantic)
+- Expand location if applicable
 
-#             if not query:
-#                 await safe_send(ws,{"type": "error", "message": "Query missing"})
-#                 continue
+RULES:
+- Max 5 roles
+- Max 3 locations
+- No hallucination
+- Keep realistic hospitality terms
 
-#             print(f"🔍 Query: {query}")
+OUTPUT JSON ONLY:
 
-#             mode = detect_mode(query)
-#             print(f"🧠 MODE: {mode}")
+{{
+  "normalized": "clean query",
+  "roles": ["role1", "role2"],
+  "locations": ["loc1", "loc2"]
+}}
+"""
 
-#             results = []
-#             total = 0
+    try:
+        res = requests.post(
+            OLLAMA_URL,
+            json={"model": "phi3-hoz", "prompt": prompt, "stream": False},
+            timeout=5
+        )
 
-#             intro = ""
-#             try:
-#                 intro = generate_intro(query)
-#             except:
-#                 pass
+        import re
+        match = re.search(r'\{.*\}', res.json().get("response", ""), re.DOTALL)
 
-#             if intro:
-#                 await safe_send(ws,{
-#                     "type": "token",
-#                     "data": intro + "\n\n"
-#                 })
+        if match:
+            data = json.loads(match.group())
 
-#             if mode == "search":
-#                 try:
-#                     results = hybrid_search(query)
-#                     results = personalize(user_id, results)
-#                     total = len(results)
-#                 except Exception as e:
-#                     print("❌ SEARCH ERROR:", e)
+            data["roles"] = data.get("roles", [])[:5]
+            data["locations"] = data.get("locations", [])[:3]
 
-#                 await safe_send(ws,{
-#                     "type": "meta",
-#                     "total": total
-#                 })
+            redis_client.setex(cache_k, 600, json.dumps(data))
+            return data
 
-#                 for r in results[:10]:
-#                     await safe_send(ws,{
-#                         "type": "result",
-#                         "data": r
-#                     })
+    except Exception as e:
+        print("❌ expand_query_llm error:", e)
 
-#             try:
-#                 await stream_answer(ws, query, results)
-#             except Exception as e:
-#                 print("❌ STREAM FAIL SAFE:", e)
+    return {
+        "normalized": query,
+        "roles": [],
+        "locations": []
+    }
 
-#             await safe_send(ws,{
-#                 "type": "done",
-#                 "total": total
-#             })
+def elastic_search_v2(query_data):
+    should = []
 
-#     except Exception as e:
-#         print("❌ WS ERROR:", str(e))
+    should.append({
+        "multi_match": {
+            "query": query_data["normalized"],
+            "fields": ["title^4", "content^2"],
+            "operator": "and"
+        }
+    })
 
-#     finally:
-#         print("🔌 Connection closed")
-#         try:
-#             if ws.client_state.name != "DISCONNECTED":
-#                 await ws.close()
-#         except:
-#             pass
+    for role in query_data.get("roles", []):
+        should.append({
+            "match": {
+                "content": {
+                    "query": role,
+                    "boost": 1.5
+                }
+            }
+        })
+
+    for loc in query_data.get("locations", []):
+        should.append({
+            "match": {
+                "location": {
+                    "query": loc,
+                    "boost": 2
+                }
+            }
+        })
+
+    res = es.search(
+        index="hozpitality",
+        query={
+            "bool": {
+                "should": should,
+                "minimum_should_match": 1
+            }
+        },
+        size=50
+    )
+
+    results = []
+    for hit in res["hits"]["hits"]:
+        doc = hit["_source"]
+        doc["bm25_score"] = hit["_score"]
+        results.append(doc)
+
+    return results
+
+def vector_search_v2(query_data):
+    full_text = " ".join([
+        query_data["normalized"],
+        " ".join(query_data.get("roles", [])),
+        " ".join(query_data.get("locations", []))
+    ])
+
+    query_vec = embedder.encode([full_text], normalize_embeddings=True)
+
+    D, I = index.search(query_vec, 20)
+
+    results = []
+    for idx, score in zip(I[0], D[0]):
+        if idx < len(documents):
+            doc = documents[idx].copy()
+            doc["vector_score"] = float(score)
+            results.append(doc)
+
+    return results
+
+def hybrid_search_v2(query_data):
+    es_results = elastic_search_v2(query_data)
+    vec_results = vector_search_v2(query_data)
+
+    combined = {}
+
+    for r in es_results:
+        combined[r["title"]] = r
+
+    for r in vec_results:
+        if r["title"] in combined:
+            combined[r["title"]]["vector_score"] = r.get("vector_score", 0)
+        else:
+            combined[r["title"]] = r
+
+    final = list(combined.values())
+
+    bm25_scores = [r.get("bm25_score", 0) for r in final]
+    vec_scores = [r.get("vector_score", 0) for r in final]
+
+    def norm(arr):
+        if not arr:
+            return arr
+        mn, mx = min(arr), max(arr)
+        return [(x - mn) / (mx - mn + 1e-6) for x in arr]
+
+    bm25_norm = norm(bm25_scores)
+    vec_norm = norm(vec_scores)
+
+    for i, r in enumerate(final):
+        r["final_score"] = (
+            0.6 * bm25_norm[i] +
+            0.3 * vec_norm[i] +
+            (0.1 if r.get("is_paid") else 0)
+        )
+
+    seen = set()
+    unique = []
+
+    for r in final:
+        key = r["title"].lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
+
+    return sorted(unique, key=lambda x: x["final_score"], reverse=True)
+
+
+def merge_results(es_results, vec_results):
+    combined = {}
+
+    for r in es_results:
+        combined[r["title"]] = r
+
+    for r in vec_results:
+        if r["title"] in combined:
+            combined[r["title"]]["vector_score"] = r.get("vector_score", 0)
+        else:
+            combined[r["title"]] = r
+
+    return list(combined.values())
+
+async def run_search(query_data):
+    loop = asyncio.get_event_loop()
+
+    es_task = loop.run_in_executor(None, elastic_search_v2, query_data)
+    vec_task = loop.run_in_executor(None, vector_search_v2, query_data)
+
+    es_results, vec_results = await asyncio.gather(es_task, vec_task)
+
+    return merge_results(es_results, vec_results)
+
+def hybrid_rank(es_results, vec_results):
+    combined = {}
+
+    for r in es_results:
+        combined[r["title"]] = r
+
+    for r in vec_results:
+        if r["title"] in combined:
+            combined[r["title"]]["vector_score"] = r.get("vector_score", 0)
+        else:
+            combined[r["title"]] = r
+
+    final = list(combined.values())
+
+    bm25_scores = [r.get("bm25_score", 0) for r in final]
+    vec_scores = [r.get("vector_score", 0) for r in final]
+
+    def norm(arr):
+        if not arr:
+            return arr
+        mn, mx = min(arr), max(arr)
+        return [(x - mn) / (mx - mn + 1e-6) for x in arr]
+
+    bm25_norm = norm(bm25_scores)
+    vec_norm = norm(vec_scores)
+
+    for i, r in enumerate(final):
+        r["final_score"] = (
+            0.6 * bm25_norm[i] +
+            0.3 * vec_norm[i] +
+            (0.1 if r.get("is_paid") else 0)
+        )
+
+    return sorted(final, key=lambda x: x["final_score"], reverse=True)
 
 @app.websocket("/ws/ai-search")
 async def ws_search(ws: WebSocket):
@@ -705,9 +835,17 @@ async def ws_search(ws: WebSocket):
             total = 0
 
             try:
-                intent = understand_query(query)
+                query_data = expand_query_llm(query)
+                es_results, vec_results = await asyncio.gather(
+                    asyncio.to_thread(elastic_search_v2, query_data),
+                    asyncio.to_thread(vector_search_v2, query_data)
+                )
 
-                results = search_db(query, intent_type=intent)
+                results = hybrid_rank(es_results, vec_results)
+
+                if not results:
+                    intent = understand_query(query)
+                    results = search_db(query_data["normalized"], intent_type=intent)
 
                 results = apply_priority_sorting(results)
 
@@ -716,33 +854,11 @@ async def ws_search(ws: WebSocket):
             except Exception as e:
                 print("❌ SEARCH ERROR:", e)
 
-            await safe_send(ws, {
-                "type": "meta",
-                "total": total
-            })
-
-            for r in results[:10]:
-                await safe_send(ws, {
-                    "type": "result",
-                    "data": {
-                        **r,
-
-                        "sources": r.get("sources") or [
-                            {
-                                "label": "Hozpitality",
-                                "type": "primary",
-                                "url": r.get("url")
-                            }
-                        ],
-
-                        "confidence": "high" if r.get("is_paid") else "medium"
-                    }
-                })
-
             if ws.client_state.name != "CONNECTED":
                 break
 
-            await stream_answer(ws, query, results)
+            context_query = query_data["normalized"]
+            await stream_answer(ws, context_query, results)
 
             await safe_send(ws, {
                 "type": "done",
