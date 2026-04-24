@@ -29,8 +29,12 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2", device=device)
 app = FastAPI()
 
 redis_client = redis.Redis(host="redis", port=6379, decode_responses=True)
+
 es = Elasticsearch(
-    "http://elasticsearch:9200"
+    "http://elasticsearch:9200",
+    request_timeout=120,
+    max_retries=5,
+    retry_on_timeout=True
 )
 
 EMBED_DIM = embedder.get_sentence_embedding_dimension()
@@ -58,7 +62,7 @@ DB_CONFIG = {
 
 db_pool = SimpleConnectionPool(1, 10, **DB_CONFIG)
 
-def chunked_bulk(es, actions, chunk_size=5000):
+def chunked_bulk(es, actions, chunk_size=1000):
     for i in range(0, len(actions), chunk_size):
         chunk = actions[i:i+chunk_size]
 
@@ -67,8 +71,10 @@ def chunked_bulk(es, actions, chunk_size=5000):
         bulk(
             es,
             chunk,
-            request_timeout=60
+            request_timeout=120
         )
+
+        time.sleep(0.2) 
 
 def load_data(force_reindex=False):
     global documents, index
