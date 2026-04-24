@@ -607,6 +607,8 @@ async def stream_answer(ws, query, results):
     MAX_TOKENS = 1200
     count = 0
 
+    print("results and query", query , results)
+
     context = ""
     for i, r in enumerate(results[:5]):
         context += f"""
