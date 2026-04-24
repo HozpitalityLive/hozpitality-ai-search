@@ -705,11 +705,16 @@ async def stream_answer(ws, query, results):
     MAX_TOKENS = 800
     count = 0
 
-    print("results and query", results, query)
+    print("🚀 ENTERED STREAM ANSWER", flush=True)
+    print("QUERY:", query, flush=True)
+    print("RESULT COUNT:", len(results), flush=True)
+    print("RESULT :", results, flush=True)
 
     # ❗ HARD CONTROL: build STRICT structured context
     context_items = []
     for r in results[:5]:
+
+        
         url = build_link(r.get("slug"), r.get("category"))
 
         context_items.append({
@@ -768,6 +773,8 @@ DATA:
             ) as response:
 
                 async for line in response.aiter_lines():
+                    print("📡 STREAM LOOP RUNNING", flush=True)
+                    print("RAW:", line, flush=True)
                     if ws.client_state.name != "CONNECTED":
                         return
 
@@ -1143,6 +1150,8 @@ async def ws_search(ws: WebSocket):
             if intent != "general":
                 results = [r for r in results if r.get("category") == intent]
 
+            
+            print("🚨 BEFORE STREAM", len(results), query, flush=True)
             await stream_answer(ws, query, results)
 
             await safe_send(ws, {
