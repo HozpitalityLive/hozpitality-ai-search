@@ -601,61 +601,155 @@ def build_link(slug, category):
     else:
         return f"{base}/{slug}"
 
+# async def stream_answer(ws, query, results):
+#     import httpx
+
+#     MAX_TOKENS = 1200
+#     count = 0
+
+#     print("results and query", query , results)
+
+#     context = ""
+#     for i, r in enumerate(results[:5]):
+#         context += f"""
+# {i+1}.
+# Title: {r.get('title')}
+# Content: {r.get('content')}
+# Location: {r.get('location')}
+# URL: https://www.hozpitality.com/{r.get('slug', '')}
+# """
+
+#     model = "llama3-hoz" if results else "phi3-hoz"
+
+#     prompt = f"""
+# You are an AI search assistant for Hozpitality.
+
+# STRICT RULES:
+
+# 1. You MUST use the provided CONTEXT data
+# 2. You MUST include clickable links
+# 3. You MUST NOT invent jobs/products/companies
+# 4. You MUST NOT give generic career advice if results exist
+# 5. You MUST NOT hallucinate
+
+# OUTPUT RULES:
+
+# - Write like a natural chat response (not list)
+# - Mention 2–4 relevant results
+# - Each result MUST be clickable
+
+# LINK FORMAT (MANDATORY):
+# <a href="URL" target="_blank">TITLE</a>
+
+# - NEVER show raw URL
+# - NEVER break HTML
+
+# STYLE:
+# - conversational
+# - helpful
+# - clean
+
+# {STRICT_DATA_RULES}
+
+# USER QUERY:
+# {query}
+
+# CONTEXT:
+# {context}
+# """
+
+#     try:
+#         async with httpx.AsyncClient(timeout=None) as client:
+#             async with client.stream(
+#                 "POST",
+#                 OLLAMA_URL,
+#                 json={
+#                     "model": model,
+#                     "prompt": prompt,
+#                     "stream": True,
+#                     "options": {"num_predict": 600}
+#                 }
+#             ) as response:
+
+#                 async for line in response.aiter_lines():
+
+#                     if ws.client_state.name != "CONNECTED":
+#                         return
+
+#                     if not line:
+#                         continue
+
+#                     data = json.loads(line)
+
+#                     if "response" in data:
+#                         chunk = data["response"]
+
+#                         count += len(chunk) / 3
+#                         if count > MAX_TOKENS:
+#                             break
+
+#                         await safe_send(ws, {
+#                             "type": "token",
+#                             "data": chunk
+#                         })
+
+#                     if data.get("done"):
+#                         break
+
+#     except Exception as e:
+#         print("❌ STREAM ERROR:", e)
+
 async def stream_answer(ws, query, results):
     import httpx
 
-    MAX_TOKENS = 1200
+    MAX_TOKENS = 800
     count = 0
 
-    print("results and query", query , results)
+    # ❗ HARD CONTROL: build STRICT structured context
+    context_items = []
+    for r in results[:5]:
+        url = build_link(r.get("slug"), r.get("category"))
 
-    context = ""
-    for i, r in enumerate(results[:5]):
-        context += f"""
-{i+1}.
-Title: {r.get('title')}
-Content: {r.get('content')}
-Location: {r.get('location')}
-URL: https://www.hozpitality.com/{r.get('slug', '')}
-"""
+        context_items.append({
+            "title": r.get("title"),
+            "location": r.get("location"),
+            "category": r.get("category"),
+            "url": url
+        })
 
-    model = "llama3-hoz" if results else "phi3-hoz"
+    context_json = json.dumps(context_items, indent=2)
+
+    model = "phi3-hoz"  
 
     prompt = f"""
-You are an AI search assistant for Hozpitality.
+You are a STRICT search result formatter.
 
-STRICT RULES:
+CRITICAL RULES:
 
-1. You MUST use the provided CONTEXT data
-2. You MUST include clickable links
-3. You MUST NOT invent jobs/products/companies
-4. You MUST NOT give generic career advice if results exist
-5. You MUST NOT hallucinate
+- ONLY use the provided JSON data
+- DO NOT create new jobs, companies, or links
+- DO NOT modify URLs
+- DO NOT hallucinate anything
+- If data is missing → skip it
 
 OUTPUT RULES:
 
-- Write like a natural chat response (not list)
-- Mention 2–4 relevant results
-- Each result MUST be clickable
+- Write a natural conversational paragraph
+- Mention 2–4 items from JSON
+- Each item MUST include clickable HTML link
 
-LINK FORMAT (MANDATORY):
+LINK FORMAT:
 <a href="URL" target="_blank">TITLE</a>
 
-- NEVER show raw URL
-- NEVER break HTML
-
-STYLE:
-- conversational
-- helpful
-- clean
-
-{STRICT_DATA_RULES}
+- DO NOT output bullet points
+- DO NOT output raw JSON
+- DO NOT invent anything
 
 USER QUERY:
 {query}
 
-CONTEXT:
-{context}
+DATA:
+{context_json}
 """
 
     try:
@@ -667,12 +761,11 @@ CONTEXT:
                     "model": model,
                     "prompt": prompt,
                     "stream": True,
-                    "options": {"num_predict": 600}
+                    "options": {"num_predict": 300}
                 }
             ) as response:
 
                 async for line in response.aiter_lines():
-
                     if ws.client_state.name != "CONNECTED":
                         return
 
