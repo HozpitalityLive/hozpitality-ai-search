@@ -123,30 +123,33 @@ def load_data(force_reindex=False):
     print(f"📊 Rows fetched: {len(rows)}")
 
 
-    category_raw = (r[3] or "").lower()
-
-    if "job" in category_raw:
-        category = "job"
-    elif "company" in category_raw:
-        category = "company"
-    elif "candidate" in category_raw or "profile" in category_raw:
-        category = "professional"
-    elif "supplier" in category_raw:
-        category = "supplier"
-    elif "product" in category_raw:
-        category = "product"
-    elif "event" in category_raw:
-        category = "event"
-    elif "article" in category_raw or "blog" in category_raw:
-        category = "article"
-    elif "award" in category_raw:
-        category = "award"
-    elif "faq" in category_raw:
-        category = "faq"
-    else:
-        category = "general"
+    
 
     for r in rows:
+
+        category_raw = (r[3] or "").lower()
+
+        if "job" in category_raw:
+            category = "job"
+        elif "company" in category_raw:
+            category = "company"
+        elif "candidate" in category_raw or "profile" in category_raw:
+            category = "professional"
+        elif "supplier" in category_raw:
+            category = "supplier"
+        elif "product" in category_raw:
+            category = "product"
+        elif "event" in category_raw:
+            category = "event"
+        elif "article" in category_raw or "blog" in category_raw:
+            category = "article"
+        elif "award" in category_raw:
+            category = "award"
+        elif "faq" in category_raw:
+            category = "faq"
+        else:
+            category = "general"
+
         text = " ".join([
             r[1] or "",
             r[2] or "",
