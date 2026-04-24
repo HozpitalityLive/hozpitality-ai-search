@@ -579,6 +579,27 @@ User:
 #     except Exception as e:
 #         print("❌ STREAM ERROR:", e)
 
+def build_link(slug, category):
+    base = "https://www.hozpitality.com"
+
+    if category == "job":
+        return f"{base}/jobs/{slug}"
+    elif category == "company":
+        return f"{base}/company/{slug}"
+    elif category == "product":
+        return f"{base}/product/{slug}"
+    elif category == "supplier":
+        return f"{base}/supplier/{slug}"
+    elif category == "professional":
+        return f"{base}/{slug}"
+    elif category == "article":
+        return f"{base}/article/{slug}"
+    elif category == "event":
+        return f"{base}/event/{slug}"
+    elif category == "award":
+        return f"{base}/award/{slug}"
+    else:
+        return f"{base}/{slug}"
 
 async def stream_answer(ws, query, results):
     import httpx
@@ -599,43 +620,39 @@ URL: https://www.hozpitality.com/{r.get('slug', '')}
     model = "llama3-hoz" if results else "phi3-hoz"
 
     prompt = f"""
-You are an AI assistant for Hozpitality.
+You are an AI search assistant for Hozpitality.
 
-DOMAIN:
-- Hospitality industry ONLY (jobs, hotels, companies, awards, articles)
-- NEVER answer outside this domain
+STRICT RULES:
 
-HARD REQUIREMENTS:
-- Include at least 2 links from CONTEXT
-- If links exist → DO NOT answer without links
-- NEVER give generic advice if job results exist
+1. You MUST use the provided CONTEXT data
+2. You MUST include clickable links
+3. You MUST NOT invent jobs/products/companies
+4. You MUST NOT give generic career advice if results exist
+5. You MUST NOT hallucinate
 
-STRICT FORMAT RULES:
+OUTPUT RULES:
 
-- DO NOT output lists
-- DO NOT output bullet points
-- Write natural paragraphs only
+- Write like a natural chat response (not list)
+- Mention 2–4 relevant results
+- Each result MUST be clickable
 
-LINK RULE (MANDATORY):
-- Use EXACT format:
+LINK FORMAT (MANDATORY):
 <a href="URL" target="_blank">TITLE</a>
 
 - NEVER show raw URL
 - NEVER break HTML
-- ONLY wrap the title
 
 STYLE:
-- Conversational explanation
-- Mention 2–4 relevant items naturally
-- Keep it clean and readable
-
+- conversational
+- helpful
+- clean
 
 {STRICT_DATA_RULES}
 
-User Query:
+USER QUERY:
 {query}
 
-Context Data:
+CONTEXT:
 {context}
 """
 
@@ -648,7 +665,7 @@ Context Data:
                     "model": model,
                     "prompt": prompt,
                     "stream": True,
-                    "options": {"num_predict": 900}
+                    "options": {"num_predict": 600}
                 }
             ) as response:
 
@@ -804,7 +821,8 @@ def elastic_search_v2(query_data, intent):
         "multi_match": {
             "query": query_data["normalized"],
             "fields": ["title^4", "content^2"],
-            "operator": "and"
+            "operator": "or",
+            "minimum_should_match": "60%"
         }
     })
 
@@ -872,8 +890,8 @@ def vector_search_v2(query_data):
 
     return results
 
-def hybrid_search_v2(query_data):
-    es_results = elastic_search_v2(query_data)
+def hybrid_search_v2(query_data, intent):
+    es_results = elastic_search_v2(query_data, intent)
     vec_results = vector_search_v2(query_data)
 
     combined = {}
@@ -998,8 +1016,7 @@ async def ws_search(ws: WebSocket):
             total = 0
 
             try:
-                if not results:
-                    intent = detect_intent_llm(query)
+                intent = detect_intent_llm(query)
 
                 query_data = expand_query_llm(query)
 
@@ -1008,6 +1025,7 @@ async def ws_search(ws: WebSocket):
                     asyncio.to_thread(vector_search_v2, query_data)
                 )
 
+                es_results = filter_by_intent(es_results, intent)
                 vec_results = filter_by_intent(vec_results, intent)
 
                 results = hybrid_rank(es_results, vec_results)
@@ -1025,8 +1043,10 @@ async def ws_search(ws: WebSocket):
             if ws.client_state.name != "CONNECTED":
                 break
 
-            context_query = query_data["normalized"]
-            await stream_answer(ws, context_query, results)
+            if intent != "general":
+                results = [r for r in results if r.get("category") == intent]
+
+            await stream_answer(ws, query, results)
 
             await safe_send(ws, {
                 "type": "done",
