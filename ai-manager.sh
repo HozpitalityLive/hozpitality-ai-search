@@ -92,7 +92,7 @@ case $choice in
   
   10)
     echo "🔥 Running ES reindex..."
-    docker exec -it ai-search-api python es_indexer.py
+    docker exec -it ai-search-api python3 es_indexer.py
     ;;
   
   11)
