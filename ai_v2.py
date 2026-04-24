@@ -255,6 +255,67 @@ def choose_model(query, results):
 
 
 def detect_intent_llm(query: str):
+    q = query.lower().strip()
+
+    job_keywords = [
+        "job", "jobs", "hiring", "vacancy", "vacancies",
+        "apply", "opening", "career", "position"
+    ]
+
+    professional_keywords = [
+        "candidate", "candidates", "profile", "profiles",
+        "cv", "resume", "talent"
+    ]
+
+    company_keywords = [
+        "company", "companies", "hotel", "restaurant",
+        "brand", "group"
+    ]
+
+    supplier_keywords = [
+        "supplier", "suppliers", "vendor", "vendors"
+    ]
+
+    product_keywords = [
+        "product", "products", "equipment", "items"
+    ]
+
+    event_keywords = [
+        "event", "events", "conference", "expo"
+    ]
+
+    article_keywords = [
+        "article", "blog", "news"
+    ]
+
+    faq_keywords = [
+        "how", "why", "what", "guide", "steps", "process"
+    ]
+
+    if any(k in q for k in job_keywords):
+        return "job"
+
+    if any(k in q for k in professional_keywords):
+        return "professional"
+
+    if any(k in q for k in supplier_keywords):
+        return "supplier"
+
+    if any(k in q for k in product_keywords):
+        return "product"
+
+    if any(k in q for k in event_keywords):
+        return "event"
+
+    if any(k in q for k in article_keywords):
+        return "article"
+
+    if any(k in q for k in company_keywords):
+        return "company"
+
+    if any(k in q for k in faq_keywords):
+        return "faq"
+
     cache_k = f"intent:{query}"
     cached = redis_client.get(cache_k)
 
