@@ -601,6 +601,15 @@ URL: https://www.hozpitality.com/{r.get('slug', '')}
     prompt = f"""
 You are an AI assistant for Hozpitality.
 
+DOMAIN:
+- Hospitality industry ONLY (jobs, hotels, companies, awards, articles)
+- NEVER answer outside this domain
+
+HARD REQUIREMENTS:
+- Include at least 2 links from CONTEXT
+- If links exist → DO NOT answer without links
+- NEVER give generic advice if job results exist
+
 STRICT FORMAT RULES:
 
 - DO NOT output lists
@@ -620,6 +629,8 @@ STYLE:
 - Mention 2–4 relevant items naturally
 - Keep it clean and readable
 
+
+{STRICT_DATA_RULES}
 
 User Query:
 {query}
@@ -1072,7 +1083,7 @@ def load_faiss_only():
             category = "faq"
         else:
             category = "general"
-            
+
         text = " ".join([
             r[1] or "",
             r[2] or "",
@@ -1085,7 +1096,7 @@ def load_faiss_only():
             "id": r[0],
             "title": r[1],
             "content": (r[2] or "")[:200],
-            "category": r[3],
+            "category": category,
             "location": r[4],
             "slug": r[5],
         })
