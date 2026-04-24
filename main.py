@@ -19,29 +19,45 @@ def startup():
     print("\n🚀 STARTING SYSTEM", flush=True)
 
     try:
-        es_ready = False
-
+        # ✅ STEP 1: Wait for ES ping
         for i in range(30):
             try:
-                print(f"⏳ Waiting for ES... {i+1}/30", flush=True)
+                print(f"⏳ ES ping {i+1}/30", flush=True)
 
                 if es.ping():
-                    print("✅ Elasticsearch connected", flush=True)
+                    print("✅ ES ping OK", flush=True)
+                    break
+            except Exception as e:
+                print("❌ ES ping error:", e)
 
-                    time.sleep(5)
+            time.sleep(2)
+        else:
+            print("❌ ES not reachable", flush=True)
+            return
 
-                    es_ready = True
+        # ✅ STEP 2: Wait for ES cluster health (IMPORTANT)
+        for i in range(20):
+            try:
+                health = es.cluster.health(
+                    wait_for_status="yellow",
+                    request_timeout=5
+                )
+
+                print(f"📊 ES health: {health['status']}", flush=True)
+
+                if health["status"] in ["yellow", "green"]:
+                    print("✅ ES cluster ready", flush=True)
                     break
 
             except Exception as e:
-                print("❌ ES ping error:", e, flush=True)
+                print("⏳ Waiting ES cluster...", e)
 
             time.sleep(2)
+        else:
+            print("❌ ES cluster not ready → skipping load", flush=True)
+            return
 
-        if not es_ready:
-            print("❌ Elasticsearch NOT ready after retries", flush=True)
-            return  # safe exit
-
+        # ✅ STEP 3: Now safe to load
         exists = es.indices.exists(index="hozpitality")
 
         if exists:
@@ -49,14 +65,14 @@ def startup():
             print(f"📊 ES docs: {count}", flush=True)
 
             if count == 0:
-                print("⚡ Empty index → full load_data()", flush=True)
+                print("⚡ Empty index → full reindex", flush=True)
                 load_data(force_reindex=True)
             else:
-                print("✅ ES ready → rebuild FAISS only", flush=True)
+                print("✅ ES ready → FAISS rebuild only", flush=True)
                 load_data(force_reindex=False)
 
         else:
-            print("⚡ First time → creating index + FAISS", flush=True)
+            print("⚡ First time → full reindex", flush=True)
             load_data(force_reindex=True)
 
     except Exception as e:

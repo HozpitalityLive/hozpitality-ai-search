@@ -58,6 +58,18 @@ DB_CONFIG = {
 
 db_pool = SimpleConnectionPool(1, 10, **DB_CONFIG)
 
+def chunked_bulk(es, actions, chunk_size=5000):
+    for i in range(0, len(actions), chunk_size):
+        chunk = actions[i:i+chunk_size]
+
+        print(f"⚡ ES chunk {i} → {i+len(chunk)}", flush=True)
+
+        bulk(
+            es,
+            chunk,
+            request_timeout=60
+        )
+
 def load_data(force_reindex=False):
     global documents, index
 
@@ -99,7 +111,8 @@ def load_data(force_reindex=False):
                             "location": {"type": "keyword"}
                         }
                     }
-                }
+                },
+                request_timeout=30
             )
 
             print("✅ ES index created")
@@ -187,7 +200,7 @@ def load_data(force_reindex=False):
     # 🔹 Bulk insert only if needed
     if actions:
         print("⚡ Bulk indexing ES...")
-        bulk(es, actions)
+        chunked_bulk(es, actions)
         es.indices.refresh(index="hozpitality")
 
     # 🔹 Build FAISS (always needed)
@@ -1019,5 +1032,18 @@ def startup():
 
 @app.post("/reindex")
 def reindex():
-    load_data(force_reindex=True)
-    return {"status": "reindexed"}
+    try:
+        if not es.ping():
+            return {"status": "error", "message": "ES not reachable"}
+
+        health = es.cluster.health(request_timeout=5)
+
+        if health["status"] == "red":
+            return {"status": "error", "message": "ES not ready"}
+
+        load_data(force_reindex=True)
+
+        return {"status": "reindexed"}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
