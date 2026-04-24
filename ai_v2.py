@@ -122,11 +122,36 @@ def load_data(force_reindex=False):
 
     print(f"📊 Rows fetched: {len(rows)}")
 
+
+    category_raw = (r[3] or "").lower()
+
+    if "job" in category_raw:
+        category = "job"
+    elif "company" in category_raw:
+        category = "company"
+    elif "candidate" in category_raw or "profile" in category_raw:
+        category = "professional"
+    elif "supplier" in category_raw:
+        category = "supplier"
+    elif "product" in category_raw:
+        category = "product"
+    elif "event" in category_raw:
+        category = "event"
+    elif "article" in category_raw or "blog" in category_raw:
+        category = "article"
+    elif "award" in category_raw:
+        category = "award"
+    elif "faq" in category_raw:
+        category = "faq"
+    else:
+        category = "general"
+
     for r in rows:
         text = " ".join([
             r[1] or "",
             r[2] or "",
-            r[3] or "",   
+            r[3] or "",  
+            category, 
             r[4] or "",   
         ])
         texts.append(text)
@@ -135,7 +160,7 @@ def load_data(force_reindex=False):
             "id": r[0],
             "title": r[1],
             "content": (r[2] or "")[:200],
-            "category": r[3],
+            "category": category,
             "location": r[4],
             "slug": r[5],
             "score": 1.0
@@ -151,7 +176,7 @@ def load_data(force_reindex=False):
                 "_source": {
                     "title": r[1],
                     "content": r[2],
-                    "category": r[3],
+                    "category": category,
                     "location": r[4]
                 }
             })
@@ -207,15 +232,72 @@ def choose_model(query, results):
     return "llama3-hoz"
 
 
-def understand_query(q):
-    q = q.lower()
+def detect_intent_llm(query: str):
+    cache_k = f"intent:{query}"
+    cached = redis_client.get(cache_k)
 
-    intent = "general"
-    if "job" in q: intent = "job"
-    elif "event" in q: intent = "event"
-    elif "company" in q: intent = "company"
+    if cached:
+        return cached
 
-    return intent
+    prompt = f"""
+You are an intent classifier for a hospitality platform.
+
+User Query: "{query}"
+
+Available categories:
+- job
+- company
+- professional
+- supplier
+- product
+- event
+- article
+- award
+- faq
+- general
+
+RULES:
+- Return ONLY ONE category
+- No explanation
+- No extra text
+
+Examples:
+"find waiter job in dubai" → job
+"best hotels in dubai" → company
+"chef profiles" → professional
+"hotel equipment suppliers" → supplier
+"what is hospitality" → faq
+
+OUTPUT:
+"""
+
+    try:
+        res = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": "phi3-hoz",
+                "prompt": prompt,
+                "stream": False
+            },
+            timeout=4
+        )
+
+        intent = res.json().get("response", "").strip().lower()
+
+        valid = {
+            "job","company","professional","supplier",
+            "product","event","article","award","faq","general"
+        }
+
+        if intent not in valid:
+            intent = "general"
+
+        redis_client.setex(cache_k, 600, intent)
+        return intent
+
+    except Exception as e:
+        print("❌ intent error:", e)
+        return "general"
 
 
 def vector_search(query):
@@ -614,7 +696,14 @@ OUTPUT JSON ONLY:
         "locations": []
     }
 
-def elastic_search_v2(query_data):
+
+def filter_by_intent(results, intent):
+    if intent == "general":
+        return results
+
+    return [r for r in results if r.get("category") == intent]
+
+def elastic_search_v2(query_data, intent):
     should = []
 
     should.append({
@@ -645,15 +734,20 @@ def elastic_search_v2(query_data):
             }
         })
 
+    filters = []
+
+    if intent != "general":
+        filters.append({"term": {"category": intent}})
+
     res = es.search(
         index="hozpitality",
         query={
             "bool": {
-                "should": should,
-                "minimum_should_match": 1
+                "must": should,
+                "filter": filters
             }
         },
-        size=50
+        size=30
     )
 
     results = []
@@ -730,31 +824,6 @@ def hybrid_search_v2(query_data):
             unique.append(r)
 
     return sorted(unique, key=lambda x: x["final_score"], reverse=True)
-
-
-def merge_results(es_results, vec_results):
-    combined = {}
-
-    for r in es_results:
-        combined[r["title"]] = r
-
-    for r in vec_results:
-        if r["title"] in combined:
-            combined[r["title"]]["vector_score"] = r.get("vector_score", 0)
-        else:
-            combined[r["title"]] = r
-
-    return list(combined.values())
-
-async def run_search(query_data):
-    loop = asyncio.get_event_loop()
-
-    es_task = loop.run_in_executor(None, elastic_search_v2, query_data)
-    vec_task = loop.run_in_executor(None, vector_search_v2, query_data)
-
-    es_results, vec_results = await asyncio.gather(es_task, vec_task)
-
-    return merge_results(es_results, vec_results)
 
 def hybrid_rank(es_results, vec_results):
     combined = {}
@@ -835,16 +904,21 @@ async def ws_search(ws: WebSocket):
             total = 0
 
             try:
+                if not results:
+                    intent = detect_intent_llm(query)
+
                 query_data = expand_query_llm(query)
+
                 es_results, vec_results = await asyncio.gather(
-                    asyncio.to_thread(elastic_search_v2, query_data),
+                    asyncio.to_thread(elastic_search_v2, query_data, intent),
                     asyncio.to_thread(vector_search_v2, query_data)
                 )
+
+                vec_results = filter_by_intent(vec_results, intent)
 
                 results = hybrid_rank(es_results, vec_results)
 
                 if not results:
-                    intent = understand_query(query)
                     results = search_db(query_data["normalized"], intent_type=intent)
 
                 results = apply_priority_sorting(results)
