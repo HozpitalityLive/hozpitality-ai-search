@@ -705,6 +705,8 @@ async def stream_answer(ws, query, results):
     MAX_TOKENS = 800
     count = 0
 
+    print("results and query", results, query)
+
     # ❗ HARD CONTROL: build STRICT structured context
     context_items = []
     for r in results[:5]:
