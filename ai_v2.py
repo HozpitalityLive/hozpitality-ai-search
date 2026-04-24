@@ -1029,88 +1029,75 @@ async def ws_search(ws: WebSocket):
         print("🔌 Connection closed")
         pass
 
+def load_faiss_only():
+    global documents, index
+
+    print("⚡ Loading FAISS only (no ES)")
+
+    documents = []
+
+    conn = db_pool.getconn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, title, content, category_text, location_text, slug
+        FROM master_search_mastersearchindex
+        WHERE is_live = TRUE
+        LIMIT 50000
+    """)
+
+    rows = cur.fetchall()
+    texts = []
+
+    for r in rows:
+        category_raw = (r[3] or "").lower()
+
+        if "job" in category_raw:
+            category = "job"
+        elif "company" in category_raw:
+            category = "company"
+        elif "candidate" in category_raw or "profile" in category_raw:
+            category = "professional"
+        elif "supplier" in category_raw:
+            category = "supplier"
+        elif "product" in category_raw:
+            category = "product"
+        elif "event" in category_raw:
+            category = "event"
+        elif "article" in category_raw or "blog" in category_raw:
+            category = "article"
+        elif "award" in category_raw:
+            category = "award"
+        elif "faq" in category_raw:
+            category = "faq"
+        else:
+            category = "general"
+            
+        text = " ".join([
+            r[1] or "",
+            r[2] or "",
+            category, 
+            r[4] or ""
+        ])
+        texts.append(text)
+
+        documents.append({
+            "id": r[0],
+            "title": r[1],
+            "content": (r[2] or "")[:200],
+            "category": r[3],
+            "location": r[4],
+            "slug": r[5],
+        })
+
+    vectors = embedder.encode(texts, normalize_embeddings=True)
+    index.add(np.array(vectors))
+
+    db_pool.putconn(conn)
+
+    print(f"✅ FAISS ready: {index.ntotal}")
 
 @app.on_event("startup")
 def startup():
-    print("\n🚀 ===== STARTUP BEGIN =====", flush=True)
-
-    print("⏳ Waiting for Elasticsearch...", flush=True)
-
-    es_ready = False
-
-    for i in range(30):  
-        try:
-            print(f"🔁 Elasticsearch {i+1}/30 - pinging ES...", flush=True)
-
-            if es.ping():
-                print("✅ Elasticsearch ping successful", flush=True)
-
-                try:
-                    health = es.cluster.health()
-                    print(f"📊 ES Health: {health['status']}", flush=True)
-                except Exception as e:
-                    print(f"⚠️ Failed to get ES health: {e}", flush=True)
-
-                print("⏳ Extra wait for ES readiness (5s)...", flush=True)
-                time.sleep(5)
-
-                es_ready = True
-                break
-
-        except Exception as e:
-            print(f"❌ ES ping failed: {e}", flush=True)
-
-        time.sleep(2)
-
-    if not es_ready:
-        print("❌ Elasticsearch NOT reachable after retries", flush=True)
-    else:
-        print("✅ Elasticsearch is fully ready", flush=True)
-
-    try:
-        exists = es.indices.exists(index="hozpitality")
-        print(f"🔍 Index exists before load: {exists}", flush=True)
-    except Exception as e:
-        print(f"❌ Failed to check index existence: {e}", flush=True)
-
-    print("🚀 Calling load_data()...", flush=True)
-
-    try:
-        load_data()
-        print("✅ load_data() completed", flush=True)
-    except Exception as e:
-        print("❌ load_data() FAILED:", str(e), flush=True)
-        traceback.print_exc()
-
-    try:
-        exists = es.indices.exists(index="hozpitality")
-        print(f"🔍 Index exists after load: {exists}", flush=True)
-
-        if exists:
-            count = es.count(index="hozpitality")["count"]
-            print(f"📊 Indexed documents: {count}", flush=True)
-
-    except Exception as e:
-        print(f"❌ Post-load verification failed: {e}", flush=True)
-
-    print("🏁 ===== STARTUP END =====\n", flush=True)
-
-
-
-@app.post("/reindex")
-def reindex():
-    try:
-        if not es.ping():
-            return {"status": "error", "message": "ES not reachable"}
-
-        health = es.cluster.health(request_timeout=5)
-
-        if health["status"] == "red":
-            return {"status": "error", "message": "ES not ready"}
-
-        load_data(force_reindex=True)
-
-        return {"status": "reindexed"}
-
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    print("🚀 API started (NO ES TOUCH)", flush=True)
+    load_faiss_only()

@@ -20,7 +20,9 @@ echo "5) 📜 Logs"
 echo "6) 🧪 Check GPU"
 echo "7) 📊 Status"
 echo "8) 🧠 Ollama Models"
-echo "9) 🧹 Clean Reset (ONLY THIS PROJECT)"
+echo "9) 🧹 SAFE RESET (ONLY THIS PROJECT)"
+echo "10) 🔄 Reindex ES (manual)"
+echo "11) 💀 Full Reset (DELETE ES DATA)"
 echo "0) ❌ Exit"
 echo "========================================"
 
@@ -76,13 +78,31 @@ case $choice in
     ;;
 
   9)
-    echo "⚠️ WARNING: This will reset ONLY this project (safe)"
+    echo "⚠️ SAFE RESET (keeps Elasticsearch data)"
     read -p "Are you sure? (yes/no): " confirm
 
     if [ "$confirm" = "yes" ]; then
-      echo "🧹 Removing ONLY project containers + volumes..."
-      docker-compose down -v   # ✅ only project volumes
-      echo "✅ Clean reset done (safe)"
+      echo "🧹 Removing containers ONLY (keeping volumes)..."
+      docker-compose down   # ❗ NO -v
+      echo "✅ Safe reset done (ES preserved)"
+    else
+      echo "❌ Cancelled"
+    fi
+    ;;
+  
+  10)
+    echo "🔥 Running ES reindex..."
+    docker exec -it ai-search-api python es_indexer.py
+    ;;
+  
+  11)
+    echo "🚨 FULL RESET (WILL DELETE ES DATA)"
+    read -p "Type DELETE to confirm: " confirm
+
+    if [ "$confirm" = "DELETE" ]; then
+      echo "🔥 Removing ALL containers + volumes..."
+      docker-compose down -v
+      echo "💀 Everything wiped (including ES index)"
     else
       echo "❌ Cancelled"
     fi
