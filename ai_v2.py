@@ -1305,7 +1305,8 @@ def load_faiss_only():
             r[1] or "",
             r[2] or "",
             category, 
-            r[4] or ""
+            r[4] or "",
+            r[5] or ""
         ])
         texts.append(text)
 
