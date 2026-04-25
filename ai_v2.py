@@ -1005,6 +1005,7 @@ def elastic_search_v2(query_data, intent):
         print("➡️ ES HIT:", {
             "title": hit["_source"].get("title"),
             "category": hit["_source"].get("category"),
+            "slug": hit["_score"].get("slug") ,
             "score": hit["_score"]
         }, flush=True)
         doc = hit["_source"]
