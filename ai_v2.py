@@ -257,6 +257,8 @@ def choose_model(query, results):
 def detect_intent_llm(query: str):
     q = query.lower().strip()
 
+    print("🎯 Detect Intent LLM:", query, flush=True)
+
     job_keywords = [
         "job", "jobs", "hiring", "vacancy", "vacancies",
         "apply", "opening", "career", "position"
@@ -320,7 +322,9 @@ def detect_intent_llm(query: str):
     cached = redis_client.get(cache_k)
 
     if cached:
+        print("🎯 Cached:", cached, flush=True)
         return cached
+        
 
     prompt = f"""
 You are an intent classifier for a hospitality platform.
@@ -366,6 +370,9 @@ OUTPUT:
         )
 
         intent = res.json().get("response", "").strip().lower()
+
+        print("🎯  Response:", res, flush=True)
+        print("🎯 Intent Response:", intent, flush=True)
 
         valid = {
             "job","company","professional","supplier",
@@ -717,16 +724,25 @@ async def stream_answer(ws, query, results):
         
         url = build_link(r.get("slug"), r.get("category"))
 
+        print("🔗 GENERATED URL:", url, flush=True)
+
         context_items.append({
             "title": r.get("title"),
             "location": r.get("location"),
             "category": r.get("category"),
             "url": url
         })
+    
+    for r in results[:5]:
+        print("📄 STREAM ITEM:", {
+            "title": r.get("title"),
+            "category": r.get("category"),
+            "slug": r.get("slug")
+        }, flush=True)
 
     context_json = json.dumps(context_items, indent=2)
 
-    model = "phi3-hoz"  
+    model = "llama3-hoz"  
 
     prompt = f"""
 You are a STRICT search result formatter.
@@ -854,6 +870,8 @@ def expand_query_llm(query: str):
     cache_k = f"expand:{query}"
     cached = redis_client.get(cache_k)
 
+    print("🧩 Expanding query cached...", cached, flush=True)
+
     if cached:
         return json.loads(cached)
 
@@ -893,11 +911,16 @@ OUTPUT JSON ONLY:
         import re
         match = re.search(r'\{.*\}', res.json().get("response", ""), re.DOTALL)
 
+        print("🧩 Expanding query response...", res, flush=True)
+
         if match:
             data = json.loads(match.group())
 
+            print("🧩 Expanding data response...", data, flush=True)
+
             data["roles"] = data.get("roles", [])[:5]
             data["locations"] = data.get("locations", [])[:3]
+
 
             redis_client.setex(cache_k, 600, json.dumps(data))
             return data
@@ -955,6 +978,13 @@ def elastic_search_v2(query_data, intent):
     if intent != "general":
         filters.append({"term": {"category": intent}})
 
+    print("🔎 ES QUERY:", json.dumps({
+        "normalized": query_data["normalized"],
+        "roles": query_data.get("roles"),
+        "locations": query_data.get("locations"),
+        "intent": intent
+    }, indent=2), flush=True)
+
     res = es.search(
         index="hozpitality",
         query={
@@ -966,8 +996,15 @@ def elastic_search_v2(query_data, intent):
         size=30
     )
 
+    print(f"📊 ES RAW HITS: {len(res['hits']['hits'])}", flush=True)
+
     results = []
     for hit in res["hits"]["hits"]:
+        print("➡️ ES HIT:", {
+            "title": hit["_source"].get("title"),
+            "category": hit["_source"].get("category"),
+            "score": hit["_score"]
+        }, flush=True)
         doc = hit["_source"]
         doc["bm25_score"] = hit["_score"]
         results.append(doc)
@@ -975,6 +1012,7 @@ def elastic_search_v2(query_data, intent):
     return results
 
 def vector_search_v2(query_data):
+    print("🧠 VECTOR SEARCH INPUT:", full_text, flush=True)
     full_text = " ".join([
         query_data["normalized"],
         " ".join(query_data.get("roles", [])),
@@ -987,6 +1025,7 @@ def vector_search_v2(query_data):
 
     results = []
     for idx, score in zip(I[0], D[0]):
+        print("🧬 VECTOR HIT:", idx, float(score), flush=True)
         if idx < len(documents):
             doc = documents[idx].copy()
             doc["vector_score"] = float(score)
@@ -1043,6 +1082,7 @@ def hybrid_search_v2(query_data, intent):
 
 def hybrid_rank(es_results, vec_results):
     combined = {}
+    print("⚖️ HYBRID INPUT:", len(es_results), len(vec_results), flush=True)
 
     for r in es_results:
         combined[r["title"]] = r
@@ -1074,6 +1114,15 @@ def hybrid_rank(es_results, vec_results):
             (0.1 if r.get("is_paid") else 0)
         )
 
+    for r in final[:5]:
+        print("🏆 FINAL SCORE:", {
+            "title": r.get("title"),
+            "bm25": r.get("bm25_score"),
+            "vector": r.get("vector_score"),
+            "final": r.get("final_score"),
+            "category": r.get("category")
+        }, flush=True)
+
     return sorted(final, key=lambda x: x["final_score"], reverse=True)
 
 @app.websocket("/ws/ai-search")
@@ -1098,11 +1147,15 @@ async def ws_search(ws: WebSocket):
             query = data.get("query", "").strip()
             user_id = data.get("user_id", 0)
 
+            print(f"🔍 Query: {query}")
+
             if not query:
                 await safe_send(ws, {"type": "error", "message": "Query missing"})
                 continue
 
             print(f"🔍 Query: {query}")
+            print("🧠 RAW INPUT:", data, flush=True)
+            print("👤 USER ID:", user_id, flush=True)
 
             intro = ""
             try:
@@ -1120,19 +1173,34 @@ async def ws_search(ws: WebSocket):
             total = 0
 
             try:
+                print("🧭 Detecting intent...", flush=True)
                 intent = detect_intent_llm(query)
+                print("🎯 INTENT:", intent, flush=True)
 
+                print("🧩 Expanding query...", flush=True)
                 query_data = expand_query_llm(query)
+
+                print("📦 QUERY DATA:", json.dumps(query_data, indent=2), flush=True)
 
                 es_results, vec_results = await asyncio.gather(
                     asyncio.to_thread(elastic_search_v2, query_data, intent),
                     asyncio.to_thread(vector_search_v2, query_data)
                 )
 
+                print("📦 BEFORE FILTER:", len(results), flush=True)
+
                 es_results = filter_by_intent(es_results, intent)
                 vec_results = filter_by_intent(vec_results, intent)
 
+                print("📦 AFTER FILTER:", len(results), flush=True)
+
                 results = hybrid_rank(es_results, vec_results)
+
+                if not results:
+                    print("❌ NO RESULTS FOUND", flush=True)
+                    print("🔍 DEBUG QUERY:", query, flush=True)
+                    print("🧠 QUERY DATA:", query_data, flush=True)
+                    print("🎯 INTENT:", intent, flush=True)
 
                 if not results:
                     results = search_db(query_data["normalized"], intent_type=intent)
