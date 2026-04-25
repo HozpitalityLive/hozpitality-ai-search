@@ -114,7 +114,8 @@ def load_data(force_reindex=False):
                             "title": {"type": "text"},
                             "content": {"type": "text"},
                             "category": {"type": "keyword"},
-                            "location": {"type": "keyword"}
+                            "location": {"type": "keyword"},
+                            "slug": {"type": "keyword"} 
                         }
                     }
                 },
@@ -199,7 +200,8 @@ def load_data(force_reindex=False):
                     "title": r[1],
                     "content": r[2],
                     "category": category,
-                    "location": r[4]
+                    "location": r[4],
+                    "slug": r[5]
                 }
             })
 
@@ -1006,7 +1008,10 @@ def elastic_search_v2(query_data, intent):
             "score": hit["_score"]
         }, flush=True)
         doc = hit["_source"]
+        doc["slug"] = hit["_source"].get("slug")  # ensure exists
         doc["bm25_score"] = hit["_score"]
+
+        print("🧾 FINAL DOC:", doc, flush=True)
         results.append(doc)
 
     return results
