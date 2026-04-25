@@ -46,7 +46,8 @@ def create_index():
                     "title": {"type": "text"},
                     "content": {"type": "text"},
                     "category": {"type": "keyword"},
-                    "location": {"type": "keyword"}
+                    "location": {"type": "keyword"},
+                    "slug": {"type": "keyword"}
                 }
             }
         },
@@ -69,7 +70,7 @@ def run_reindex():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, title, content, category_text, location_text
+        SELECT id, title, content, category_text, location_text, slug
         FROM master_search_mastersearchindex
         WHERE is_live = TRUE
     """)
@@ -108,7 +109,8 @@ def run_reindex():
                 "title": r[1],
                 "content": r[2],
                 "category": category,
-                "location": r[4]
+                "location": r[4],
+                "slug": r[5]
             }
         })
 
