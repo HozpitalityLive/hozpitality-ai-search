@@ -1012,12 +1012,14 @@ def elastic_search_v2(query_data, intent):
     return results
 
 def vector_search_v2(query_data):
-    print("🧠 VECTOR SEARCH INPUT:", full_text, flush=True)
     full_text = " ".join([
         query_data["normalized"],
         " ".join(query_data.get("roles", [])),
         " ".join(query_data.get("locations", []))
     ])
+
+    print("🧠 VECTOR SEARCH INPUT:", full_text, flush=True)
+
 
     query_vec = embedder.encode([full_text], normalize_embeddings=True)
 
@@ -1182,10 +1184,18 @@ async def ws_search(ws: WebSocket):
 
                 print("📦 QUERY DATA:", json.dumps(query_data, indent=2), flush=True)
 
-                es_results, vec_results = await asyncio.gather(
-                    asyncio.to_thread(elastic_search_v2, query_data, intent),
-                    asyncio.to_thread(vector_search_v2, query_data)
-                )
+                es_results = []
+                vec_results = []
+
+                try:
+                    es_results = await asyncio.to_thread(elastic_search_v2, query_data, intent)
+                except Exception as e:
+                    print("❌ ES ERROR:", e)
+
+                try:
+                    vec_results = await asyncio.to_thread(vector_search_v2, query_data)
+                except Exception as e:
+                    print("❌ VECTOR ERROR:", e)
 
                 print("📦 BEFORE FILTER:", len(results), flush=True)
 
@@ -1194,7 +1204,11 @@ async def ws_search(ws: WebSocket):
 
                 print("📦 AFTER FILTER:", len(results), flush=True)
 
-                results = hybrid_rank(es_results, vec_results)
+                if vec_results:
+                    results = hybrid_rank(es_results, vec_results)
+                else:
+                    print("⚠️ VECTOR FAILED → USING ES ONLY", flush=True)
+                    results = es_results
 
                 if not results:
                     print("❌ NO RESULTS FOUND", flush=True)
@@ -1217,7 +1231,11 @@ async def ws_search(ws: WebSocket):
 
             if intent != "general":
                 results = [r for r in results if r.get("category") == intent]
-
+            
+            if results:
+                print("✅ USING REAL DATA:", len(results), flush=True)
+            else:
+                print("❌ NO DATA → LLM fallback", flush=True)
             
             print("🚨 BEFORE STREAM", len(results), query, flush=True)
             await stream_answer(ws, query, results)
