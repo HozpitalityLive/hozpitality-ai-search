@@ -711,7 +711,7 @@ def build_link(slug, category):
 async def stream_answer(ws, query, results):
     import httpx
 
-    MAX_TOKENS = 800
+    MAX_TOKENS = 1200
     count = 0
 
     print("🚀 ENTERED STREAM ANSWER", flush=True)
@@ -747,7 +747,7 @@ async def stream_answer(ws, query, results):
     model = "llama3-hoz"  
 
     prompt = f"""
-You are a STRICT search result formatter.
+You are a AI Search Assitant for Hozpitality and STRICT search result formatter.
 
 CRITICAL RULES:
 
@@ -756,15 +756,16 @@ CRITICAL RULES:
 - DO NOT modify URLs
 - DO NOT hallucinate anything
 - If data is missing → skip it
+- Return clean Markdown
 
 OUTPUT RULES:
 
 - Write a natural conversational paragraph
 - Mention 2–4 items from JSON
-- Each item MUST include clickable HTML link
+- Each item must be clickable Markdown link
 
 LINK FORMAT:
-<a href="URL" target="_blank">TITLE</a>
+[TITLE](URL)
 
 - DO NOT output bullet points
 - DO NOT output raw JSON
