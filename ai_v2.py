@@ -708,91 +708,211 @@ def build_link(slug, category):
 #     except Exception as e:
 #         print("❌ STREAM ERROR:", e)
 
+# async def stream_answer(ws, query, results):
+#     import httpx
+
+#     MAX_TOKENS = 1200
+#     count = 0
+
+#     print("🚀 ENTERED STREAM ANSWER", flush=True)
+#     print("QUERY:", query, flush=True)
+#     print("RESULT COUNT:", len(results), flush=True)
+#     print("RESULT :", results, flush=True)
+
+#     context_items = []
+#     for r in results[:5]:
+
+        
+#         url = build_link(r.get("slug"), r.get("category"))
+
+#         print("🔗 GENERATED URL:", url, flush=True)
+
+#         context_items.append({
+#             "title": r.get("title"),
+#             "location": r.get("location"),
+#             "category": r.get("category"),
+#             "url": url
+#         })
+    
+#     for r in results[:5]:
+#         print("📄 STREAM ITEM:", {
+#             "title": r.get("title"),
+#             "category": r.get("category"),
+#             "slug": r.get("slug")
+#         }, flush=True)
+
+#     context_json = json.dumps(context_items, indent=2)
+
+#     model = "llama3-hoz"  
+
+#     prompt = f"""
+# You are a AI Search Assitant for Hozpitality and STRICT search result formatter.
+
+# CRITICAL RULES:
+
+# - ONLY use the provided JSON data
+# - DO NOT create new jobs, companies, or links
+# - DO NOT modify URLs
+# - DO NOT hallucinate anything
+# - If data is missing → skip it
+# - Return clean Markdown
+
+# OUTPUT RULES:
+
+# - Write a natural conversational paragraph
+# - Mention 4-5 items from JSON
+# - Each item must be clickable Markdown link
+
+# LINK FORMAT:
+# [TITLE](URL)
+
+# - DO NOT output bullet points
+# - DO NOT output raw JSON
+# - DO NOT invent anything
+
+# USER QUERY:
+# {query}
+
+# DATA:
+# {context_json}
+# """
+
+#     try:
+#         async with httpx.AsyncClient(timeout=None) as client:
+#             async with client.stream(
+#                 "POST",
+#                 OLLAMA_URL,
+#                 json={
+#                     "model": model,
+#                     "prompt": prompt,
+#                     "stream": True,
+#                     "options": {"num_predict": 800}
+#                 }
+#             ) as response:
+
+#                 async for line in response.aiter_lines():
+#                     print("📡 STREAM LOOP RUNNING", flush=True)
+#                     print("RAW:", line, flush=True)
+#                     if ws.client_state.name != "CONNECTED":
+#                         return
+
+#                     if not line:
+#                         continue
+
+#                     data = json.loads(line)
+
+#                     if "response" in data:
+#                         chunk = data["response"]
+
+#                         count += len(chunk) / 3
+#                         if count > MAX_TOKENS:
+#                             break
+
+#                         await safe_send(ws, {
+#                             "type": "token",
+#                             "data": chunk
+#                         })
+
+#                     if data.get("done"):
+#                         break
+
+#     except Exception as e:
+#         print("❌ STREAM ERROR:", e)
+
+
 async def stream_answer(ws, query, results):
     import httpx
 
-    MAX_TOKENS = 1200
-    count = 0
-
-    print("🚀 ENTERED STREAM ANSWER", flush=True)
-    print("QUERY:", query, flush=True)
-    print("RESULT COUNT:", len(results), flush=True)
-    print("RESULT :", results, flush=True)
+    print("🚀 HYBRID CHATGPT MODE", flush=True)
 
     context_items = []
     for r in results[:5]:
-
-        
-        url = build_link(r.get("slug"), r.get("category"))
-
-        print("🔗 GENERATED URL:", url, flush=True)
-
         context_items.append({
             "title": r.get("title"),
             "location": r.get("location"),
             "category": r.get("category"),
-            "url": url
+            "url": build_link(r.get("slug"), r.get("category"))
         })
-    
-    for r in results[:5]:
-        print("📄 STREAM ITEM:", {
-            "title": r.get("title"),
-            "category": r.get("category"),
-            "slug": r.get("slug")
-        }, flush=True)
 
-    context_json = json.dumps(context_items, indent=2)
+    await safe_send(ws, {
+        "type": "token",
+        "data": "Here are some relevant results:\n\n"
+    })
 
-    model = "llama3-hoz"  
+    for r in context_items:
+        await safe_send(ws, {
+            "type": "token",
+            "data": f"[{r['title']}]({r['url']})\n\n"
+        })
 
-    prompt = f"""
-You are a AI Search Assitant for Hozpitality and STRICT search result formatter.
+    draft_prompt = f"""
+Explain briefly what these results are about in 2-3 lines.
 
-CRITICAL RULES:
+Query: {query}
 
-- ONLY use the provided JSON data
-- DO NOT create new jobs, companies, or links
-- DO NOT modify URLs
-- DO NOT hallucinate anything
-- If data is missing → skip it
-- Return clean Markdown
-
-OUTPUT RULES:
-
-- Write a natural conversational paragraph
-- Mention 4-5 items from JSON
-- Each item must be clickable Markdown link
-
-LINK FORMAT:
-[TITLE](URL)
-
-- DO NOT output bullet points
-- DO NOT output raw JSON
-- DO NOT invent anything
-
-USER QUERY:
-{query}
-
-DATA:
-{context_json}
+Titles:
+{[r['title'] for r in context_items]}
 """
 
     try:
         async with httpx.AsyncClient(timeout=None) as client:
+
+            # ⚡ FAST DRAFT
+            res = await client.post(
+                OLLAMA_URL,
+                json={
+                    "model": "phi3-hoz",  # FAST
+                    "prompt": draft_prompt,
+                    "stream": False,
+                    "options": {
+                        "num_predict": 80
+                    }
+                }
+            )
+
+            draft = res.json().get("response", "").strip()
+
+            if draft:
+                await safe_send(ws, {
+                    "type": "token",
+                    "data": "\n" + draft + "\n\n"
+                })
+
+            improve_prompt = f"""
+Improve and expand this answer naturally.
+
+User Query:
+{query}
+
+Existing Answer:
+{draft}
+
+Add more useful detail using these results:
+{context_items}
+
+Rules:
+- Keep it conversational
+- Use markdown links [title](url)
+- Do not repeat
+"""
+
             async with client.stream(
                 "POST",
                 OLLAMA_URL,
                 json={
-                    "model": model,
-                    "prompt": prompt,
+                    "model": "phi3-hoz",  # still fast
+                    "prompt": improve_prompt,
                     "stream": True,
-                    "options": {"num_predict": 800}
+                    "options": {
+                        "num_predict": 300
+                    }
                 }
             ) as response:
 
+                buffer = ""
+
                 async for line in response.aiter_lines():
-                    print("📡 STREAM LOOP RUNNING", flush=True)
-                    print("RAW:", line, flush=True)
+
                     if ws.client_state.name != "CONNECTED":
                         return
 
@@ -803,18 +923,24 @@ DATA:
 
                     if "response" in data:
                         chunk = data["response"]
+                        buffer += chunk
 
-                        count += len(chunk) / 3
-                        if count > MAX_TOKENS:
-                            break
-
-                        await safe_send(ws, {
-                            "type": "token",
-                            "data": chunk
-                        })
+                        # 🔥 smooth batching
+                        if len(buffer) > 120:
+                            await safe_send(ws, {
+                                "type": "token",
+                                "data": buffer
+                            })
+                            buffer = ""
 
                     if data.get("done"):
                         break
+
+                if buffer:
+                    await safe_send(ws, {
+                        "type": "token",
+                        "data": buffer
+                    })
 
     except Exception as e:
         print("❌ STREAM ERROR:", e)
