@@ -16,7 +16,20 @@ import torch
 from sentence_transformers import SentenceTransformer
 import traceback
 from elasticsearch.helpers import bulk
-from ai_server import search_db, apply_priority_sorting
+
+from ai_server import (
+    search_db,
+    apply_priority_sorting,
+    create_conversation,
+    save_message,
+    store_last_ai_response,
+    get_last_ai_response,
+    store_last_context,
+    get_last_context,
+    retrieve_memory,
+    store_memory,
+    detect_followup_llm
+)
 import asyncio
 
 print("🔥 CUDA AVAILABLE:", torch.cuda.is_available())
@@ -820,10 +833,13 @@ def build_link(slug, category):
 #         print("❌ STREAM ERROR:", e)
 
 
-async def stream_answer(ws, query, results):
+
+async def stream_answer(ws, query, results, memory=None):
     import httpx
 
     print("🚀 HYBRID CHATGPT MODE", flush=True)
+
+    full_response = ""   
 
     context_items = []
     for r in results[:5]:
@@ -834,15 +850,21 @@ async def stream_answer(ws, query, results):
             "url": build_link(r.get("slug"), r.get("category"))
         })
 
+    intro_text = "Here are some relevant results:\n\n"
+    full_response += intro_text
+
     await safe_send(ws, {
         "type": "token",
-        "data": "Here are some relevant results:\n\n"
+        "data": intro_text
     })
 
     for r in context_items:
+        line = f"[{r['title']}]({r['url']})\n\n"
+        full_response += line
+
         await safe_send(ws, {
             "type": "token",
-            "data": f"[{r['title']}]({r['url']})\n\n"
+            "data": line
         })
 
     draft_prompt = f"""
@@ -861,18 +883,18 @@ Titles:
             res = await client.post(
                 OLLAMA_URL,
                 json={
-                    "model": "phi3-hoz",  # FAST
+                    "model": "phi3-hoz",
                     "prompt": draft_prompt,
                     "stream": False,
-                    "options": {
-                        "num_predict": 80
-                    }
+                    "options": {"num_predict": 80}
                 }
             )
 
             draft = res.json().get("response", "").strip()
 
             if draft:
+                full_response += "\n" + draft + "\n\n"
+
                 await safe_send(ws, {
                     "type": "token",
                     "data": "\n" + draft + "\n\n"
@@ -884,15 +906,21 @@ Improve and expand this answer naturally.
 User Query:
 {query}
 
+Previous Context (if any):
+{memory}
+
 Existing Answer:
 {draft}
 
 Add more useful detail using these results:
 {context_items}
 
+Ask ONE helpful follow-up question from context.
+Short. Natural. Relevant.
+
 Rules:
-- Keep it conversational
-- Use markdown links [title](url)
+- Keep conversational
+- Use markdown links
 - Do not repeat
 """
 
@@ -900,12 +928,10 @@ Rules:
                 "POST",
                 OLLAMA_URL,
                 json={
-                    "model": "phi3-hoz",  # still fast
+                    "model": "phi3-hoz",
                     "prompt": improve_prompt,
                     "stream": True,
-                    "options": {
-                        "num_predict": 300
-                    }
+                    "options": {"num_predict": 300}
                 }
             ) as response:
 
@@ -914,7 +940,7 @@ Rules:
                 async for line in response.aiter_lines():
 
                     if ws.client_state.name != "CONNECTED":
-                        return
+                        return full_response
 
                     if not line:
                         continue
@@ -924,8 +950,8 @@ Rules:
                     if "response" in data:
                         chunk = data["response"]
                         buffer += chunk
+                        full_response += chunk   
 
-                        # 🔥 smooth batching
                         if len(buffer) > 120:
                             await safe_send(ws, {
                                 "type": "token",
@@ -944,6 +970,8 @@ Rules:
 
     except Exception as e:
         print("❌ STREAM ERROR:", e)
+
+    return full_response   
 
 def generate_answer(query, results):
     context = ""
@@ -1280,6 +1308,30 @@ async def ws_search(ws: WebSocket):
 
             query = data.get("query", "").strip()
             user_id = data.get("user_id", 0)
+            org_id = data.get("org_id", 0)
+            conversation_id = data.get("conversation_id")
+
+            if not conversation_id:
+                title = query[:50]
+                conversation_id = create_conversation(user_id, title)
+
+            await safe_send(ws, {
+                "type": "conversation",
+                "conversation_id": conversation_id
+            })
+
+            last_ai = get_last_ai_response(user_id, org_id)
+            last_ctx = get_last_context(user_id, org_id)
+            memory = retrieve_memory(user_id, org_id, query)
+
+            follow = detect_followup_llm(query, last_ai)
+
+            
+            if follow.get("is_followup") and last_ctx:
+                print("🔁 FOLLOW-UP DETECTED", flush=True)
+                intent = last_ctx.get("intent")
+            else:
+                intent = detect_intent_llm(query)
 
             print(f"🔍 Query: {query}")
 
@@ -1307,8 +1359,11 @@ async def ws_search(ws: WebSocket):
             total = 0
 
             try:
+
+
+                save_message(conversation_id, "user", query)
+                store_memory(user_id, org_id, query)
                 print("🧭 Detecting intent...", flush=True)
-                intent = detect_intent_llm(query)
                 print("🎯 INTENT:", intent, flush=True)
 
                 print("🧩 Expanding query...", flush=True)
@@ -1375,6 +1430,7 @@ async def ws_search(ws: WebSocket):
                     continue
 
                 results = apply_priority_sorting(results)
+                store_last_context(user_id, org_id, intent, results[:3])
 
                 total = len(results)
 
@@ -1384,9 +1440,6 @@ async def ws_search(ws: WebSocket):
             if ws.client_state.name != "CONNECTED":
                 break
 
-            if intent != "general":
-                results = [r for r in results if r.get("category") == intent]
-            
             if results:
                 print("✅ USING REAL DATA:", len(results), flush=True)
             else:
@@ -1409,7 +1462,22 @@ async def ws_search(ws: WebSocket):
                     continue
             
             print("🚨 BEFORE STREAM", len(results), query, flush=True)
-            await stream_answer(ws, query, results)
+            memory_text = ""
+
+            if memory:
+                memory_text = "\n".join([f"- {m}" for m in memory[:5]])
+
+            ai_response = await stream_answer(
+                ws,
+                query,
+                results,
+                memory_text
+            )
+
+            if ai_response:
+                save_message(conversation_id, "assistant", ai_response)
+                store_last_ai_response(user_id, org_id, ai_response)
+                store_memory(user_id, org_id, ai_response)
 
             await safe_send(ws, {
                 "type": "done",
