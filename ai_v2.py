@@ -1603,7 +1603,6 @@ def load_faiss_only():
         SELECT id, title, content, category_text, location_text, slug
         FROM master_search_mastersearchindex
         WHERE is_live = TRUE
-        LIMIT 50000
     """)
 
     rows = cur.fetchall()
