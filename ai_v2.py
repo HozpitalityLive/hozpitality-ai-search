@@ -1033,7 +1033,7 @@ OUTPUT JSON ONLY:
         res = requests.post(
             OLLAMA_URL,
             json={"model": "phi3-hoz", "prompt": prompt, "stream": False},
-            timeout=5
+            timeout=20
         )
 
         import re
@@ -1314,6 +1314,14 @@ async def ws_search(ws: WebSocket):
                 print("🧩 Expanding query...", flush=True)
                 query_data = expand_query_llm(query)
 
+                if not query_data.get("roles") and not query_data.get("locations"):
+                    print("⚠️ LLM FAILED → USING FALLBACK", flush=True)
+                    query_data = {
+                        "normalized": query,
+                        "roles": [],
+                        "locations": []
+                    }
+
                 print("📦 QUERY DATA:", json.dumps(query_data, indent=2), flush=True)
 
                 es_results = []
@@ -1349,7 +1357,22 @@ async def ws_search(ws: WebSocket):
                     print("🎯 INTENT:", intent, flush=True)
 
                 if not results:
-                    results = search_db(query_data["normalized"], intent_type=intent)
+                    print("❌ NO RESULTS → STOPPING PIPELINE", flush=True)
+
+                    await safe_send(ws, {
+                        "type": "token",
+                        "data": (
+                            "I couldn’t find any results matching your search. "
+                            "You may want to refine your query or try different keywords."
+                        )
+                    })
+
+                    await safe_send(ws, {
+                        "type": "done",
+                        "total": 0
+                    })
+
+                    continue
 
                 results = apply_priority_sorting(results)
 
@@ -1367,7 +1390,23 @@ async def ws_search(ws: WebSocket):
             if results:
                 print("✅ USING REAL DATA:", len(results), flush=True)
             else:
-                print("❌ NO DATA → LLM fallback", flush=True)
+                if not results:
+                    print("❌ NO RESULTS → STOPPING PIPELINE", flush=True)
+
+                    await safe_send(ws, {
+                        "type": "token",
+                        "data": (
+                            "I couldn’t find any results matching your search. "
+                            "You may want to refine your query or try different keywords."
+                        )
+                    })
+
+                    await safe_send(ws, {
+                        "type": "done",
+                        "total": 0
+                    })
+
+                    continue
             
             print("🚨 BEFORE STREAM", len(results), query, flush=True)
             await stream_answer(ws, query, results)
