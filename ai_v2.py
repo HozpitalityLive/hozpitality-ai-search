@@ -719,7 +719,6 @@ async def stream_answer(ws, query, results):
     print("RESULT COUNT:", len(results), flush=True)
     print("RESULT :", results, flush=True)
 
-    # ❗ HARD CONTROL: build STRICT structured context
     context_items = []
     for r in results[:5]:
 
@@ -761,7 +760,7 @@ CRITICAL RULES:
 OUTPUT RULES:
 
 - Write a natural conversational paragraph
-- Mention 2–4 items from JSON
+- Mention 4-5 items from JSON
 - Each item must be clickable Markdown link
 
 LINK FORMAT:
@@ -787,7 +786,7 @@ DATA:
                     "model": model,
                     "prompt": prompt,
                     "stream": True,
-                    "options": {"num_predict": 300}
+                    "options": {"num_predict": 800}
                 }
             ) as response:
 
