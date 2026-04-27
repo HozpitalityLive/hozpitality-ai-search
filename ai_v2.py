@@ -901,7 +901,15 @@ Titles:
                 })
 
             improve_prompt = f"""
+            You are a STRICT search assistant.
 Improve and expand this answer naturally.
+
+CRITICAL RULES:
+- ONLY use the provided results
+- DO NOT add external knowledge
+- DO NOT invent jobs, companies, or stories
+- DO NOT generalize beyond results
+- If information not in results → skip it
 
 User Query:
 {query}
@@ -914,6 +922,11 @@ Existing Answer:
 
 Add more useful detail using these results:
 {context_items}
+
+TASK:
+- Explain results briefly (4-5 lines)
+- Keep it factual
+- Do NOT hallucinate
 
 Ask ONE helpful follow-up question from context.
 Short. Natural. Relevant.
@@ -1478,30 +1491,20 @@ async def ws_search(ws: WebSocket):
                 print("📦 QUERY DATA:", json.dumps(query_data, indent=2), flush=True)
 
                 es_results = []
-                vec_results = []
 
                 try:
                     es_results = await asyncio.to_thread(elastic_search_v2, query_data, intent)
                 except Exception as e:
                     print("❌ ES ERROR:", e)
 
-                try:
-                    vec_results = await asyncio.to_thread(vector_search_v2, query_data)
-                except Exception as e:
-                    print("❌ VECTOR ERROR:", e)
-
                 print("📦 BEFORE FILTER:", len(results), flush=True)
 
                 es_results = filter_by_intent(es_results, intent)
-                vec_results = filter_by_intent(vec_results, intent)
+
+                results = es_results
 
                 print("📦 AFTER FILTER:", len(results), flush=True)
 
-                if vec_results:
-                    results = hybrid_rank(es_results, vec_results)
-                else:
-                    print("⚠️ VECTOR FAILED → USING ES ONLY", flush=True)
-                    results = es_results
 
                 if not results:
                     print("❌ NO RESULTS FOUND", flush=True)
@@ -1660,4 +1663,3 @@ def load_faiss_only():
 @app.on_event("startup")
 def startup():
     print("🚀 API started (NO ES TOUCH)", flush=True)
-    load_faiss_only()

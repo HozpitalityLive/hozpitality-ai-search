@@ -13,7 +13,6 @@ main_app = FastAPI()
 @main_app.on_event("startup")
 def startup():
     print("🚀 MAIN APP STARTED (NO ES TOUCH)", flush=True)
-    load_faiss_only()
 
 
 # ✅ MIDDLEWARE
