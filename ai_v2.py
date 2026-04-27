@@ -1592,7 +1592,7 @@ async def ws_search(ws: WebSocket):
 def load_faiss_only():
     global documents, index
 
-    print("⚡ Loading FAISS only (no ES)")
+    print("⚡ Loading FAISS only (no ES)", flush=True)
 
     documents = []
 
@@ -1655,7 +1655,7 @@ def load_faiss_only():
 
     db_pool.putconn(conn)
 
-    print(f"✅ FAISS ready: {index.ntotal}")
+    print(f"✅ FAISS ready: {index.ntotal}", flush=True)
 
 @app.on_event("startup")
 def startup():
