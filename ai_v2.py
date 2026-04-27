@@ -1109,20 +1109,95 @@ def filter_by_intent(results, intent):
 
     return [r for r in results if r.get("category") == intent]
 
-def elastic_search_v2(query_data, intent):
-    should = []
+# def elastic_search_v2(query_data, intent):
+#     should = []
 
-    should.append({
+#     should.append({
+#         "multi_match": {
+#             "query": query_data["normalized"],
+#             "fields": ["title^4", "content^2"],
+#             "operator": "or",
+#             "minimum_should_match": "60%"
+#         }
+#     })
+
+#     for role in query_data.get("roles", []):
+#         should.append({
+#             "match": {
+#                 "content": {
+#                     "query": role,
+#                     "boost": 1.5
+#                 }
+#             }
+#         })
+
+#     for loc in query_data.get("locations", []):
+#         should.append({
+#             "match": {
+#                 "location": {
+#                     "query": loc,
+#                     "boost": 2
+#                 }
+#             }
+#         })
+
+#     filters = []
+
+#     if intent != "general":
+#         filters.append({"term": {"category": intent}})
+
+#     print("🔎 ES QUERY:", json.dumps({
+#         "normalized": query_data["normalized"],
+#         "roles": query_data.get("roles"),
+#         "locations": query_data.get("locations"),
+#         "intent": intent
+#     }, indent=2), flush=True)
+
+#     res = es.search(
+#         index="hozpitality",
+#         query={
+#             "bool": {
+#                 "must": should,
+#                 "filter": filters
+#             }
+#         },
+#         size=30
+#     )
+
+#     print(f"📊 ES RAW HITS: {len(res['hits']['hits'])}", flush=True)
+
+#     results = []
+#     for hit in res["hits"]["hits"]:
+#         print("➡️ ES HIT:", {
+#             "title": hit["_source"].get("title"),
+#             "category": hit["_source"].get("category"),
+#             "slug": hit["_source"].get("slug") ,
+#             "score": hit["_score"]
+#         }, flush=True)
+#         doc = hit["_source"]
+#         doc["slug"] = hit["_source"].get("slug")  # ensure exists
+#         doc["bm25_score"] = hit["_score"]
+
+#         print("🧾 FINAL DOC:", doc, flush=True)
+#         results.append(doc)
+
+#     return results
+
+def elastic_search_v2(query_data, intent):
+    must_clauses = []
+    should_clauses = []
+
+    must_clauses.append({
         "multi_match": {
             "query": query_data["normalized"],
             "fields": ["title^4", "content^2"],
             "operator": "or",
-            "minimum_should_match": "60%"
+            "minimum_should_match": "60%"   
         }
     })
 
     for role in query_data.get("roles", []):
-        should.append({
+        should_clauses.append({
             "match": {
                 "content": {
                     "query": role,
@@ -1132,7 +1207,7 @@ def elastic_search_v2(query_data, intent):
         })
 
     for loc in query_data.get("locations", []):
-        should.append({
+        should_clauses.append({
             "match": {
                 "location": {
                     "query": loc,
@@ -1142,43 +1217,45 @@ def elastic_search_v2(query_data, intent):
         })
 
     filters = []
-
     if intent != "general":
         filters.append({"term": {"category": intent}})
 
-    print("🔎 ES QUERY:", json.dumps({
-        "normalized": query_data["normalized"],
-        "roles": query_data.get("roles"),
-        "locations": query_data.get("locations"),
-        "intent": intent
-    }, indent=2), flush=True)
+    body = {
+        "query": {
+            "bool": {
+                "must": must_clauses,
+                "should": should_clauses,
+                "filter": filters
+            }
+        }
+    }
+
+    print("🔎 ES FINAL QUERY:", json.dumps(body, indent=2), flush=True)
 
     res = es.search(
         index="hozpitality",
-        query={
-            "bool": {
-                "must": should,
-                "filter": filters
-            }
-        },
+        body=body,
         size=30
     )
 
-    print(f"📊 ES RAW HITS: {len(res['hits']['hits'])}", flush=True)
+    hits = res["hits"]["hits"]
+
+    print(f"📊 ES RAW HITS: {len(hits)}", flush=True)
 
     results = []
-    for hit in res["hits"]["hits"]:
+    for hit in hits:
+        src = hit["_source"]
+
         print("➡️ ES HIT:", {
-            "title": hit["_source"].get("title"),
-            "category": hit["_source"].get("category"),
-            "slug": hit["_source"].get("slug") ,
+            "title": src.get("title"),
+            "category": src.get("category"),
+            "slug": src.get("slug"),
             "score": hit["_score"]
         }, flush=True)
-        doc = hit["_source"]
-        doc["slug"] = hit["_source"].get("slug")  # ensure exists
+
+        doc = src.copy()
         doc["bm25_score"] = hit["_score"]
 
-        print("🧾 FINAL DOC:", doc, flush=True)
         results.append(doc)
 
     return results
