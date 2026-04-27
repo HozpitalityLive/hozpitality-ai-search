@@ -2,7 +2,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from ai_server import app as app1
-from ai_v2 import app as app2v2
+from ai_v2 import app as app2v2 , load_faiss_only
 
 
 # ✅ CREATE APP
@@ -13,6 +13,7 @@ main_app = FastAPI()
 @main_app.on_event("startup")
 def startup():
     print("🚀 MAIN APP STARTED (NO ES TOUCH)", flush=True)
+    load_faiss_only|()
 
 
 # ✅ MIDDLEWARE
