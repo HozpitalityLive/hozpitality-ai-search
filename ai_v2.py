@@ -1032,28 +1032,40 @@ def expand_query_llm(query: str):
         return json.loads(cached)
 
     prompt = f"""
-You are a search expansion engine for hospitality platform.
+You are a strict JSON generator.
 
-User Query: "{query}"
+Extract structured search data from the query.
 
-TASK:
-- Normalize query
-- Extract role/job meaning
-- Generate related roles (semantic)
-- Expand location if applicable
+USER QUERY:
+{query}
 
-RULES:
-- Max 5 roles
-- Max 3 locations
-- No hallucination
-- Keep realistic hospitality terms
-
-OUTPUT JSON ONLY:
+REQUIRED OUTPUT FORMAT (STRICT):
 
 {{
-  "normalized": "clean query",
-  "roles": ["role1", "role2"],
-  "locations": ["loc1", "loc2"]
+  "normalized": "string",
+  "roles": ["string"],
+  "locations": ["string"]
+}}
+
+RULES:
+- ONLY return valid JSON
+- DO NOT add extra keys
+- DO NOT rename keys
+- DO NOT create new fields
+- "roles" must be a list of job titles (e.g., "cook", "chef")
+- "locations" must be cities/countries (e.g., "Dubai")
+- If nothing found → return empty list []
+
+INVALID EXAMPLES (DO NOT DO):
+❌ "roits"
+❌ "job_roles"
+❌ "places"
+
+VALID EXAMPLE:
+{{
+  "normalized": "cook jobs in dubai",
+  "roles": ["cook"],
+  "locations": ["Dubai"]
 }}
 """
 
@@ -1188,10 +1200,19 @@ def vector_search_v2(query_data):
     results = []
     for idx, score in zip(I[0], D[0]):
         print("🧬 VECTOR HIT:", idx, float(score), flush=True)
-        if idx < len(documents):
+
+        if idx == -1:
+            continue
+
+        if idx >= len(documents):
+            continue
+
+        try:
             doc = documents[idx].copy()
             doc["vector_score"] = float(score)
             results.append(doc)
+        except Exception as e:
+            print("❌ VECTOR DOC ERROR:", e)
 
     return results
 
