@@ -240,169 +240,250 @@ async def safe_send(ws, data):
     except:
         pass
 
-def detect_mode(query: str):
-    q = query.lower().strip()
 
-    if len(q) <= 3 or q in ["hi", "hello", "hey", "ok", "thanks"]:
-        return "chat"
 
-    if any(x in q for x in ["how", "why", "steps", "process"]):
-        return "faq"
+# def detect_intent_llm(query: str):
+#     q = query.lower().strip()
 
-    if any(x in q for x in ["job", "jobs", "company", "hotel", "restaurant"]):
-        return "search"
+#     print("🎯 Detect Intent LLM:", query, flush=True)
 
-    return "chat"
+#     job_keywords = [
+#         "job", "jobs", "hiring", "vacancy", "vacancies",
+#         "apply", "opening", "career", "position"
+#     ]
 
-def choose_model(query, results):
-    q = query.lower()
+#     professional_keywords = [
+#         "candidate", "candidates", "profile", "profiles",
+#         "cv", "resume", "talent"
+#     ]
 
-    if len(q) < 40:
-        return "phi3-hoz"
+#     company_keywords = [
+#         "company", "companies", "hotel", "restaurant",
+#         "brand", "group"
+#     ]
 
-    if any(x in q for x in ["how", "why", "steps", "process"]):
-        return "llama3-hoz"
+#     supplier_keywords = [
+#         "supplier", "suppliers", "vendor", "vendors"
+#     ]
 
-    if len(results) > 5:
-        return "llama3-hoz"
+#     product_keywords = [
+#         "product", "products", "equipment", "items"
+#     ]
 
-    return "llama3-hoz"
+#     event_keywords = [
+#         "event", "events", "conference", "expo"
+#     ]
+
+#     article_keywords = [
+#         "article", "blog", "news"
+#     ]
+
+#     faq_keywords = [
+#         "how", "why", "what", "guide", "steps", "process"
+#     ]
+
+#     if any(k in q for k in job_keywords):
+#         return "job"
+
+#     if any(k in q for k in professional_keywords):
+#         return "professional"
+
+#     if any(k in q for k in supplier_keywords):
+#         return "supplier"
+
+#     if any(k in q for k in product_keywords):
+#         return "product"
+
+#     if any(k in q for k in event_keywords):
+#         return "event"
+
+#     if any(k in q for k in article_keywords):
+#         return "article"
+
+#     if any(k in q for k in company_keywords):
+#         return "company"
+
+#     if any(k in q for k in faq_keywords):
+#         return "faq"
+
+#     cache_k = f"intent:{query}"
+#     cached = redis_client.get(cache_k)
+
+#     if cached:
+#         print("🎯 Cached:", cached, flush=True)
+#         return cached
+        
+
+#     prompt = f"""
+# You are an intent classifier for a hospitality platform.
+
+# User Query: "{query}"
+
+# Available categories:
+# - job
+# - company
+# - professional
+# - supplier
+# - product
+# - event
+# - article
+# - award
+# - faq
+# - general
+
+# RULES:
+# - Return ONLY ONE category
+# - No explanation
+# - No extra text
+
+# Examples:
+# "find waiter job in dubai" → job
+# "best hotels in dubai" → company
+# "chef profiles" → professional
+# "hotel equipment suppliers" → supplier
+# "what is hospitality" → faq
+
+# OUTPUT:
+# """
+
+#     try:
+#         res = requests.post(
+#             OLLAMA_URL,
+#             json={
+#                 "model": "phi3-hoz",
+#                 "prompt": prompt,
+#                 "stream": False
+#             },
+#             timeout=4
+#         )
+
+#         intent = res.json().get("response", "").strip().lower()
+
+#         print("🎯  Response:", res, flush=True)
+#         print("🎯 Intent Response:", intent, flush=True)
+
+#         valid = {
+#             "job","company","professional","supplier",
+#             "product","event","article","award","faq","general"
+#         }
+
+#         if intent not in valid:
+#             intent = "general"
+
+#         redis_client.setex(cache_k, 600, intent)
+#         return intent
+
+#     except Exception as e:
+#         print("❌ intent error:", e)
+#         return "general"
 
 
 def detect_intent_llm(query: str):
-    q = query.lower().strip()
 
-    print("🎯 Detect Intent LLM:", query, flush=True)
+    query = query.strip()
 
-    job_keywords = [
-        "job", "jobs", "hiring", "vacancy", "vacancies",
-        "apply", "opening", "career", "position"
-    ]
+    cache_key = f"intent:{query.lower()}"
 
-    professional_keywords = [
-        "candidate", "candidates", "profile", "profiles",
-        "cv", "resume", "talent"
-    ]
-
-    company_keywords = [
-        "company", "companies", "hotel", "restaurant",
-        "brand", "group"
-    ]
-
-    supplier_keywords = [
-        "supplier", "suppliers", "vendor", "vendors"
-    ]
-
-    product_keywords = [
-        "product", "products", "equipment", "items"
-    ]
-
-    event_keywords = [
-        "event", "events", "conference", "expo"
-    ]
-
-    article_keywords = [
-        "article", "blog", "news"
-    ]
-
-    faq_keywords = [
-        "how", "why", "what", "guide", "steps", "process"
-    ]
-
-    if any(k in q for k in job_keywords):
-        return "job"
-
-    if any(k in q for k in professional_keywords):
-        return "professional"
-
-    if any(k in q for k in supplier_keywords):
-        return "supplier"
-
-    if any(k in q for k in product_keywords):
-        return "product"
-
-    if any(k in q for k in event_keywords):
-        return "event"
-
-    if any(k in q for k in article_keywords):
-        return "article"
-
-    if any(k in q for k in company_keywords):
-        return "company"
-
-    if any(k in q for k in faq_keywords):
-        return "faq"
-
-    cache_k = f"intent:{query}"
-    cached = redis_client.get(cache_k)
+    cached = redis_client.get(cache_key)
 
     if cached:
-        print("🎯 Cached:", cached, flush=True)
         return cached
-        
 
     prompt = f"""
-You are an intent classifier for a hospitality platform.
+You are an intent classifier.
 
-User Query: "{query}"
+Classify the query into EXACTLY ONE intent.
 
-Available categories:
-- job
-- company
-- professional
-- supplier
-- product
-- event
-- article
-- award
+VALID INTENTS:
+- greeting
+- search
 - faq
-- general
+- chat
 
 RULES:
-- Return ONLY ONE category
+- Return ONLY ONE WORD
 - No explanation
-- No extra text
+- No markdown
+- No punctuation
 
-Examples:
-"find waiter job in dubai" → job
-"best hotels in dubai" → company
-"chef profiles" → professional
-"hotel equipment suppliers" → supplier
-"what is hospitality" → faq
+EXAMPLES:
 
-OUTPUT:
+hi
+-> greeting
+
+hello
+-> greeting
+
+find waiter jobs in dubai
+-> search
+
+hotels in qatar
+-> search
+
+how to apply for hospitality jobs
+-> faq
+
+what is hospitality
+-> faq
+
+tell me something interesting
+-> chat
+
+USER QUERY:
+{query}
+
+INTENT:
 """
 
     try:
+
         res = requests.post(
             OLLAMA_URL,
             json={
                 "model": "phi3-hoz",
                 "prompt": prompt,
-                "stream": False
+                "stream": False,
+                "options": {
+                    "temperature": 0,
+                    "num_predict": 5,
+                    "top_p": 0.1
+                }
             },
-            timeout=4
+            timeout=2
         )
 
-        intent = res.json().get("response", "").strip().lower()
-
-        print("🎯  Response:", res, flush=True)
-        print("🎯 Intent Response:", intent, flush=True)
+        intent = (
+            res.json()
+            .get("response", "")
+            .strip()
+            .lower()
+        )
 
         valid = {
-            "job","company","professional","supplier",
-            "product","event","article","award","faq","general"
+            "greeting",
+            "search",
+            "faq",
+            "chat"
         }
 
         if intent not in valid:
-            intent = "general"
+            intent = "chat"
 
-        redis_client.setex(cache_k, 600, intent)
+        redis_client.setex(
+            cache_key,
+            300,
+            intent
+        )
+
+        print("🎯 FINAL INTENT:", intent, flush=True)
+
         return intent
 
     except Exception as e:
+
         print("❌ intent error:", e)
-        return "general"
+
+        return "chat"
 
 
 def vector_search(query):
@@ -489,325 +570,280 @@ STRICT_DATA_RULES = """
 ### END RULES
 """
 
-def generate_intro(query: str):
+# def generate_intro(query: str):
+#     try:
+#         res = requests.post(
+#             OLLAMA_URL,
+#             json={
+#                 "model": "phi3-hoz",
+#                 "prompt": f"""
+# You are an AI assistant for Hozpitality.
+
+# TASK:
+# - Give a helpful, natural intro in 1–2 lines
+# - Do NOT repeat the user query
+# - Do NOT add explanation
+# - Keep it conversational
+
+# {STRICT_DATA_RULES}
+
+# User:
+# {query}
+# """,
+#                 "stream": False
+#             },
+#             timeout=4 
+#         )
+
+#         text = res.json().get("response", "").strip()
+#         text = text.replace("\n", " ").strip()
+
+#         return text
+
+#     except Exception as e:
+#         return ""
+
+def generate_intro(
+    query: str,
+    intent: str,
+    results=None
+):
+
+    results = results or []
+
+    context_titles = []
+
+    for r in results[:5]:
+
+        title = r.get("title")
+
+        if title:
+            context_titles.append(title)
+
+    prompt = f"""
+You are Hozpitality AI.
+
+Generate a SHORT conversational intro.
+
+RULES:
+- 1 sentence only
+- max 20 words
+- natural
+- conversational
+- dynamic wording
+- NO markdown
+- NO fake information
+- NO hallucinations
+- DO NOT invent jobs or companies
+- ONLY use provided context
+- NEVER explain
+- NEVER repeat the full user query
+
+INTENT:
+{intent}
+
+USER QUERY:
+{query}
+
+SEARCH RESULTS:
+{context_titles}
+
+GOOD EXAMPLES:
+- I found a few relevant hospitality opportunities for you.
+- Here are some matching hospitality results.
+- I found several relevant listings you may like.
+- These results look relevant to your search.
+
+BAD EXAMPLES:
+- The FBI recommends...
+- Hospitality is theoretically...
+- Random paragraphs
+- Fake claims
+
+OUTPUT:
+"""
+
     try:
+
         res = requests.post(
             OLLAMA_URL,
             json={
                 "model": "phi3-hoz",
-                "prompt": f"""
-You are an AI assistant for Hozpitality.
-
-TASK:
-- Give a helpful, natural intro in 1–2 lines
-- Do NOT repeat the user query
-- Do NOT add explanation
-- Keep it conversational
-
-{STRICT_DATA_RULES}
-
-User:
-{query}
-""",
-                "stream": False
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.8,
+                    "top_p": 0.9,
+                    "num_predict": 40
+                }
             },
-            timeout=4 
+            timeout=2
         )
 
-        text = res.json().get("response", "").strip()
+        text = (
+            res.json()
+            .get("response", "")
+            .strip()
+        )
+
         text = text.replace("\n", " ").strip()
+
+        if len(text) > 120:
+            text = text[:120]
 
         return text
 
     except Exception as e:
+
+        print("❌ intro error:", e)
+
         return ""
 
-
-# async def stream_answer(ws, query, results):
-#     import httpx
-
-#     MAX_TOKENS = 1200
-#     count = 0
-
-#     # ✅ Better structured context
-#     context = ""
-#     for i, r in enumerate(results[:5]):
-#         context += f"""
-# {i+1}.
-# Title: {r.get('title')}
-# Category: {r.get('category')}
-# Location: {r.get('location')}
-# Content: {r.get('content')}
-# """
-
-#     model = "llama3-hoz" if results else "phi3-hoz"
-
-#     prompt = f"""
-# You are an intelligent AI assistant for Hozpitality.
-
-# IMPORTANT:
-# - Continue the answer naturally
-# - DO NOT repeat the introduction
-# - DO NOT restart
-# - Intro is already shown
-
-# User Query:
-# {query}
-
-# Context:
-# {context}
-# """
-
-#     try:
-#         async with httpx.AsyncClient(timeout=None) as client:
-#             async with client.stream(
-#                 "POST",
-#                 OLLAMA_URL,
-#                 json={
-#                     "model": model,
-#                     "prompt": prompt,
-#                     "stream": True,
-#                     "options": {
-#                         "num_predict": 900
-#                     }
-#                 }
-#             ) as response:
-
-#                 async for line in response.aiter_lines():
-
-#                     if ws.client_state.name != "CONNECTED":
-#                         return
-
-#                     if not line:
-#                         continue
-
-#                     data = json.loads(line)
-
-#                     if "response" in data:
-#                         chunk = data["response"]
-
-#                         count += len(chunk) / 3
-#                         if count > MAX_TOKENS:
-#                             break
-
-#                         await safe_send(ws, {
-#                             "type": "token",
-#                             "data": chunk
-#                         })
-
-#                     if data.get("done"):
-#                         break
-
-#     except Exception as e:
-#         print("❌ STREAM ERROR:", e)
 
 def build_link(slug, category):
     base = "https://www.hozpitality.com"
 
     if category == "job":
-        return f"{base}/jobs/{slug}"
+        return f"{base}/jobs/details/{slug}"
     elif category == "company":
         return f"{base}/company/{slug}"
     elif category == "product":
-        return f"{base}/product/{slug}"
+        return f"{base}/product/details/{slug}"
     elif category == "supplier":
         return f"{base}/supplier/{slug}"
     elif category == "professional":
         return f"{base}/{slug}"
     elif category == "article":
-        return f"{base}/article/{slug}"
+        return f"{base}/article/details/{slug}"
     elif category == "event":
-        return f"{base}/event/{slug}"
+        return f"{base}/event/details/{slug}"
     elif category == "award":
         return f"{base}/award/{slug}"
     else:
         return f"{base}/{slug}"
 
-# async def stream_answer(ws, query, results):
+
+
+# async def stream_answer(ws, query, results, memory=None):
 #     import httpx
 
-#     MAX_TOKENS = 1200
-#     count = 0
+#     print("🚀 HYBRID CHATGPT MODE", flush=True)
 
-#     print("results and query", query , results)
-
-#     context = ""
-#     for i, r in enumerate(results[:5]):
-#         context += f"""
-# {i+1}.
-# Title: {r.get('title')}
-# Content: {r.get('content')}
-# Location: {r.get('location')}
-# URL: https://www.hozpitality.com/{r.get('slug', '')}
-# """
-
-#     model = "llama3-hoz" if results else "phi3-hoz"
-
-#     prompt = f"""
-# You are an AI search assistant for Hozpitality.
-
-# STRICT RULES:
-
-# 1. You MUST use the provided CONTEXT data
-# 2. You MUST include clickable links
-# 3. You MUST NOT invent jobs/products/companies
-# 4. You MUST NOT give generic career advice if results exist
-# 5. You MUST NOT hallucinate
-
-# OUTPUT RULES:
-
-# - Write like a natural chat response (not list)
-# - Mention 2–4 relevant results
-# - Each result MUST be clickable
-
-# LINK FORMAT (MANDATORY):
-# <a href="URL" target="_blank">TITLE</a>
-
-# - NEVER show raw URL
-# - NEVER break HTML
-
-# STYLE:
-# - conversational
-# - helpful
-# - clean
-
-# {STRICT_DATA_RULES}
-
-# USER QUERY:
-# {query}
-
-# CONTEXT:
-# {context}
-# """
-
-#     try:
-#         async with httpx.AsyncClient(timeout=None) as client:
-#             async with client.stream(
-#                 "POST",
-#                 OLLAMA_URL,
-#                 json={
-#                     "model": model,
-#                     "prompt": prompt,
-#                     "stream": True,
-#                     "options": {"num_predict": 600}
-#                 }
-#             ) as response:
-
-#                 async for line in response.aiter_lines():
-
-#                     if ws.client_state.name != "CONNECTED":
-#                         return
-
-#                     if not line:
-#                         continue
-
-#                     data = json.loads(line)
-
-#                     if "response" in data:
-#                         chunk = data["response"]
-
-#                         count += len(chunk) / 3
-#                         if count > MAX_TOKENS:
-#                             break
-
-#                         await safe_send(ws, {
-#                             "type": "token",
-#                             "data": chunk
-#                         })
-
-#                     if data.get("done"):
-#                         break
-
-#     except Exception as e:
-#         print("❌ STREAM ERROR:", e)
-
-# async def stream_answer(ws, query, results):
-#     import httpx
-
-#     MAX_TOKENS = 1200
-#     count = 0
-
-#     print("🚀 ENTERED STREAM ANSWER", flush=True)
-#     print("QUERY:", query, flush=True)
-#     print("RESULT COUNT:", len(results), flush=True)
-#     print("RESULT :", results, flush=True)
+#     full_response = ""   
 
 #     context_items = []
 #     for r in results[:5]:
-
-        
-#         url = build_link(r.get("slug"), r.get("category"))
-
-#         print("🔗 GENERATED URL:", url, flush=True)
-
 #         context_items.append({
 #             "title": r.get("title"),
 #             "location": r.get("location"),
 #             "category": r.get("category"),
-#             "url": url
+#             "url": build_link(r.get("slug"), r.get("category"))
 #         })
-    
-#     for r in results[:5]:
-#         print("📄 STREAM ITEM:", {
-#             "title": r.get("title"),
-#             "category": r.get("category"),
-#             "slug": r.get("slug")
-#         }, flush=True)
 
-#     context_json = json.dumps(context_items, indent=2)
+#     intro_text = "Here are some relevant results:\n\n"
+#     full_response += intro_text
 
-#     model = "llama3-hoz"  
+#     await safe_send(ws, {
+#         "type": "token",
+#         "data": intro_text
+#     })
 
-#     prompt = f"""
-# You are a AI Search Assitant for Hozpitality and STRICT search result formatter.
+#     for r in context_items:
+#         line = f"[{r['title']}]({r['url']})\n\n"
+#         full_response += line
 
-# CRITICAL RULES:
+#         await safe_send(ws, {
+#             "type": "token",
+#             "data": line
+#         })
 
-# - ONLY use the provided JSON data
-# - DO NOT create new jobs, companies, or links
-# - DO NOT modify URLs
-# - DO NOT hallucinate anything
-# - If data is missing → skip it
-# - Return clean Markdown
+#     draft_prompt = f"""
+# Explain briefly what these results are about in 2-3 lines.
 
-# OUTPUT RULES:
+# Query: {query}
 
-# - Write a natural conversational paragraph
-# - Mention 4-5 items from JSON
-# - Each item must be clickable Markdown link
-
-# LINK FORMAT:
-# [TITLE](URL)
-
-# - DO NOT output bullet points
-# - DO NOT output raw JSON
-# - DO NOT invent anything
-
-# USER QUERY:
-# {query}
-
-# DATA:
-# {context_json}
+# Titles:
+# {[r['title'] for r in context_items]}
 # """
 
 #     try:
 #         async with httpx.AsyncClient(timeout=None) as client:
+
+#             # ⚡ FAST DRAFT
+#             res = await client.post(
+#                 OLLAMA_URL,
+#                 json={
+#                     "model": "phi3-hoz",
+#                     "prompt": draft_prompt,
+#                     "stream": False,
+#                     "options": {"num_predict": 80}
+#                 }
+#             )
+
+#             draft = res.json().get("response", "").strip()
+
+#             if draft:
+#                 full_response += "\n" + draft + "\n\n"
+
+#                 await safe_send(ws, {
+#                     "type": "token",
+#                     "data": "\n" + draft + "\n\n"
+#                 })
+
+#             improve_prompt = f"""
+#             You are a STRICT search assistant.
+# Improve and expand this answer naturally.
+
+# CRITICAL RULES:
+# - ONLY use the provided results
+# - DO NOT add external knowledge
+# - DO NOT invent jobs, companies, or stories
+# - DO NOT generalize beyond results
+# - If information not in results → skip it
+
+# User Query:
+# {query}
+
+# Previous Context (if any):
+# {memory}
+
+# Existing Answer:
+# {draft}
+
+# Add more useful detail using these results:
+# {context_items}
+
+# TASK:
+# - Explain results briefly (4-5 lines)
+# - Keep it factual
+# - Do NOT hallucinate
+
+# Ask ONE helpful follow-up question from context.
+# Short. Natural. Relevant.
+
+# Rules:
+# - Keep conversational
+# - Use markdown links
+# - Do not repeat
+# """
+
 #             async with client.stream(
 #                 "POST",
 #                 OLLAMA_URL,
 #                 json={
-#                     "model": model,
-#                     "prompt": prompt,
+#                     "model": "phi3-hoz",
+#                     "prompt": improve_prompt,
 #                     "stream": True,
-#                     "options": {"num_predict": 800}
+#                     "options": {"num_predict": 300}
 #                 }
 #             ) as response:
 
+#                 buffer = ""
+
 #                 async for line in response.aiter_lines():
-#                     print("📡 STREAM LOOP RUNNING", flush=True)
-#                     print("RAW:", line, flush=True)
+
 #                     if ws.client_state.name != "CONNECTED":
-#                         return
+#                         return full_response
 
 #                     if not line:
 #                         continue
@@ -816,215 +852,203 @@ def build_link(slug, category):
 
 #                     if "response" in data:
 #                         chunk = data["response"]
+#                         buffer += chunk
+#                         full_response += chunk   
 
-#                         count += len(chunk) / 3
-#                         if count > MAX_TOKENS:
-#                             break
-
-#                         await safe_send(ws, {
-#                             "type": "token",
-#                             "data": chunk
-#                         })
+#                         if len(buffer) > 120:
+#                             await safe_send(ws, {
+#                                 "type": "token",
+#                                 "data": buffer
+#                             })
+#                             buffer = ""
 
 #                     if data.get("done"):
 #                         break
 
+#                 if buffer:
+#                     await safe_send(ws, {
+#                         "type": "token",
+#                         "data": buffer
+#                     })
+
 #     except Exception as e:
 #         print("❌ STREAM ERROR:", e)
 
+#     return full_response   
 
 
-async def stream_answer(ws, query, results, memory=None):
-    import httpx
+async def stream_answer(
+    ws,
+    query,
+    intent,
+    memory_text,
+    results=None
+):
 
-    print("🚀 HYBRID CHATGPT MODE", flush=True)
+    full_response = ""
 
-    full_response = ""   
+    if intent == "greeting":
 
-    context_items = []
-    for r in results[:5]:
-        context_items.append({
-            "title": r.get("title"),
-            "location": r.get("location"),
-            "category": r.get("category"),
-            "url": build_link(r.get("slug"), r.get("category"))
-        })
+        prompt = f"""
+Reply naturally to this greeting.
 
-    intro_text = "Here are some relevant results:\n\n"
-    full_response += intro_text
+Memory Text: {memory_text}
 
-    await safe_send(ws, {
-        "type": "token",
-        "data": intro_text
-    })
 
-    for r in context_items:
-        line = f"[{r['title']}]({r['url']})\n\n"
-        full_response += line
+RULES:
+- short response
+- friendly
+- conversational
+- under 15 words
+- no markdown
+
+USER:
+{query}
+"""
+
+        try:
+
+            res = requests.post(
+                OLLAMA_URL,
+                json={
+                    "model": "llama3-hoz",
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.5,
+                        "num_predict": 30
+                    }
+                },
+                timeout=2
+            )
+
+            text = (
+                res.json()
+                .get("response", "")
+                .strip()
+            )
+
+        except:
+            text = "Hello 👋"
 
         await safe_send(ws, {
             "type": "token",
-            "data": line
+            "data": text
         })
 
-    draft_prompt = f"""
-Explain briefly what these results are about in 2-3 lines.
+        return text
 
-Query: {query}
+    if intent in ["faq", "chat"]:
 
-Titles:
-{[r['title'] for r in context_items]}
+        prompt = f"""
+You are Hozpitality AI.
+
+RULES:
+- helpful
+- concise
+- conversational
+- markdown allowed
+- no fake information
+- no hallucinations
+- if unsure say you don't know
+
+USER:
+{query}
 """
 
-    try:
-        async with httpx.AsyncClient(timeout=None) as client:
+        try:
 
-            # ⚡ FAST DRAFT
-            res = await client.post(
+            res = requests.post(
                 OLLAMA_URL,
                 json={
-                    "model": "phi3-hoz",
-                    "prompt": draft_prompt,
+                    "model": "llama3-hoz",
+                    "prompt": prompt,
                     "stream": False,
-                    "options": {"num_predict": 80}
-                }
+                    "options": {
+                        "temperature": 0.4,
+                        "num_predict": 200
+                    }
+                },
+                timeout=5
             )
 
-            draft = res.json().get("response", "").strip()
+            text = (
+                res.json()
+                .get("response", "")
+                .strip()
+            )
 
-            if draft:
-                full_response += "\n" + draft + "\n\n"
+        except:
+            text = "I couldn't answer that right now."
 
-                await safe_send(ws, {
-                    "type": "token",
-                    "data": "\n" + draft + "\n\n"
-                })
+        await safe_send(ws, {
+            "type": "token",
+            "data": text
+        })
 
-            improve_prompt = f"""
-            You are a STRICT search assistant.
-Improve and expand this answer naturally.
+        return text
 
-CRITICAL RULES:
-- ONLY use the provided results
-- DO NOT add external knowledge
-- DO NOT invent jobs, companies, or stories
-- DO NOT generalize beyond results
-- If information not in results → skip it
+    if intent == "search":
 
-User Query:
-{query}
+        if not results:
 
-Previous Context (if any):
-{memory}
+            text = (
+                "No relevant results found. "
+                "Try different keywords."
+            )
 
-Existing Answer:
-{draft}
+            await safe_send(ws, {
+                "type": "token",
+                "data": text
+            })
 
-Add more useful detail using these results:
-{context_items}
+            return text
 
-TASK:
-- Explain results briefly (4-5 lines)
-- Keep it factual
-- Do NOT hallucinate
+        intro = f"## Search Results ({len(results)})\n\n"
 
-Ask ONE helpful follow-up question from context.
-Short. Natural. Relevant.
+        full_response += intro
 
-Rules:
-- Keep conversational
-- Use markdown links
-- Do not repeat
-"""
+        await safe_send(ws, {
+            "type": "token",
+            "data": intro
+        })
 
-            async with client.stream(
-                "POST",
-                OLLAMA_URL,
-                json={
-                    "model": "phi3-hoz",
-                    "prompt": improve_prompt,
-                    "stream": True,
-                    "options": {"num_predict": 300}
-                }
-            ) as response:
+        for r in results[:10]:
 
-                buffer = ""
+            title = r.get("title", "Untitled")
 
-                async for line in response.aiter_lines():
+            category = r.get("category", "")
 
-                    if ws.client_state.name != "CONNECTED":
-                        return full_response
+            location = r.get("location", "")
 
-                    if not line:
-                        continue
+            slug = r.get("slug")
 
-                    data = json.loads(line)
+            url = build_link(
+                slug,
+                category
+            )
 
-                    if "response" in data:
-                        chunk = data["response"]
-                        buffer += chunk
-                        full_response += chunk   
+            line = f"### [{title}]({url})\n"
 
-                        if len(buffer) > 120:
-                            await safe_send(ws, {
-                                "type": "token",
-                                "data": buffer
-                            })
-                            buffer = ""
+            if location:
+                line += f"📍 {location}\n"
 
-                    if data.get("done"):
-                        break
+            if category:
+                line += f"🏷️ {category}\n"
 
-                if buffer:
-                    await safe_send(ws, {
-                        "type": "token",
-                        "data": buffer
-                    })
+            line += "\n"
 
-    except Exception as e:
-        print("❌ STREAM ERROR:", e)
+            full_response += line
 
-    return full_response   
+            await safe_send(ws, {
+                "type": "token",
+                "data": line
+            })
 
-def generate_answer(query, results):
-    context = ""
-    for i, r in enumerate(results[:5]):
-        context += f"{i+1}. {r['title']} - {r['content']}\n"
+        return full_response
 
-    model = choose_model(query, results)
+    return ""
 
-    prompt = f"""
-You are an intelligent AI assistant for Hozpitality.
-
-User Query:
-{query}
-
-Context (if available):
-{context}
-
-INSTRUCTIONS:
-
-- If context is relevant → use it
-- If context is empty → answer like ChatGPT
-- Be helpful, natural, conversational
-- Do NOT say "no data found"
-- Do NOT restrict yourself
-
-If results exist:
-- Mention useful insights from data
-
-If no results:
-- Answer intelligently using general knowledge
-
-"""
-
-    res = requests.post(OLLAMA_URL, json={
-        "model": model,
-        "prompt": prompt,
-        "stream": False
-    })
-
-    return res.json().get("response", "")
 
 
 
@@ -1035,79 +1059,169 @@ def click(user_id: int, category: str):
     track_click(user_id, category)
     return {"status": "ok"}
 
-def expand_query_llm(query: str):
-    cache_k = f"expand:{query}"
-    cached = redis_client.get(cache_k)
+# def expand_query_llm(query: str):
+#     cache_k = f"expand:{query}"
+#     cached = redis_client.get(cache_k)
 
-    print("🧩 Expanding query cached...", cached, flush=True)
+#     print("🧩 Expanding query cached...", cached, flush=True)
+
+#     if cached:
+#         return json.loads(cached)
+
+#     prompt = f"""
+# You are a strict JSON generator.
+
+# Extract structured search data from the query.
+
+# USER QUERY:
+# {query}
+
+# REQUIRED OUTPUT FORMAT (STRICT):
+
+# {{
+#   "normalized": "string",
+#   "roles": ["string"],
+#   "locations": ["string"]
+# }}
+
+# RULES:
+# - ONLY return valid JSON
+# - DO NOT add extra keys
+# - DO NOT rename keys
+# - DO NOT create new fields
+# - "roles" must be a list of job titles (e.g., "cook", "chef")
+# - "locations" must be cities/countries (e.g., "Dubai")
+# - If nothing found → return empty list []
+
+# INVALID EXAMPLES (DO NOT DO):
+# ❌ "roits"
+# ❌ "job_roles"
+# ❌ "places"
+
+# VALID EXAMPLE:
+# {{
+#   "normalized": "cook jobs in dubai",
+#   "roles": ["cook"],
+#   "locations": ["Dubai"]
+# }}
+# """
+
+#     try:
+#         res = requests.post(
+#             OLLAMA_URL,
+#             json={"model": "phi3-hoz", "prompt": prompt, "stream": False},
+#             timeout=20
+#         )
+
+#         import re
+#         match = re.search(r'\{.*\}', res.json().get("response", ""), re.DOTALL)
+
+#         print("🧩 Expanding query response...", res, flush=True)
+
+#         if match:
+#             data = json.loads(match.group())
+
+#             print("🧩 Expanding data response...", data, flush=True)
+
+#             data["roles"] = data.get("roles", [])[:5]
+#             data["locations"] = data.get("locations", [])[:3]
+
+
+#             redis_client.setex(cache_k, 600, json.dumps(data))
+#             return data
+
+#     except Exception as e:
+#         print("❌ expand_query_llm error:", e)
+
+#     return {
+#         "normalized": query,
+#         "roles": [],
+#         "locations": []
+#     }
+
+def expand_query_llm(query: str):
+
+    cache_key = f"expand:{query.lower()}"
+
+    cached = redis_client.get(cache_key)
 
     if cached:
         return json.loads(cached)
 
     prompt = f"""
-You are a strict JSON generator.
+Extract structured search data from this query.
 
-Extract structured search data from the query.
+RETURN STRICT JSON ONLY.
 
-USER QUERY:
-{query}
-
-REQUIRED OUTPUT FORMAT (STRICT):
+FORMAT:
 
 {{
   "normalized": "string",
-  "roles": ["string"],
-  "locations": ["string"]
+  "roles": [],
+  "locations": []
 }}
 
 RULES:
-- ONLY return valid JSON
-- DO NOT add extra keys
-- DO NOT rename keys
-- DO NOT create new fields
-- "roles" must be a list of job titles (e.g., "cook", "chef")
-- "locations" must be cities/countries (e.g., "Dubai")
-- If nothing found → return empty list []
+- valid JSON only
+- no markdown
+- no explanation
+- roles = job titles only
+- locations = city/country only
 
-INVALID EXAMPLES (DO NOT DO):
-❌ "roits"
-❌ "job_roles"
-❌ "places"
-
-VALID EXAMPLE:
-{{
-  "normalized": "cook jobs in dubai",
-  "roles": ["cook"],
-  "locations": ["Dubai"]
-}}
+QUERY:
+{query}
 """
 
     try:
+
         res = requests.post(
             OLLAMA_URL,
-            json={"model": "phi3-hoz", "prompt": prompt, "stream": False},
-            timeout=20
+            json={
+                "model": "phi3-hoz",
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0,
+                    "num_predict": 80
+                }
+            },
+            timeout=3
         )
 
-        import re
-        match = re.search(r'\{.*\}', res.json().get("response", ""), re.DOTALL)
+        raw = res.json().get("response", "")
 
-        print("🧩 Expanding query response...", res, flush=True)
+        import re
+
+        match = re.search(
+            r'\{.*\}',
+            raw,
+            re.DOTALL
+        )
 
         if match:
+
             data = json.loads(match.group())
 
-            print("🧩 Expanding data response...", data, flush=True)
+            if "normalized" not in data:
+                data["normalized"] = query
 
-            data["roles"] = data.get("roles", [])[:5]
-            data["locations"] = data.get("locations", [])[:3]
+            if "roles" not in data:
+                data["roles"] = []
 
+            if "locations" not in data:
+                data["locations"] = []
 
-            redis_client.setex(cache_k, 600, json.dumps(data))
+            redis_client.setex(
+                cache_key,
+                300,
+                json.dumps(data)
+            )
+
             return data
 
     except Exception as e:
-        print("❌ expand_query_llm error:", e)
+
+        print("❌ expand error:", e)
 
     return {
         "normalized": query,
@@ -1116,26 +1230,21 @@ VALID EXAMPLE:
     }
 
 
-def filter_by_intent(results, intent):
-    if intent == "general":
-        return results
-
-    return [r for r in results if r.get("category") == intent]
-
 # def elastic_search_v2(query_data, intent):
-#     should = []
+#     must_clauses = []
+#     should_clauses = []
 
-#     should.append({
+#     must_clauses.append({
 #         "multi_match": {
 #             "query": query_data["normalized"],
 #             "fields": ["title^4", "content^2"],
 #             "operator": "or",
-#             "minimum_should_match": "60%"
+#             "minimum_should_match": "60%"   
 #         }
 #     })
 
 #     for role in query_data.get("roles", []):
-#         should.append({
+#         should_clauses.append({
 #             "match": {
 #                 "content": {
 #                     "query": role,
@@ -1145,7 +1254,7 @@ def filter_by_intent(results, intent):
 #         })
 
 #     for loc in query_data.get("locations", []):
-#         should.append({
+#         should_clauses.append({
 #             "match": {
 #                 "location": {
 #                     "query": loc,
@@ -1155,123 +1264,187 @@ def filter_by_intent(results, intent):
 #         })
 
 #     filters = []
-
 #     if intent != "general":
 #         filters.append({"term": {"category": intent}})
 
-#     print("🔎 ES QUERY:", json.dumps({
-#         "normalized": query_data["normalized"],
-#         "roles": query_data.get("roles"),
-#         "locations": query_data.get("locations"),
-#         "intent": intent
-#     }, indent=2), flush=True)
+#     body = {
+#         "query": {
+#             "bool": {
+#                 "must": must_clauses,
+#                 "should": should_clauses,
+#                 "filter": filters
+#             }
+#         }
+#     }
+
+#     print("🔎 ES FINAL QUERY:", json.dumps(body, indent=2), flush=True)
 
 #     res = es.search(
 #         index="hozpitality",
-#         query={
-#             "bool": {
-#                 "must": should,
-#                 "filter": filters
-#             }
-#         },
+#         body=body,
 #         size=30
 #     )
 
-#     print(f"📊 ES RAW HITS: {len(res['hits']['hits'])}", flush=True)
+#     hits = res["hits"]["hits"]
+
+#     print(f"📊 ES RAW HITS: {len(hits)}", flush=True)
 
 #     results = []
-#     for hit in res["hits"]["hits"]:
+#     for hit in hits:
+#         src = hit["_source"]
+
 #         print("➡️ ES HIT:", {
-#             "title": hit["_source"].get("title"),
-#             "category": hit["_source"].get("category"),
-#             "slug": hit["_source"].get("slug") ,
+#             "title": src.get("title"),
+#             "category": src.get("category"),
+#             "slug": src.get("slug"),
 #             "score": hit["_score"]
 #         }, flush=True)
-#         doc = hit["_source"]
-#         doc["slug"] = hit["_source"].get("slug")  # ensure exists
+
+#         doc = src.copy()
 #         doc["bm25_score"] = hit["_score"]
 
-#         print("🧾 FINAL DOC:", doc, flush=True)
 #         results.append(doc)
 
 #     return results
 
-def elastic_search_v2(query_data, intent):
-    must_clauses = []
+def elastic_search_v2(query_data):
+
+    query = query_data["normalized"].strip()
+
+    if len(query) < 2:
+        return []
+
     should_clauses = []
 
-    must_clauses.append({
-        "multi_match": {
-            "query": query_data["normalized"],
-            "fields": ["title^4", "content^2"],
-            "operator": "or",
-            "minimum_should_match": "60%"   
-        }
-    })
-
     for role in query_data.get("roles", []):
+
         should_clauses.append({
             "match": {
-                "content": {
+                "title": {
                     "query": role,
-                    "boost": 1.5
+                    "boost": 5
                 }
             }
         })
 
     for loc in query_data.get("locations", []):
+
         should_clauses.append({
             "match": {
                 "location": {
                     "query": loc,
-                    "boost": 2
+                    "boost": 4
                 }
             }
         })
 
-    filters = []
-    if intent != "general":
-        filters.append({"term": {"category": intent}})
-
     body = {
+        "size": 15,
         "query": {
             "bool": {
-                "must": must_clauses,
-                "should": should_clauses,
-                "filter": filters
+                "must": [
+                    {
+                        "multi_match": {
+                            "query": query,
+                            "fields": [
+                                "title^5",
+                                "content^2",
+                                "location^2"
+                            ],
+                            "type": "best_fields",
+                            "operator": "and",
+                            "minimum_should_match": "75%"
+                        }
+                    }
+                ],
+                "should": should_clauses
             }
         }
     }
 
-    print("🔎 ES FINAL QUERY:", json.dumps(body, indent=2), flush=True)
-
-    res = es.search(
-        index="hozpitality",
-        body=body,
-        size=30
+    print(
+        "🔎 ES QUERY:",
+        json.dumps(body, indent=2),
+        flush=True
     )
 
-    hits = res["hits"]["hits"]
+    try:
 
-    print(f"📊 ES RAW HITS: {len(hits)}", flush=True)
+        res = es.search(
+            index="hozpitality",
+            body=body
+        )
 
-    results = []
-    for hit in hits:
-        src = hit["_source"]
+        hits = res["hits"]["hits"]
 
-        print("➡️ ES HIT:", {
-            "title": src.get("title"),
-            "category": src.get("category"),
-            "slug": src.get("slug"),
-            "score": hit["_score"]
-        }, flush=True)
+        print("📊 ES HITS:", len(hits), flush=True)
 
-        doc = src.copy()
-        doc["bm25_score"] = hit["_score"]
+        query_words = [
+            w.lower()
+            for w in query.split()
+            if len(w) > 2
+        ]
 
-        results.append(doc)
+        results = []
 
-    return results
+        for hit in hits:
+
+            score = hit["_score"]
+
+            if score < 3:
+                continue
+
+            src = hit["_source"]
+
+            title = (
+                src.get("title", "")
+                .lower()
+            )
+
+            content = (
+                src.get("content", "")
+                .lower()
+            )
+
+            matched = any(
+                w in title or w in content
+                for w in query_words
+            )
+
+            if not matched:
+                continue
+
+            doc = src.copy()
+
+            doc["bm25_score"] = score
+
+            results.append(doc)
+
+        seen = set()
+        unique_results = []
+
+        for r in results:
+
+            key = (
+                r.get("title", "").lower(),
+                r.get("slug")
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            unique_results.append(r)
+
+        return unique_results
+
+
+    except Exception as e:
+
+        print("❌ ES ERROR:", e)
+
+        return []
 
 def vector_search_v2(query_data):
     full_text = " ".join([
@@ -1306,97 +1479,6 @@ def vector_search_v2(query_data):
 
     return results
 
-def hybrid_search_v2(query_data, intent):
-    es_results = elastic_search_v2(query_data, intent)
-    vec_results = vector_search_v2(query_data)
-
-    combined = {}
-
-    for r in es_results:
-        combined[r["title"]] = r
-
-    for r in vec_results:
-        if r["title"] in combined:
-            combined[r["title"]]["vector_score"] = r.get("vector_score", 0)
-        else:
-            combined[r["title"]] = r
-
-    final = list(combined.values())
-
-    bm25_scores = [r.get("bm25_score", 0) for r in final]
-    vec_scores = [r.get("vector_score", 0) for r in final]
-
-    def norm(arr):
-        if not arr:
-            return arr
-        mn, mx = min(arr), max(arr)
-        return [(x - mn) / (mx - mn + 1e-6) for x in arr]
-
-    bm25_norm = norm(bm25_scores)
-    vec_norm = norm(vec_scores)
-
-    for i, r in enumerate(final):
-        r["final_score"] = (
-            0.6 * bm25_norm[i] +
-            0.3 * vec_norm[i] +
-            (0.1 if r.get("is_paid") else 0)
-        )
-
-    seen = set()
-    unique = []
-
-    for r in final:
-        key = r["title"].lower()
-        if key not in seen:
-            seen.add(key)
-            unique.append(r)
-
-    return sorted(unique, key=lambda x: x["final_score"], reverse=True)
-
-def hybrid_rank(es_results, vec_results):
-    combined = {}
-    print("⚖️ HYBRID INPUT:", len(es_results), len(vec_results), flush=True)
-
-    for r in es_results:
-        combined[r["title"]] = r
-
-    for r in vec_results:
-        if r["title"] in combined:
-            combined[r["title"]]["vector_score"] = r.get("vector_score", 0)
-        else:
-            combined[r["title"]] = r
-
-    final = list(combined.values())
-
-    bm25_scores = [r.get("bm25_score", 0) for r in final]
-    vec_scores = [r.get("vector_score", 0) for r in final]
-
-    def norm(arr):
-        if not arr:
-            return arr
-        mn, mx = min(arr), max(arr)
-        return [(x - mn) / (mx - mn + 1e-6) for x in arr]
-
-    bm25_norm = norm(bm25_scores)
-    vec_norm = norm(vec_scores)
-
-    for i, r in enumerate(final):
-        r["final_score"] = (
-            0.6 * bm25_norm[i] +
-            0.3 * vec_norm[i] +
-            (0.1 if r.get("is_paid") else 0)
-        )
-
-    for r in final[:5]:
-        print("🏆 FINAL SCORE:", {
-            "title": r.get("title"),
-            "bm25": r.get("bm25_score"),
-            "vector": r.get("vector_score"),
-            "final": r.get("final_score"),
-            "category": r.get("category")
-        }, flush=True)
-
-    return sorted(final, key=lambda x: x["final_score"], reverse=True)
 
 @app.websocket("/ws/ai-search")
 async def ws_search(ws: WebSocket):
@@ -1456,7 +1538,12 @@ async def ws_search(ws: WebSocket):
 
             intro = ""
             try:
-                intro = await asyncio.to_thread(generate_intro, query)
+                intro = await asyncio.to_thread(
+                    generate_intro,
+                    query,
+                    intent,
+                    results[:5] if results else []
+                )
             except:
                 pass
 
@@ -1471,71 +1558,112 @@ async def ws_search(ws: WebSocket):
 
             try:
 
+                save_message(
+                    conversation_id,
+                    "user",
+                    query
+                )
 
-                save_message(conversation_id, "user", query)
-                store_memory(user_id, org_id, query)
+                store_memory(
+                    user_id,
+                    org_id,
+                    query
+                )
+
                 print("🧭 Detecting intent...", flush=True)
                 print("🎯 INTENT:", intent, flush=True)
 
-                print("🧩 Expanding query...", flush=True)
-                query_data = expand_query_llm(query)
+                if intent == "search":
 
-                if not query_data.get("roles") and not query_data.get("locations"):
-                    print("⚠️ LLM FAILED → USING FALLBACK", flush=True)
-                    query_data = {
-                        "normalized": query,
-                        "roles": [],
-                        "locations": []
-                    }
+                    print("🧩 Expanding query...", flush=True)
 
-                print("📦 QUERY DATA:", json.dumps(query_data, indent=2), flush=True)
+                    query_data = expand_query_llm(query)
 
-                es_results = []
+                    if not query_data.get("roles") and not query_data.get("locations"):
 
-                try:
-                    es_results = await asyncio.to_thread(elastic_search_v2, query_data, intent)
-                except Exception as e:
-                    print("❌ ES ERROR:", e)
+                        print("⚠️ LLM FALLBACK", flush=True)
 
-                print("📦 BEFORE FILTER:", len(results), flush=True)
+                        query_data = {
+                            "normalized": query,
+                            "roles": [],
+                            "locations": []
+                        }
 
-                es_results = filter_by_intent(es_results, intent)
+                    print(
+                        "📦 QUERY DATA:",
+                        json.dumps(query_data, indent=2),
+                        flush=True
+                    )
 
-                results = es_results
+                    try:
 
-                print("📦 AFTER FILTER:", len(results), flush=True)
-
-
-                if not results:
-                    print("❌ NO RESULTS FOUND", flush=True)
-                    print("🔍 DEBUG QUERY:", query, flush=True)
-                    print("🧠 QUERY DATA:", query_data, flush=True)
-                    print("🎯 INTENT:", intent, flush=True)
-
-                if not results:
-                    print("❌ NO RESULTS → STOPPING PIPELINE", flush=True)
-
-                    await safe_send(ws, {
-                        "type": "token",
-                        "data": (
-                            "I couldn’t find any results matching your search. "
-                            "You may want to refine your query or try different keywords."
+                        results = await asyncio.to_thread(
+                            elastic_search_v2,
+                            query_data
                         )
-                    })
 
-                    await safe_send(ws, {
-                        "type": "done",
-                        "total": 0
-                    })
+                    except Exception as e:
 
-                    continue
+                        print("❌ ES ERROR:", e)
 
-                results = apply_priority_sorting(results)
-                store_last_context(user_id, org_id, intent, results[:3])
+                    results = apply_priority_sorting(results)
 
-                total = len(results)
+                    total = len(results)
+
+                    print(
+                        "✅ SEARCH RESULTS:",
+                        total,
+                        flush=True
+                    )
+
+                    intro = ""
+
+                    try:
+
+                        intro = await asyncio.to_thread(
+                            generate_intro,
+                            query,
+                            intent,
+                            results[:5]
+                        )
+
+                    except Exception as e:
+
+                        print("❌ intro error:", e)
+
+                    if intro:
+
+                        await safe_send(ws, {
+                            "type": "token",
+                            "data": intro + "\n\n"
+                        })
+
+                    if not results:
+
+                        await safe_send(ws, {
+                            "type": "token",
+                            "data": (
+                                "I couldn’t find relevant results. "
+                                "Try different keywords."
+                            )
+                        })
+
+                        await safe_send(ws, {
+                            "type": "done",
+                            "total": 0
+                        })
+
+                        continue
+
+                    store_last_context(
+                        user_id,
+                        org_id,
+                        intent,
+                        results[:3]
+                    )
 
             except Exception as e:
+
                 print("❌ SEARCH ERROR:", e)
 
             if ws.client_state.name != "CONNECTED":
@@ -1569,10 +1697,11 @@ async def ws_search(ws: WebSocket):
                 memory_text = "\n".join([f"- {m}" for m in memory[:5]])
 
             ai_response = await stream_answer(
-                ws,
-                query,
-                results,
-                memory_text
+                ws=ws,
+                query=query,
+                intent=intent,
+                memory_text=memory_text,
+                results=results
             )
 
             if ai_response:
