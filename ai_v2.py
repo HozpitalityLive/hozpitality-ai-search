@@ -1480,80 +1480,388 @@ def vector_search_v2(query_data):
     return results
 
 
+# @app.websocket("/ws/ai-search")
+# async def ws_search(ws: WebSocket):
+#     await ws.accept()
+#     print("✅ WebSocket connected")
+
+#     try:
+#         while True:
+#             try:
+#                 raw = await ws.receive_text()
+#             except:
+#                 print("⚠️ Client disconnected during receive")
+#                 break
+
+#             try:
+#                 data = json.loads(raw)
+#             except:
+#                 await safe_send(ws, {"type": "error", "message": "Invalid JSON"})
+#                 continue
+
+#             query = data.get("query", "").strip()
+#             user_id = data.get("user_id", 0)
+#             org_id = data.get("org_id", 0)
+#             conversation_id = data.get("conversation_id")
+
+#             if not conversation_id:
+#                 title = query[:50]
+#                 conversation_id = create_conversation(user_id, title)
+
+#             await safe_send(ws, {
+#                 "type": "conversation",
+#                 "conversation_id": conversation_id
+#             })
+
+#             last_ai = get_last_ai_response(user_id, org_id)
+#             last_ctx = get_last_context(user_id, org_id)
+#             memory = retrieve_memory(user_id, org_id, query)
+
+#             follow = detect_followup_llm(query, last_ai)
+
+            
+#             if follow.get("is_followup") and last_ctx:
+#                 print("🔁 FOLLOW-UP DETECTED", flush=True)
+#                 intent = last_ctx.get("intent")
+#             else:
+#                 intent = detect_intent_llm(query)
+
+#             print(f"🔍 Query: {query}")
+
+#             if not query:
+#                 await safe_send(ws, {"type": "error", "message": "Query missing"})
+#                 continue
+
+#             print(f"🔍 Query: {query}")
+#             print("🧠 RAW INPUT:", data, flush=True)
+#             print("👤 USER ID:", user_id, flush=True)
+
+#             intro = ""
+#             try:
+#                 intro = await asyncio.to_thread(
+#                     generate_intro,
+#                     query,
+#                     intent,
+#                     results[:5] if results else []
+#                 )
+#             except:
+#                 pass
+
+#             if intro:
+#                 await safe_send(ws, {
+#                     "type": "token",
+#                     "data": intro + "\n\n"
+#                 })
+
+#             results = []
+#             total = 0
+
+#             try:
+
+#                 save_message(
+#                     conversation_id,
+#                     "user",
+#                     query
+#                 )
+
+#                 store_memory(
+#                     user_id,
+#                     org_id,
+#                     query
+#                 )
+
+#                 print("🧭 Detecting intent...", flush=True)
+#                 print("🎯 INTENT:", intent, flush=True)
+
+#                 if intent == "search":
+
+#                     print("🧩 Expanding query...", flush=True)
+
+#                     query_data = expand_query_llm(query)
+
+#                     if not query_data.get("roles") and not query_data.get("locations"):
+
+#                         print("⚠️ LLM FALLBACK", flush=True)
+
+#                         query_data = {
+#                             "normalized": query,
+#                             "roles": [],
+#                             "locations": []
+#                         }
+
+#                     print(
+#                         "📦 QUERY DATA:",
+#                         json.dumps(query_data, indent=2),
+#                         flush=True
+#                     )
+
+#                     try:
+
+#                         results = await asyncio.to_thread(
+#                             elastic_search_v2,
+#                             query_data
+#                         )
+
+#                     except Exception as e:
+
+#                         print("❌ ES ERROR:", e)
+
+#                     results = apply_priority_sorting(results)
+
+#                     total = len(results)
+
+#                     print(
+#                         "✅ SEARCH RESULTS:",
+#                         total,
+#                         flush=True
+#                     )
+
+#                     intro = ""
+
+#                     try:
+
+#                         intro = await asyncio.to_thread(
+#                             generate_intro,
+#                             query,
+#                             intent,
+#                             results[:5]
+#                         )
+
+#                     except Exception as e:
+
+#                         print("❌ intro error:", e)
+
+#                     if intro:
+
+#                         await safe_send(ws, {
+#                             "type": "token",
+#                             "data": intro + "\n\n"
+#                         })
+
+#                     if intent == "search" and not results:
+#                         print("❌ NO RESULTS → STOPPING PIPELINE", flush=True)
+
+#                         await safe_send(ws, {
+#                             "type": "token",
+#                             "data": (
+#                                 "I couldn’t find any results matching your search. "
+#                                 "You may want to refine your query or try different keywords."
+#                             )
+#                         })
+
+#                         await safe_send(ws, {
+#                             "type": "done",
+#                             "total": 0
+#                         })
+
+#                         continue
+
+#                     store_last_context(
+#                         user_id,
+#                         org_id,
+#                         intent,
+#                         results[:3]
+#                     )
+
+#             except Exception as e:
+
+#                 print("❌ SEARCH ERROR:", e)
+
+#             if ws.client_state.name != "CONNECTED":
+#                 break
+
+#             if results:
+#                 print("✅ USING REAL DATA:", len(results), flush=True)
+#             else:
+#                 if not results:
+#                     print("❌ NO RESULTS → STOPPING PIPELINE", flush=True)
+
+#                     await safe_send(ws, {
+#                         "type": "token",
+#                         "data": (
+#                             "I couldn’t find any results matching your search. "
+#                             "You may want to refine your query or try different keywords."
+#                         )
+#                     })
+
+#                     await safe_send(ws, {
+#                         "type": "done",
+#                         "total": 0
+#                     })
+
+#                     continue
+            
+#             print("🚨 BEFORE STREAM", len(results), query, flush=True)
+#             memory_text = ""
+
+#             if memory:
+#                 memory_text = "\n".join([f"- {m}" for m in memory[:5]])
+
+#             ai_response = await stream_answer(
+#                 ws=ws,
+#                 query=query,
+#                 intent=intent,
+#                 memory_text=memory_text,
+#                 results=results
+#             )
+
+#             if ai_response:
+#                 save_message(conversation_id, "assistant", ai_response)
+#                 store_last_ai_response(user_id, org_id, ai_response)
+#                 store_memory(user_id, org_id, ai_response)
+
+#             await safe_send(ws, {
+#                 "type": "done",
+#                 "total": total
+#             })
+
+#     except Exception as e:
+#         print("❌ WS ERROR:", str(e))
+
+#     finally:
+#         print("🔌 Connection closed")
+#         pass
+
+
 @app.websocket("/ws/ai-search")
 async def ws_search(ws: WebSocket):
+
     await ws.accept()
-    print("✅ WebSocket connected")
+
+    print("✅ WebSocket connected", flush=True)
 
     try:
+
         while True:
+
             try:
                 raw = await ws.receive_text()
-            except:
-                print("⚠️ Client disconnected during receive")
+
+            except Exception as e:
+                print("⚠️ Client disconnected during receive:", e, flush=True)
                 break
 
             try:
                 data = json.loads(raw)
-            except:
-                await safe_send(ws, {"type": "error", "message": "Invalid JSON"})
+
+            except Exception as e:
+
+                print("❌ INVALID JSON:", e, flush=True)
+
+                await safe_send(ws, {
+                    "type": "error",
+                    "message": "Invalid JSON"
+                })
+
                 continue
 
             query = data.get("query", "").strip()
+
             user_id = data.get("user_id", 0)
+
             org_id = data.get("org_id", 0)
+
             conversation_id = data.get("conversation_id")
 
+            print("\n==============================", flush=True)
+            print("📩 NEW MESSAGE RECEIVED", flush=True)
+            print("==============================", flush=True)
+
+            print("🔍 Query:", query, flush=True)
+            print("👤 USER ID:", user_id, flush=True)
+            print("🏢 ORG ID:", org_id, flush=True)
+
+            if not query:
+
+                print("❌ EMPTY QUERY", flush=True)
+
+                await safe_send(ws, {
+                    "type": "error",
+                    "message": "Query missing"
+                })
+
+                continue
+
             if not conversation_id:
+
                 title = query[:50]
-                conversation_id = create_conversation(user_id, title)
+
+                conversation_id = create_conversation(
+                    user_id,
+                    title
+                )
+
+                print(
+                    "🆕 CREATED CONVERSATION:",
+                    conversation_id,
+                    flush=True
+                )
 
             await safe_send(ws, {
                 "type": "conversation",
                 "conversation_id": conversation_id
             })
 
-            last_ai = get_last_ai_response(user_id, org_id)
-            last_ctx = get_last_context(user_id, org_id)
-            memory = retrieve_memory(user_id, org_id, query)
 
-            follow = detect_followup_llm(query, last_ai)
+            last_ai = get_last_ai_response(
+                user_id,
+                org_id
+            )
 
-            
+            last_ctx = get_last_context(
+                user_id,
+                org_id
+            )
+
+            memory = retrieve_memory(
+                user_id,
+                org_id,
+                query
+            )
+
+            print(
+                "🧠 MEMORY ITEMS:",
+                len(memory) if memory else 0,
+                flush=True
+            )
+
+            follow = detect_followup_llm(
+                query,
+                last_ai
+            )
+
+            print(
+                "🔁 FOLLOWUP DETECTION:",
+                follow,
+                flush=True
+            )
+
             if follow.get("is_followup") and last_ctx:
-                print("🔁 FOLLOW-UP DETECTED", flush=True)
+
+                print(
+                    "🔁 FOLLOW-UP DETECTED",
+                    flush=True
+                )
+
                 intent = last_ctx.get("intent")
+
             else:
+
+                print(
+                    "🧭 RUNNING INTENT DETECTION",
+                    flush=True
+                )
+
                 intent = detect_intent_llm(query)
 
-            print(f"🔍 Query: {query}")
-
-            if not query:
-                await safe_send(ws, {"type": "error", "message": "Query missing"})
-                continue
-
-            print(f"🔍 Query: {query}")
-            print("🧠 RAW INPUT:", data, flush=True)
-            print("👤 USER ID:", user_id, flush=True)
-
-            intro = ""
-            try:
-                intro = await asyncio.to_thread(
-                    generate_intro,
-                    query,
-                    intent,
-                    results[:5] if results else []
-                )
-            except:
-                pass
-
-            if intro:
-                await safe_send(ws, {
-                    "type": "token",
-                    "data": intro + "\n\n"
-                })
+            print(
+                "🎯 FINAL INTENT:",
+                intent,
+                flush=True
+            )
 
             results = []
+
             total = 0
 
             try:
@@ -1570,24 +1878,29 @@ async def ws_search(ws: WebSocket):
                     query
                 )
 
-                print("🧭 Detecting intent...", flush=True)
-                print("🎯 INTENT:", intent, flush=True)
+                print(
+                    "💾 USER MESSAGE SAVED",
+                    flush=True
+                )
+
+            except Exception as e:
+
+                print(
+                    "❌ SAVE MESSAGE ERROR:",
+                    e,
+                    flush=True
+                )
+
+            try:
 
                 if intent == "search":
 
-                    print("🧩 Expanding query...", flush=True)
+                    print(
+                        "🔎 STARTING SEARCH PIPELINE",
+                        flush=True
+                    )
 
                     query_data = expand_query_llm(query)
-
-                    if not query_data.get("roles") and not query_data.get("locations"):
-
-                        print("⚠️ LLM FALLBACK", flush=True)
-
-                        query_data = {
-                            "normalized": query,
-                            "roles": [],
-                            "locations": []
-                        }
 
                     print(
                         "📦 QUERY DATA:",
@@ -1595,23 +1908,67 @@ async def ws_search(ws: WebSocket):
                         flush=True
                     )
 
+                    if (
+                        not query_data.get("roles")
+                        and
+                        not query_data.get("locations")
+                    ):
+
+                        print(
+                            "⚠️ USING QUERY FALLBACK",
+                            flush=True
+                        )
+
+                        query_data = {
+                            "normalized": query,
+                            "roles": [],
+                            "locations": []
+                        }
+
                     try:
+
+                        print(
+                            "⚡ RUNNING ELASTIC SEARCH",
+                            flush=True
+                        )
 
                         results = await asyncio.to_thread(
                             elastic_search_v2,
                             query_data
                         )
 
+                        print(
+                            "📊 RAW SEARCH RESULTS:",
+                            len(results),
+                            flush=True
+                        )
+
                     except Exception as e:
 
-                        print("❌ ES ERROR:", e)
+                        print(
+                            "❌ ELASTIC SEARCH ERROR:",
+                            e,
+                            flush=True
+                        )
 
-                    results = apply_priority_sorting(results)
+                        results = []
+
+                    try:
+
+                        results = apply_priority_sorting(results)
+
+                    except Exception as e:
+
+                        print(
+                            "❌ SORT ERROR:",
+                            e,
+                            flush=True
+                        )
 
                     total = len(results)
 
                     print(
-                        "✅ SEARCH RESULTS:",
+                        "✅ FINAL RESULTS:",
                         total,
                         flush=True
                     )
@@ -1627,9 +1984,19 @@ async def ws_search(ws: WebSocket):
                             results[:5]
                         )
 
+                        print(
+                            "💬 INTRO:",
+                            intro,
+                            flush=True
+                        )
+
                     except Exception as e:
 
-                        print("❌ intro error:", e)
+                        print(
+                            "❌ INTRO ERROR:",
+                            e,
+                            flush=True
+                        )
 
                     if intro:
 
@@ -1640,10 +2007,16 @@ async def ws_search(ws: WebSocket):
 
                     if not results:
 
+                        print(
+                            "❌ NO SEARCH RESULTS",
+                            flush=True
+                        )
+
                         await safe_send(ws, {
                             "type": "token",
                             "data": (
-                                "I couldn’t find relevant results. "
+                                "I couldn’t find any results "
+                                "matching your search. "
                                 "Try different keywords."
                             )
                         })
@@ -1655,46 +2028,95 @@ async def ws_search(ws: WebSocket):
 
                         continue
 
-                    store_last_context(
-                        user_id,
-                        org_id,
-                        intent,
-                        results[:3]
+                    try:
+
+                        store_last_context(
+                            user_id,
+                            org_id,
+                            intent,
+                            results[:3]
+                        )
+
+                        print(
+                            "🧠 CONTEXT STORED",
+                            flush=True
+                        )
+
+                    except Exception as e:
+
+                        print(
+                            "❌ CONTEXT STORE ERROR:",
+                            e,
+                            flush=True
+                        )
+
+                else:
+
+                    print(
+                        f"💬 NON-SEARCH INTENT: {intent}",
+                        flush=True
                     )
 
             except Exception as e:
 
-                print("❌ SEARCH ERROR:", e)
+                print(
+                    "❌ SEARCH PIPELINE ERROR:",
+                    e,
+                    flush=True
+                )
 
             if ws.client_state.name != "CONNECTED":
+
+                print(
+                    "⚠️ SOCKET DISCONNECTED",
+                    flush=True
+                )
+
                 break
 
-            if results:
-                print("✅ USING REAL DATA:", len(results), flush=True)
+            if intent == "search":
+
+                if results:
+
+                    print(
+                        "✅ USING SEARCH RESULTS:",
+                        len(results),
+                        flush=True
+                    )
+
+                else:
+
+                    print(
+                        "⚠️ SEARCH INTENT BUT EMPTY RESULTS",
+                        flush=True
+                    )
+
             else:
-                if not results:
-                    print("❌ NO RESULTS → STOPPING PIPELINE", flush=True)
 
-                    await safe_send(ws, {
-                        "type": "token",
-                        "data": (
-                            "I couldn’t find any results matching your search. "
-                            "You may want to refine your query or try different keywords."
-                        )
-                    })
+                print(
+                    "💬 SKIPPING RESULT VALIDATION "
+                    "FOR NON-SEARCH INTENT",
+                    flush=True
+                )
 
-                    await safe_send(ws, {
-                        "type": "done",
-                        "total": 0
-                    })
-
-                    continue
-            
-            print("🚨 BEFORE STREAM", len(results), query, flush=True)
             memory_text = ""
 
             if memory:
-                memory_text = "\n".join([f"- {m}" for m in memory[:5]])
+
+                memory_text = "\n".join([
+                    f"- {m}"
+                    for m in memory[:5]
+                ])
+
+            print(
+                "🧠 MEMORY TEXT READY",
+                flush=True
+            )
+
+            print(
+                "🚀 CALLING STREAM ANSWER",
+                flush=True
+            )
 
             ai_response = await stream_answer(
                 ws=ws,
@@ -1704,22 +2126,72 @@ async def ws_search(ws: WebSocket):
                 results=results
             )
 
+            print(
+                "✅ STREAM COMPLETE",
+                flush=True
+            )
+
             if ai_response:
-                save_message(conversation_id, "assistant", ai_response)
-                store_last_ai_response(user_id, org_id, ai_response)
-                store_memory(user_id, org_id, ai_response)
+
+                try:
+
+                    save_message(
+                        conversation_id,
+                        "assistant",
+                        ai_response
+                    )
+
+                    store_last_ai_response(
+                        user_id,
+                        org_id,
+                        ai_response
+                    )
+
+                    store_memory(
+                        user_id,
+                        org_id,
+                        ai_response
+                    )
+
+                    print(
+                        "💾 AI RESPONSE SAVED",
+                        flush=True
+                    )
+
+                except Exception as e:
+
+                    print(
+                        "❌ AI SAVE ERROR:",
+                        e,
+                        flush=True
+                    )
 
             await safe_send(ws, {
                 "type": "done",
                 "total": total
             })
 
+            print(
+                "✅ REQUEST COMPLETE",
+                flush=True
+            )
+
     except Exception as e:
-        print("❌ WS ERROR:", str(e))
+
+        print(
+            "❌ WS ERROR:",
+            str(e),
+            flush=True
+        )
+
+        traceback.print_exc()
 
     finally:
-        print("🔌 Connection closed")
-        pass
+
+        print(
+            "🔌 Connection closed",
+            flush=True
+        )
 
 def load_faiss_only():
     global documents, index
