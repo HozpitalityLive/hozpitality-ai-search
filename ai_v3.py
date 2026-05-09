@@ -1,3 +1,5 @@
+# ai_v3.py
+
 import os
 import json
 import asyncio
@@ -19,9 +21,10 @@ from ai_server import (
     store_last_ai_response,
 )
 
-
-
-
+from ai_v2 import (
+    elastic_search_v2,
+    expand_query_llm
+)
 
 app = FastAPI()
 
@@ -33,10 +36,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-
-
-
 OLLAMA_URL = "http://ollama:11434/api/generate"
 
 MODEL_CHAT = "llama3-hoz:latest"
@@ -46,10 +45,6 @@ redis_client = redis.Redis(
     port=6379,
     decode_responses=True
 )
-
-
-
-
 
 async def safe_send(ws, data):
 
@@ -62,10 +57,6 @@ async def safe_send(ws, data):
     except Exception as e:
 
         print("❌ SEND ERROR:", e, flush=True)
-
-
-
-
 
 def detect_intent(query: str):
 
@@ -115,45 +106,6 @@ def detect_intent(query: str):
 
     return "chat"
 
-
-
-
-
-def detect_search_category(query: str):
-
-    q = query.lower()
-
-    if any(x in q for x in [
-        "job",
-        "jobs",
-        "vacancy",
-        "hiring",
-        "chef",
-        "waiter"
-    ]):
-        return "job"
-
-    if any(x in q for x in [
-        "company",
-        "hotel",
-        "group"
-    ]):
-        return "company"
-
-    if any(x in q for x in [
-        "resume",
-        "cv",
-        "candidate",
-        "profile"
-    ]):
-        return "professional"
-
-    return "general"
-
-
-
-
-
 def generate_followups(category):
 
     if category == "job":
@@ -175,10 +127,6 @@ def generate_followups(category):
         "Show more results",
         "Refine this search"
     ]
-
-
-
-
 
 async def stream_chat_response(
     ws,
@@ -261,93 +209,266 @@ ASSISTANT:
 
     return full
 
-
-
-
-
 async def handle_search(
     ws,
     query,
 ):
 
-    category = detect_search_category(query)
+    try:
+        
+		cache_key = (
+			f"search:{query.lower()}"
+		)
 
-    results = search_db(
-        query,
-        intent_type=category
-    )
+		cached = redis_client.get(cache_key)
 
-    results = apply_priority_sorting(results)
+		if cached:
 
-    results = results[:6]
+			cached_data = json.loads(cached)
 
-    clean_results = []
+			await safe_send(ws, {
+				"type": "search",
+				"data": cached_data
+			})
 
-    for r in results:
+			await safe_send(ws, {
+				"type": "done"
+			})
 
-        clean_results.append({
+			return
 
-            "title": r.get("title"),
-
-            "url": r.get("url"),
-
-            "snippet": (
-                r.get("content", "")[:180]
-            ),
-
-            "location": r.get("location"),
-
-            "category": r.get("category")
-        })
-
-    
-    
-    
-
-    if clean_results:
-
-        intro = (
-            f"I found {len(clean_results)} "
-            f"relevant hospitality results."
+        query_data = await asyncio.to_thread(
+            expand_query_llm,
+            query
         )
 
-    else:
-
-        intro = (
-            "I couldn't find matching results."
+        normalized = query_data.get(
+            "normalized",
+            query
         )
 
-    
-    
-    
+        print(
+            "🧠 NORMALIZED:",
+            normalized,
+            flush=True
+        )
 
-    followups = generate_followups(category)
+        results = await asyncio.to_thread(
+            elastic_search_v2,
+            query_data
+        )
 
-    
-    
-    
+        print(
+            f"📊 ES RESULTS: {len(results)}",
+            flush=True
+        )
 
-    await safe_send(ws, {
+        results = apply_priority_sorting(
+            results
+        )
 
-        "type": "message",
+        results = results[:8]
 
-        "data": {
+        clean_results = []
+
+        for r in results:
+
+            category = (
+                r.get("category") or "general"
+            )
+
+            slug = r.get("slug") or ""
+
+            if category == "job":
+
+                url = (
+                    f"https://www.hozpitality.com/"
+                    f"jobs/details/{slug}"
+                )
+
+            elif category == "company":
+
+                url = (
+                    f"https://www.hozpitality.com/"
+                    f"profile/{slug}"
+                )
+
+            else:
+
+                url = (
+                    f"https://www.hozpitality.com/"
+                    f"{slug}"
+                )
+
+            clean_results.append({
+
+                "title":
+                    r.get("title", ""),
+
+                "url":
+                    url,
+
+                "snippet":
+                    (r.get("content") or "")[:180],
+
+                "location":
+                    r.get("location", ""),
+
+                "category":
+                    category
+            })
+
+        if clean_results:
+
+            intro = (
+                f"I found {len(clean_results)} "
+                f"relevant hospitality results."
+            )
+
+        else:
+
+            intro = (
+                "I couldn't find matching results."
+            )
+
+        followups = []
+
+        if any(
+            r["category"] == "job"
+            for r in clean_results
+        ):
+
+            followups = [
+                "Show waiter jobs in Abu Dhabi",
+                "Show hotel jobs in Dubai",
+                "Show visa sponsorship jobs"
+            ]
+
+        elif any(
+            r["category"] == "company"
+            for r in clean_results
+        ):
+
+            followups = [
+                "Show luxury hotel companies",
+                "Show hiring hotel groups"
+            ]
+
+        else:
+
+            followups = [
+                "Show more results",
+                "Refine this search"
+            ]
+
+        await safe_send(ws, {
+
+            "type": "message",
+
+            "data": {
 
             "message": intro,
 
             "results": clean_results,
 
             "followups": followups
-        }
-    })
+            }
+        })
 
-    await safe_send(ws, {
-        "type": "done"
-    })
+        if clean_results:
 
+            prompt = f"""
+You are Hozpitality AI.
 
+User Query:
+{query}
 
+Results:
+{json.dumps(clean_results[:5])}
 
+TASK:
+- explain results naturally
+- conversational
+- short
+- no hallucinations
+- under 80 words
+- mention trends only from results
+"""
+
+            async with httpx.AsyncClient(
+                timeout=None
+            ) as client:
+
+                async with client.stream(
+                    "POST",
+                    OLLAMA_URL,
+                    json={
+                        "model": MODEL_CHAT,
+                        "prompt": prompt,
+                        "stream": True,
+                        "options": {
+                            "temperature": 0.4,
+                            "num_predict": 120
+                        }
+                    }
+                ) as response:
+
+                    async for line in response.aiter_lines():
+
+                        if not line:
+                            continue
+
+                        try:
+                            data = json.loads(line)
+                        except:
+                            continue
+
+                        token = data.get(
+                            "response"
+                        )
+
+                        if (
+							token and
+							ws.client_state.name == "CONNECTED"
+						):
+
+                            await safe_send(ws, {
+                                "type": "stream",
+                                "token": token
+                            })
+
+        await safe_send(ws, {
+            "type": "done"
+        })
+
+    except Exception as e:
+
+        print(
+            "❌ SEARCH ERROR:",
+            e,
+            flush=True
+        )
+
+        traceback.print_exc()
+
+        await safe_send(ws, {
+
+            "type": "message",
+
+            "data": {
+
+                "message":
+                    "Something went wrong.",
+
+                "results": [],
+
+                "followups": []
+            }
+        })
+
+        await safe_send(ws, {
+            "type": "done"
+        })
 
 @app.websocket("/ws/ai-search")
 async def websocket_ai_search(
@@ -388,10 +509,6 @@ async def websocket_ai_search(
             print("📩 QUERY:", query, flush=True)
             print("====================\n", flush=True)
 
-            
-            
-            
-
             conversation_id = data.get(
                 "conversation_id"
             )
@@ -410,19 +527,11 @@ async def websocket_ai_search(
                     "conversation_id": conversation_id
                 })
 
-            
-            
-            
-
             save_message(
                 conversation_id,
                 "user",
                 query
             )
-
-            
-            
-            
 
             memory_items = retrieve_memory(
                 user_id,
@@ -434,10 +543,6 @@ async def websocket_ai_search(
                 memory_items[-3:]
             )
 
-            
-            
-            
-
             intent = detect_intent(query)
 
             print(
@@ -445,10 +550,6 @@ async def websocket_ai_search(
                 intent,
                 flush=True
             )
-
-            
-            
-            
 
             if intent == "search":
 
@@ -459,19 +560,11 @@ async def websocket_ai_search(
 
                 continue
 
-            
-            
-            
-
             answer = await stream_chat_response(
                 ws,
                 query,
                 memory_text
             )
-
-            
-            
-            
 
             await safe_send(ws, {
 
@@ -486,10 +579,6 @@ async def websocket_ai_search(
                     "followups": []
                 }
             })
-
-            
-            
-            
 
             if answer:
 
