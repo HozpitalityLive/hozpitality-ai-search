@@ -1211,7 +1211,7 @@ QUERY:
                     "num_predict": 120
                 }
             },
-            timeout=5
+            timeout=15
         )
 
         raw = res.json().get(
