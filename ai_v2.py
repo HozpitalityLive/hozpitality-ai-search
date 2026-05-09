@@ -1168,15 +1168,31 @@ FORMAT:
 {{
   "normalized": "string",
   "roles": [],
-  "locations": []
+  "locations": [],
+  "intent": "search | faq | chat",
+  "category": "job | company | article | professional | general"
 }}
 
 RULES:
 - valid JSON only
 - no markdown
 - no explanation
+- normalized = cleaned search query
 - roles = job titles only
 - locations = city/country only
+- intent:
+    - search = searching jobs/companies/articles/profiles
+    - faq = informational/how-to questions
+    - chat = casual conversation
+- category:
+    - job
+    - company
+    - article
+    - professional
+    - general
+- if unsure use:
+    "intent": "chat"
+    "category": "general"
 
 QUERY:
 {query}
@@ -1192,13 +1208,16 @@ QUERY:
                 "stream": False,
                 "options": {
                     "temperature": 0,
-                    "num_predict": 80
+                    "num_predict": 120
                 }
             },
-            timeout=3
+            timeout=5
         )
 
-        raw = res.json().get("response", "")
+        raw = res.json().get(
+            "response",
+            ""
+        )
 
         import re
 
@@ -1210,7 +1229,11 @@ QUERY:
 
         if match:
 
-            data = json.loads(match.group())
+            data = json.loads(
+                match.group()
+            )
+
+            # SAFE FALLBACKS
 
             if "normalized" not in data:
                 data["normalized"] = query
@@ -1221,10 +1244,22 @@ QUERY:
             if "locations" not in data:
                 data["locations"] = []
 
+            if "intent" not in data:
+                data["intent"] = "chat"
+
+            if "category" not in data:
+                data["category"] = "general"
+
             redis_client.setex(
                 cache_key,
                 300,
                 json.dumps(data)
+            )
+
+            print(
+                "🧠 QUERY DATA:",
+                json.dumps(data, indent=2),
+                flush=True
             )
 
             return data
@@ -1236,7 +1271,9 @@ QUERY:
     return {
         "normalized": query,
         "roles": [],
-        "locations": []
+        "locations": [],
+        "intent": "chat",
+        "category": "general"
     }
 
 
@@ -1317,14 +1354,31 @@ QUERY:
 
 #     return results
 
-def elastic_search_v2(query_data):
+def elastic_search_v2(query_data, category):
 
-    query = query_data["normalized"].strip()
+    must_clauses = []
+    should_clauses = []
+    filters = []
 
-    if len(query) < 2:
+    normalized_query = (
+        query_data.get("normalized") or ""
+    ).strip()
+
+    if not normalized_query:
         return []
 
-    should_clauses = []
+    must_clauses.append({
+        "multi_match": {
+            "query": normalized_query,
+            "fields": [
+                "title^5",
+                "content^2",
+                "location^3"
+            ],
+            "operator": "or",
+            "fuzziness": "AUTO"
+        }
+    })
 
     for role in query_data.get("roles", []):
 
@@ -1332,7 +1386,16 @@ def elastic_search_v2(query_data):
             "match": {
                 "title": {
                     "query": role,
-                    "boost": 5
+                    "boost": 6
+                }
+            }
+        })
+
+        should_clauses.append({
+            "match": {
+                "content": {
+                    "query": role,
+                    "boost": 2
                 }
             }
         })
@@ -1348,32 +1411,30 @@ def elastic_search_v2(query_data):
             }
         })
 
+    if category:
+
+        filters.append({
+            "term": {
+                "category": category
+            }
+        })
+
     body = {
-        "size": 15,
+        "size": 30,
         "query": {
             "bool": {
-                "must": [
-                    {
-                        "multi_match": {
-                            "query": query,
-                            "fields": [
-                                "title^5",
-                                "content^2",
-                                "location^2"
-                            ],
-                            "type": "best_fields",
-                            "operator": "and",
-                            "minimum_should_match": "75%"
-                        }
-                    }
-                ],
-                "should": should_clauses
+                "must": must_clauses,
+                "should": should_clauses,
+                "filter": filters,
+                "minimum_should_match": (
+                    1 if should_clauses else 0
+                )
             }
         }
     }
 
     print(
-        "🔎 ES QUERY:",
+        "🔎 ES FINAL QUERY:",
         json.dumps(body, indent=2),
         flush=True
     )
@@ -1387,74 +1448,37 @@ def elastic_search_v2(query_data):
 
         hits = res["hits"]["hits"]
 
-        print("📊 ES HITS:", len(hits), flush=True)
-
-        query_words = [
-            w.lower()
-            for w in query.split()
-            if len(w) > 2
-        ]
+        print(
+            f"📊 ES RAW HITS: {len(hits)}",
+            flush=True
+        )
 
         results = []
 
         for hit in hits:
 
-            score = hit["_score"]
-
-            if score < 3:
-                continue
-
             src = hit["_source"]
 
-            title = (
-                src.get("title", "")
-                .lower()
-            )
-
-            content = (
-                src.get("content", "")
-                .lower()
-            )
-
-            matched = any(
-                w in title or w in content
-                for w in query_words
-            )
-
-            if not matched:
-                continue
+            print("➡️ ES HIT:", {
+                "title": src.get("title"),
+                "category": src.get("category"),
+                "score": hit["_score"]
+            }, flush=True)
 
             doc = src.copy()
 
-            doc["bm25_score"] = score
+            doc["bm25_score"] = hit["_score"]
 
             results.append(doc)
 
-        seen = set()
-        unique_results = []
-
-        for r in results:
-
-            key = (
-                r.get("title", "").lower(),
-                r.get("slug")
-            )
-
-            if key in seen:
-                continue
-
-            seen.add(key)
-
-            unique_results.append(r)
-
-        return unique_results
-
+        return results
 
     except Exception as e:
 
         print("❌ ES ERROR:", e)
 
         return []
+
 
 def vector_search_v2(query_data):
     full_text = " ".join([

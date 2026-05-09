@@ -212,6 +212,7 @@ ASSISTANT:
 async def handle_search(
     ws,
     query,
+    query_data
 ):
 
     try:
@@ -237,14 +238,13 @@ async def handle_search(
 
             return
 
-        query_data = await asyncio.to_thread(
-            expand_query_llm,
-            query
-        )
-
         normalized = query_data.get(
             "normalized",
             query
+        )
+
+        category = query_data.get(
+            "category"
         )
 
         print(
@@ -253,9 +253,16 @@ async def handle_search(
             flush=True
         )
 
+        print(
+            "📂 CATEGORY:",
+            category,
+            flush=True
+        )
+
         results = await asyncio.to_thread(
             elastic_search_v2,
-            query_data
+            query_data,
+            category
         )
 
         print(
@@ -361,19 +368,28 @@ async def handle_search(
                 "Refine this search"
             ]
 
+        payload = {
+
+            "message": intro,
+
+            "results": clean_results,
+
+            "followups": followups
+        }
+
         await safe_send(ws, {
 
             "type": "message",
 
-            "data": {
-
-                "message": intro,
-
-                "results": clean_results,
-
-                "followups": followups
-            }
+            "data": payload
         })
+
+        # CACHE RESULTS
+        redis_client.setex(
+            cache_key,
+            300,
+            json.dumps(payload)
+        )
 
         if clean_results:
 
@@ -419,6 +435,7 @@ TASK:
                             continue
 
                         try:
+
                             data = json.loads(line)
 
                         except Exception:
@@ -470,6 +487,8 @@ TASK:
         await safe_send(ws, {
             "type": "done"
         })
+
+
 
 @app.websocket("/ws/ai-search")
 async def websocket_ai_search(
@@ -544,7 +563,19 @@ async def websocket_ai_search(
                 memory_items[-3:]
             )
 
-            intent = detect_intent(query)
+            query_data = await asyncio.to_thread(
+                expand_query_llm,
+                query
+            )
+
+            intent = query_data.get(
+                "intent",
+                "chat"
+            )
+
+            category = query_data.get(
+                "category"
+            )
 
             print(
                 "🎯 INTENT:",
@@ -552,11 +583,18 @@ async def websocket_ai_search(
                 flush=True
             )
 
+            print(
+                "📂 CATEGORY:",
+                category,
+                flush=True
+            )
+
             if intent == "search":
 
                 await handle_search(
                     ws,
-                    query
+                    query,
+                    query_data
                 )
 
                 continue
