@@ -1707,6 +1707,12 @@ async def ws_search(ws: WebSocket):
 
                         print(
                             "📊 RAW SEARCH RESULTS:",
+                            results,
+                            flush=True
+                        )
+
+                        print(
+                            "📊 RAW SEARCH RESULTS Counts:",
                             len(results),
                             flush=True
                         )
