@@ -456,7 +456,11 @@ INTENT:
             timeout=2
         )
 
-        print("res",res.json())
+        print(
+            "🧠 OLLAMA RAW:",
+            res.json(),
+            flush=True
+        )
 
         intent = (
             res.json()
