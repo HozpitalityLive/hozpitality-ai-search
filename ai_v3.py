@@ -215,27 +215,27 @@ async def handle_search(
 ):
 
     try:
-        
-		cache_key = (
-			f"search:{query.lower()}"
-		)
 
-		cached = redis_client.get(cache_key)
+        cache_key = (
+            f"search:{query.lower()}"
+        )
 
-		if cached:
+        cached = redis_client.get(cache_key)
 
-			cached_data = json.loads(cached)
+        if cached:
 
-			await safe_send(ws, {
-				"type": "search",
-				"data": cached_data
-			})
+            cached_data = json.loads(cached)
 
-			await safe_send(ws, {
-				"type": "done"
-			})
+            await safe_send(ws, {
+                "type": "search",
+                "data": cached_data
+            })
 
-			return
+            await safe_send(ws, {
+                "type": "done"
+            })
+
+            return
 
         query_data = await asyncio.to_thread(
             expand_query_llm,
@@ -367,11 +367,11 @@ async def handle_search(
 
             "data": {
 
-            "message": intro,
+                "message": intro,
 
-            "results": clean_results,
+                "results": clean_results,
 
-            "followups": followups
+                "followups": followups
             }
         })
 
@@ -420,7 +420,8 @@ TASK:
 
                         try:
                             data = json.loads(line)
-                        except:
+
+                        except Exception:
                             continue
 
                         token = data.get(
@@ -428,9 +429,9 @@ TASK:
                         )
 
                         if (
-							token and
-							ws.client_state.name == "CONNECTED"
-						):
+                            token and
+                            ws.client_state.name == "CONNECTED"
+                        ):
 
                             await safe_send(ws, {
                                 "type": "stream",
