@@ -456,6 +456,8 @@ INTENT:
             timeout=2
         )
 
+        print("res",res.json())
+
         intent = (
             res.json()
             .get("response", "")
