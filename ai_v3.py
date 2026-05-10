@@ -752,6 +752,39 @@ async def websocket_ai_search(
                 memory_items[-3:]
             )
 
+            fast_intent = detect_intent(query)
+
+            if fast_intent == "greeting":
+
+                greeting = (
+                    "Hi! I can help you find hozpitality jobs, "
+                    "companies, candidates, and industry insights."
+                )
+
+                await safe_send(ws, {
+
+                    "type": "message",
+
+                    "data": {
+
+                        "message": greeting,
+
+                        "results": [],
+
+                        "followups": [
+                            "Find hotel jobs in Dubai",
+                            "Show waiter jobs",
+                            "Find hospitality companies"
+                        ]
+                    }
+                })
+
+                await safe_send(ws, {
+                    "type": "done"
+                })
+
+                continue
+
             try:
 
                 query_data = await asyncio.wait_for(
@@ -939,6 +972,7 @@ async def websocket_ai_search(
                 memory_text
             )
 
+
             await safe_send(ws, {
 
                 "type": "message",
@@ -952,6 +986,8 @@ async def websocket_ai_search(
                     "followups": []
                 }
             })
+
+            answer = answer.strip()
 
             if answer:
 

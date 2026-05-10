@@ -1379,7 +1379,7 @@ def elastic_search_v2(query_data, category):
             "fields": [
                 "title^5",
                 "content^2",
-                "location^3"
+                "location^3",
                 "user_name^2"
             ],
             "operator": "or",
