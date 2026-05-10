@@ -44,6 +44,8 @@ async def websocket_chat_main(websocket: WebSocket):
 @main_app.post("/api/ollama-chat")
 async def ollama_chat(request: Request):
 
+    print("🔥 OLLAMA ROUTE HIT", flush=True)
+
     try:
 
         body = await request.json()
