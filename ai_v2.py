@@ -1371,7 +1371,65 @@ def expand_query_llm(query: str):
 
     category = "general"
 
-    if category_counter:
+    tokens = set(
+        re.findall(
+            r"[a-zA-Z]+",
+            q
+        )
+    )
+
+    job_words = {
+        "job",
+        "jobs",
+        "vacancy",
+        "vacancies",
+        "hiring",
+        "career",
+        "careers",
+        "apply"
+    }
+
+    article_words = {
+        "article",
+        "articles",
+        "blog",
+        "blogs",
+        "news"
+    }
+
+    professional_words = {
+        "candidate",
+        "profile",
+        "resume",
+        "cv"
+    }
+
+    company_words = {
+        "company",
+        "companies",
+        "hotel",
+        "hotels",
+        "group",
+        "restaurant"
+    }
+
+    if tokens.intersection(job_words):
+
+        category = "job"
+
+    elif tokens.intersection(article_words):
+
+        category = "article"
+
+    elif tokens.intersection(professional_words):
+
+        category = "professional"
+
+    elif tokens.intersection(company_words):
+
+        category = "company"
+
+    elif category_counter:
 
         category = (
             category_counter
@@ -1542,6 +1600,7 @@ def elastic_search_v2(query_data, category):
             "query": normalized_query,
             "fields": [
                 "title^5",
+                "ai_keywords^6",
                 "content^2",
                 "location^3",
                 "user_name^2"
@@ -1609,9 +1668,7 @@ def elastic_search_v2(query_data, category):
                 "must": must_clauses,
                 "should": should_clauses,
                 "filter": filters,
-                "minimum_should_match": (
-                    1 if should_clauses else 0
-                )
+                "minimum_should_match": 0
             }
         }
     }
@@ -1909,7 +1966,8 @@ async def ws_search(ws: WebSocket):
 
                         results = await asyncio.to_thread(
                             elastic_search_v2,
-                            query_data
+                            query_data,
+                            query_data.get("category")
                         )
 
                         print(

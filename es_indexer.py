@@ -2,6 +2,12 @@ import time
 from ai_v2 import es, chunked_bulk
 from psycopg2.pool import SimpleConnectionPool
 import os
+import re
+
+from psycopg2.pool import SimpleConnectionPool
+from elasticsearch.helpers import bulk
+
+from ai_v2 import es
 
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME"),
@@ -13,40 +19,150 @@ DB_CONFIG = {
 
 db_pool = SimpleConnectionPool(1, 5, **DB_CONFIG)
 
-
 def wait_for_es():
+
     print("⏳ Waiting for Elasticsearch...")
 
     for i in range(30):
+
         try:
+
             if es.ping():
-                health = es.cluster.health(wait_for_status="yellow", request_timeout=5)
-                print(f"✅ ES ready: {health['status']}")
+
+                health = es.cluster.health(
+                    wait_for_status="yellow",
+                    request_timeout=5
+                )
+
+                print(
+                    f"✅ ES READY: {health['status']}",
+                    flush=True
+                )
+
                 return True
+
         except Exception as e:
-            print("⏳ ES not ready:", e)
+
+            print(
+                "⏳ ES NOT READY:",
+                e,
+                flush=True
+            )
 
         time.sleep(2)
 
     return False
 
+def normalize_category(category_raw):
+
+    category_raw = (
+        category_raw or ""
+    ).lower()
+
+    if "job" in category_raw:
+        return "job"
+
+    elif (
+        "candidate" in category_raw
+        or
+        "profile" in category_raw
+    ):
+        return "professional"
+
+    elif "company" in category_raw:
+        return "company"
+
+    elif "supplier" in category_raw:
+        return "supplier"
+
+    elif "product" in category_raw:
+        return "product"
+
+    elif "event" in category_raw:
+        return "event"
+
+    elif (
+        "article" in category_raw
+        or
+        "blog" in category_raw
+        or
+        "news" in category_raw
+    ):
+        return "article"
+
+    elif "award" in category_raw:
+        return "award"
+
+    elif "faq" in category_raw:
+        return "faq"
+
+    return "general"
+
+def build_ai_keywords(
+    title,
+    content,
+    category,
+    location
+):
+
+    parts = []
+
+    for val in [
+        title,
+        content,
+        category,
+        location
+    ]:
+
+        if val:
+            parts.append(str(val))
+
+    text = " ".join(parts).lower()
+
+    text = re.sub(
+        r'[^a-zA-Z0-9\s]',
+        ' ',
+        text
+    )
+
+    text = re.sub(
+        r'\s+',
+        ' ',
+        text
+    ).strip()
+
+    return text
 
 def create_index():
 
     if es.indices.exists(index="hozpitality"):
 
-        print("⚠️ Deleting old index...")
+        print(
+            "⚠️ DELETING OLD INDEX",
+            flush=True
+        )
 
-        es.indices.delete(index="hozpitality")
+        es.indices.delete(
+            index="hozpitality"
+        )
 
-    print("📦 Creating optimized AI index...")
+    print(
+        "📦 CREATING AI INDEX",
+        flush=True
+    )
 
     es.indices.create(
+
         index="hozpitality",
+
         body={
+
             "settings": {
+
                 "analysis": {
+
                     "analyzer": {
+
                         "default": {
                             "type": "standard"
                         }
@@ -80,84 +196,199 @@ def create_index():
 
                     "user_name": {
                         "type": "text"
+                    },
+
+                    "ai_keywords": {
+                        "type": "text"
+                    },
+
+                    "entity_type": {
+                        "type": "keyword"
                     }
                 }
             }
         },
+
         request_timeout=60
     )
 
-    print("✅ AI index created")
+    print(
+        "✅ INDEX CREATED",
+        flush=True
+    )
 
+def chunked_bulk_index(
+    actions,
+    chunk_size=1000
+):
+
+    for i in range(
+        0,
+        len(actions),
+        chunk_size
+    ):
+
+        chunk = actions[
+            i:i + chunk_size
+        ]
+
+        print(
+            f"⚡ ES BULK {i} → {i + len(chunk)}",
+            flush=True
+        )
+
+        bulk(
+            es,
+            chunk,
+            request_timeout=120
+        )
+
+        time.sleep(0.2)
 
 def run_reindex():
-    print("🔥 FULL REINDEX START")
+
+    print(
+        "🔥 FULL AI REINDEX START",
+        flush=True
+    )
 
     if not wait_for_es():
-        print("❌ ES not ready")
+
+        print(
+            "❌ ES NOT READY",
+            flush=True
+        )
+
         return
 
     create_index()
 
-    conn = db_pool.getconn()
-    cur = conn.cursor()
+    conn = None
+    cur = None
 
-    cur.execute("""
-        SELECT id, title, content, category_text, location_text, slug , user_name
-        FROM master_search_mastersearchindex
-        WHERE is_live = TRUE
-    """)
+    try:
 
-    rows = cur.fetchall()
-    actions = []
+        conn = db_pool.getconn()
 
-    for r in rows:
-        category_raw = (r[3] or "").lower()
+        cur = conn.cursor()
 
-        if "job" in category_raw:
-            category = "job"
-        elif "company" in category_raw:
-            category = "company"
-        elif "candidate" in category_raw or "profile" in category_raw:
-            category = "professional"
-        elif "supplier" in category_raw:
-            category = "supplier"
-        elif "product" in category_raw:
-            category = "product"
-        elif "event" in category_raw:
-            category = "event"
-        elif "article" in category_raw or "blog" in category_raw:
-            category = "article"
-        elif "award" in category_raw:
-            category = "award"
-        elif "faq" in category_raw:
-            category = "faq"
-        else:
-            category = "general"
+        cur.execute("""
 
-        actions.append({
-            "_index": "hozpitality",
-            "_id": r[0],
-            "_source": {
-                "title": r[1],
-                "content": r[2],
-                "category": category,
-                "location": r[4],
-                "slug": r[5],
-                "user_name": r[6] or ""
-            }
-        })
+            SELECT
 
-    print(f"⚡ Indexing {len(actions)} docs...")
+                id,
+                title,
+                content,
+                category_text,
+                location_text,
+                slug,
+                user_name,
+                ai_keywords
 
-    chunked_bulk(es, actions)
+            FROM master_search_mastersearchindex
 
-    es.indices.refresh(index="hozpitality")
+            WHERE is_live = TRUE
 
-    db_pool.putconn(conn)
+        """)
 
-    print("✅ REINDEX DONE")
+        rows = cur.fetchall()
 
+        print(
+            f"📊 ROWS FETCHED: {len(rows)}",
+            flush=True
+        )
+
+        actions = []
+
+        for r in rows:
+
+            category = normalize_category(
+                r[3]
+            )
+
+            ai_keywords = build_ai_keywords(
+
+                r[1],
+                r[2],
+                category,
+                r[4]
+
+            )
+
+            entity_type = category
+
+            actions.append({
+
+                "_index": "hozpitality",
+
+                "_id": r[0],
+
+                "_source": {
+
+                    "title":
+                        r[1] or "",
+
+                    "content":
+                        r[2] or "",
+
+                    "category":
+                        category,
+
+                    "location":
+                        r[4] or "",
+
+                    "slug":
+                        r[5] or "",
+
+                    "user_name":
+                        r[6] or "",
+
+                    "ai_keywords":
+                        ai_keywords,
+
+                    "entity_type":
+                        entity_type
+                }
+            })
+
+        print(
+            f"⚡ INDEXING {len(actions)} DOCS",
+            flush=True
+        )
+
+        chunked_bulk_index(actions)
+
+        es.indices.refresh(
+            index="hozpitality"
+        )
+
+        print(
+            "✅ REINDEX COMPLETE",
+            flush=True
+        )
+
+    except Exception as e:
+
+        print(
+            "❌ REINDEX ERROR:",
+            e,
+            flush=True
+        )
+
+    finally:
+
+        try:
+            if cur:
+                cur.close()
+        except:
+            pass
+
+        try:
+            if conn:
+                db_pool.putconn(conn)
+        except:
+            pass
 
 if __name__ == "__main__":
+
     run_reindex()
