@@ -32,29 +32,62 @@ def wait_for_es():
 
 
 def create_index():
-    if es.indices.exists(index="hozpitality"):
-        print("⚠️ Index already exists")
-        return
 
-    print("📦 Creating index...")
+    if es.indices.exists(index="hozpitality"):
+
+        print("⚠️ Deleting old index...")
+
+        es.indices.delete(index="hozpitality")
+
+    print("📦 Creating optimized AI index...")
 
     es.indices.create(
         index="hozpitality",
         body={
+            "settings": {
+                "analysis": {
+                    "analyzer": {
+                        "default": {
+                            "type": "standard"
+                        }
+                    }
+                }
+            },
+
             "mappings": {
+
                 "properties": {
-                    "title": {"type": "text"},
-                    "content": {"type": "text"},
-                    "category": {"type": "keyword"},
-                    "location": {"type": "keyword"},
-                    "slug": {"type": "keyword"}
+
+                    "title": {
+                        "type": "text"
+                    },
+
+                    "content": {
+                        "type": "text"
+                    },
+
+                    "category": {
+                        "type": "keyword"
+                    },
+
+                    "location": {
+                        "type": "text"
+                    },
+
+                    "slug": {
+                        "type": "keyword"
+                    },
+
+                    "user_name": {
+                        "type": "text"
+                    }
                 }
             }
         },
-        request_timeout=30
+        request_timeout=60
     )
 
-    print("✅ Index created")
+    print("✅ AI index created")
 
 
 def run_reindex():
@@ -70,7 +103,7 @@ def run_reindex():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, title, content, category_text, location_text, slug
+        SELECT id, title, content, category_text, location_text, slug , user_name
         FROM master_search_mastersearchindex
         WHERE is_live = TRUE
     """)
@@ -110,7 +143,8 @@ def run_reindex():
                 "content": r[2],
                 "category": category,
                 "location": r[4],
-                "slug": r[5]
+                "slug": r[5],
+                "user_name": r[6] or ""
             }
         })
 

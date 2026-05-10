@@ -10,6 +10,7 @@ import httpx
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from ai_v2 import db_pool
 
 from ai_server import (
     search_db,
@@ -209,6 +210,96 @@ ASSISTANT:
 
     return full
 
+
+def get_user_profile(user_id):
+
+    conn = None
+    cur = None
+
+    try:
+
+        conn = db_pool.getconn()
+
+        cur = conn.cursor()
+
+        cur.execute("""
+
+            SELECT
+
+                c.name as country,
+
+                d.name as department,
+
+                jr.name as role,
+
+                jl.name as level
+
+            FROM user_accounts ua
+
+            LEFT JOIN countries c
+                ON c.id = ua.current_country_id
+
+            LEFT JOIN professionals p
+                ON p.user_id = ua.id
+
+            LEFT JOIN departments d
+                ON d.id = p.department_id
+
+            LEFT JOIN job_role jr
+                ON jr.id = p.job_role_id
+
+            LEFT JOIN job_levels jl
+                ON jl.id = p.job_level_id
+
+            WHERE ua.id = %s
+
+        """, (user_id,))
+
+        row = cur.fetchone()
+
+        if not row:
+
+            return {}
+
+        return {
+
+            "country": (row[0] or "").lower(),
+
+            "department":
+                (row[1] or "").lower(),
+
+            "role":
+                (row[2] or "").lower(),
+
+            "level":
+                (row[3] or "").lower()
+        }
+
+    except Exception as e:
+
+        print(
+            "❌ PROFILE ERROR:",
+            e,
+            flush=True
+        )
+
+        return {}
+
+    finally:
+
+        try:
+            if cur:
+                cur.close()
+        except:
+            pass
+
+        try:
+            if conn:
+                db_pool.putconn(conn)
+        except:
+            pass
+
+
 async def handle_search(
     ws,
     query,
@@ -221,11 +312,15 @@ async def handle_search(
             f"search:{query.lower()}"
         )
 
-        cached = redis_client.get(cache_key)
+        cached = redis_client.get(
+            cache_key
+        )
 
         if cached:
 
-            cached_data = json.loads(cached)
+            cached_data = json.loads(
+                cached
+            )
 
             await safe_send(ws, {
                 "type": "search",
@@ -238,26 +333,23 @@ async def handle_search(
 
             return
 
-        normalized = query_data.get(
-            "normalized",
-            query
-        )
-
         category = query_data.get(
-            "category"
+            "category",
+            "general"
         )
 
         print(
-            "🧠 NORMALIZED:",
-            normalized,
+            "🧠 QUERY DATA:",
+            json.dumps(
+                query_data,
+                indent=2
+            ),
             flush=True
         )
 
-        print(
-            "📂 CATEGORY:",
-            category,
-            flush=True
-        )
+        # =================================
+        # PRIMARY SEARCH
+        # =================================
 
         results = await asyncio.to_thread(
             elastic_search_v2,
@@ -266,9 +358,60 @@ async def handle_search(
         )
 
         print(
-            f"📊 ES RESULTS: {len(results)}",
+            f"📊 PRIMARY RESULTS: {len(results)}",
             flush=True
         )
+
+        # =================================
+        # BROADEN SEARCH
+        # =================================
+
+        if len(results) < 3:
+
+            print(
+                "🌍 BROADENING SEARCH",
+                flush=True
+            )
+
+            broader_query = (
+                query_data.copy()
+            )
+
+            broader_query[
+                "locations"
+            ] = []
+
+            broader_query[
+                "profile_country"
+            ] = None
+
+            more_results = (
+                await asyncio.to_thread(
+                    elastic_search_v2,
+                    broader_query,
+                    category
+                )
+            )
+
+            existing = set()
+
+            for r in results:
+
+                existing.add(
+                    r.get("slug")
+                )
+
+            for r in more_results:
+
+                slug = r.get("slug")
+
+                if slug not in existing:
+
+                    results.append(r)
+
+        # =================================
+        # SORT
+        # =================================
 
         results = apply_priority_sorting(
             results
@@ -280,30 +423,34 @@ async def handle_search(
 
         for r in results:
 
-            category = (
-                r.get("category") or "general"
+            result_category = (
+                r.get("category")
+                or "general"
             )
 
-            slug = r.get("slug") or ""
+            slug = (
+                r.get("slug")
+                or ""
+            )
 
-            if category == "job":
+            if result_category == "job":
 
                 url = (
-                    f"https://www.hozpitality.com/"
+                    "https://www.hozpitality.com/"
                     f"jobs/details/{slug}"
                 )
 
-            elif category == "company":
+            elif result_category == "company":
 
                 url = (
-                    f"https://www.hozpitality.com/"
-                    f"profile/{slug}"
+                    "https://www.hozpitality.com/"
+                    f"company/{slug}"
                 )
 
             else:
 
                 url = (
-                    f"https://www.hozpitality.com/"
+                    "https://www.hozpitality.com/"
                     f"{slug}"
                 )
 
@@ -316,57 +463,85 @@ async def handle_search(
                     url,
 
                 "snippet":
-                    (r.get("content") or "")[:180],
+                    (
+                        r.get("content")
+                        or ""
+                    )[:180],
 
                 "location":
                     r.get("location", ""),
 
                 "category":
-                    category
+                    result_category
             })
+
+        # =================================
+        # PERSONALIZED INTRO
+        # =================================
 
         if clean_results:
 
-            intro = (
-                f"I found {len(clean_results)} "
-                f"relevant hospitality results."
-            )
+            if (
+                category == "job"
+                and
+                query_data.get(
+                    "roles"
+                )
+                and
+                not query_data.get(
+                    "explicit_role"
+                )
+            ):
+
+                role = (
+                    query_data["roles"][0]
+                )
+
+                intro = (
+                    f"I found hospitality jobs "
+                    f"matching your "
+                    f"{role} profile."
+                )
+
+            else:
+
+                intro = (
+                    f"I found "
+                    f"{len(clean_results)} "
+                    f"relevant hospitality "
+                    f"results."
+                )
 
         else:
 
             intro = (
-                "I couldn't find matching results."
+                "I couldn't find "
+                "matching results."
             )
 
-        followups = []
+        # =================================
+        # FALLBACK MESSAGE
+        # =================================
 
-        if any(
-            r["category"] == "job"
-            for r in clean_results
+        if (
+            len(clean_results) < 3
+            and
+            category == "job"
         ):
 
-            followups = [
-                "Show waiter jobs in Abu Dhabi",
-                "Show hotel jobs in Dubai",
-                "Show visa sponsorship jobs"
-            ]
+            intro += (
+                " I also included related "
+                "hospitality opportunities "
+                "outside your profile."
+            )
 
-        elif any(
-            r["category"] == "company"
-            for r in clean_results
-        ):
+        # =================================
+        # FOLLOWUPS
+        # =================================
 
-            followups = [
-                "Show luxury hotel companies",
-                "Show hiring hotel groups"
-            ]
-
-        else:
-
-            followups = [
-                "Show more results",
-                "Refine this search"
-            ]
+        followups = generate_followups(
+            category
+        )
 
         payload = {
 
@@ -377,38 +552,48 @@ async def handle_search(
             "followups": followups
         }
 
+        # =================================
+        # SEND SEARCH RESULTS
+        # =================================
+
         await safe_send(ws, {
 
-            "type": "message",
+            "type": "search",
 
             "data": payload
         })
 
-        # CACHE RESULTS
+        # =================================
+        # CACHE
+        # =================================
+
         redis_client.setex(
             cache_key,
             300,
             json.dumps(payload)
         )
 
+        # =================================
+        # STREAM AI EXPLANATION
+        # =================================
+
         if clean_results:
 
             prompt = f"""
 You are Hozpitality AI.
 
-User Query:
+USER QUERY:
 {query}
 
-Results:
+RESULTS:
 {json.dumps(clean_results[:5])}
 
 TASK:
 - explain results naturally
 - conversational
-- short
-- no hallucinations
 - under 80 words
-- mention trends only from results
+- no hallucinations
+- mention hospitality trends only from results
 """
 
             async with httpx.AsyncClient(
@@ -436,9 +621,11 @@ TASK:
 
                         try:
 
-                            data = json.loads(line)
+                            data = json.loads(
+                                line
+                            )
 
-                        except Exception:
+                        except:
                             continue
 
                         token = data.get(
@@ -446,8 +633,10 @@ TASK:
                         )
 
                         if (
-                            token and
-                            ws.client_state.name == "CONNECTED"
+                            token
+                            and
+                            ws.client_state.name
+                            == "CONNECTED"
                         ):
 
                             await safe_send(ws, {
@@ -471,7 +660,7 @@ TASK:
 
         await safe_send(ws, {
 
-            "type": "message",
+            "type": "search",
 
             "data": {
 
@@ -563,9 +752,53 @@ async def websocket_ai_search(
                 memory_items[-3:]
             )
 
-            query_data = await asyncio.to_thread(
-                expand_query_llm,
-                query
+            try:
+
+                query_data = await asyncio.wait_for(
+
+                    asyncio.to_thread(
+                        expand_query_llm,
+                        query
+                    ),
+
+                    timeout=2.5
+
+                )
+
+            except Exception as e:
+
+                print(
+                    "❌ expand error:",
+                    e,
+                    flush=True
+                )
+
+                query_data = {
+
+                    "normalized": query,
+
+                    "roles": [],
+
+                    "locations": [],
+
+                    "intent": detect_intent(query),
+
+                    "category": (
+                        "job"
+                        if "job" in query.lower()
+                        else "general"
+                    )
+                }
+
+            profile = await asyncio.to_thread(
+                get_user_profile,
+                user_id
+            )
+
+            print(
+                "👤 PROFILE:",
+                profile,
+                flush=True
             )
 
             intent = query_data.get(
@@ -574,20 +807,121 @@ async def websocket_ai_search(
             )
 
             category = query_data.get(
-                "category"
+                "category",
+                "general"
+            )
+
+            explicit_roles = (
+                query_data.get("roles") or []
+            )
+
+            has_explicit_role = (
+                len(explicit_roles) > 0
+            )
+
+            query_data["explicit_role"] = (
+                has_explicit_role
+            )
+
+            explicit_locations = (
+                query_data.get("locations") or []
+            )
+
+            has_explicit_location = (
+                len(explicit_locations) > 0
+            )
+
+
+            if (
+                intent == "search"
+                and
+                category == "job"
+                and
+                not has_explicit_role
+            ):
+
+                profile_role = profile.get(
+                    "role"
+                )
+
+                if profile_role:
+
+                    query_data["roles"].append(
+                        profile_role
+                    )
+
+                    print(
+                        "🎯 PROFILE ROLE:",
+                        profile_role,
+                        flush=True
+                    )
+
+            if (
+                intent == "search"
+                and
+                category == "job"
+                and
+                not has_explicit_role
+            ):
+
+                profile_department = profile.get(
+                    "department"
+                )
+
+                if profile_department:
+
+                    query_data["roles"].append(
+                        profile_department
+                    )
+
+                    print(
+                        "🏨 PROFILE DEPARTMENT:",
+                        profile_department,
+                        flush=True
+                    )
+
+            if (
+                intent == "search"
+                and
+                category == "job"
+                and
+                not has_explicit_location
+            ):
+
+                profile_country = profile.get(
+                    "country_id"
+                )
+
+                if profile_country:
+
+                    query_data[
+                        "profile_country"
+                    ] = profile_country
+
+                    print(
+                        "🌍 PROFILE COUNTRY:",
+                        profile_country,
+                        flush=True
+                    )
+
+            print(
+                "🧠 FINAL QUERY DATA:",
+                json.dumps(query_data, indent=2),
+                flush=True
             )
 
             print(
-                "🎯 INTENT:",
+                "🎯 FINAL INTENT:",
                 intent,
                 flush=True
             )
 
             print(
-                "📂 CATEGORY:",
+                "📂 FINAL CATEGORY:",
                 category,
                 flush=True
             )
+
 
             if intent == "search":
 

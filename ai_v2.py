@@ -1364,6 +1364,12 @@ def elastic_search_v2(query_data, category):
         query_data.get("normalized") or ""
     ).strip()
 
+    profile_country = (
+        query_data.get(
+            "profile_country"
+        )
+    )
+
     if not normalized_query:
         return []
 
@@ -1374,6 +1380,7 @@ def elastic_search_v2(query_data, category):
                 "title^5",
                 "content^2",
                 "location^3"
+                "user_name^2"
             ],
             "operator": "or",
             "fuzziness": "AUTO"
@@ -1407,6 +1414,18 @@ def elastic_search_v2(query_data, category):
                 "location": {
                     "query": loc,
                     "boost": 4
+                }
+            }
+        })
+    
+    if profile_country:
+
+        should_clauses.append({
+
+            "term": {
+                "location": {
+                    "value": profile_country,
+                    "boost": 5
                 }
             }
         })
