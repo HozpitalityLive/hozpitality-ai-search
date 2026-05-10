@@ -801,8 +801,7 @@ async def websocket_ai_search(
             except Exception as e:
 
                 print(
-                    "❌ expand error:",
-                    e,
+                    f"❌ expand error: {repr(e)}",
                     flush=True
                 )
 
@@ -971,21 +970,6 @@ async def websocket_ai_search(
                 query,
                 memory_text
             )
-
-
-            await safe_send(ws, {
-
-                "type": "message",
-
-                "data": {
-
-                    "message": answer,
-
-                    "results": [],
-
-                    "followups": []
-                }
-            })
 
             answer = answer.strip()
 
