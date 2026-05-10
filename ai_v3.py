@@ -240,7 +240,7 @@ def get_user_profile(user_id):
                 ON c.id = ua.current_country_id
 
             LEFT JOIN professionals p
-                ON p.user_id = ua.id
+                ON p.useraccount_ptr_id = ua.id
 
             LEFT JOIN departments d
                 ON d.id = p.department_id
@@ -889,7 +889,7 @@ async def websocket_ai_search(
             ):
 
                 profile_country = profile.get(
-                    "country_id"
+                    "country"
                 )
 
                 if profile_country:
