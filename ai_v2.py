@@ -17,6 +17,9 @@ from sentence_transformers import SentenceTransformer
 import traceback
 from elasticsearch.helpers import bulk
 
+import re
+from collections import Counter
+
 from ai_server import (
     search_db,
     apply_priority_sorting,
@@ -1069,85 +1072,134 @@ def click(user_id: int, category: str):
     track_click(user_id, category)
     return {"status": "ok"}
 
-# def expand_query_llm(query: str):
-#     cache_k = f"expand:{query}"
-#     cached = redis_client.get(cache_k)
 
-#     print("🧩 Expanding query cached...", cached, flush=True)
+# def expand_query_llm(query: str):
+
+#     cache_key = f"expand:{query.lower()}"
+
+#     cached = redis_client.get(cache_key)
 
 #     if cached:
 #         return json.loads(cached)
 
 #     prompt = f"""
-# You are a strict JSON generator.
+# Extract structured search data from this query.
 
-# Extract structured search data from the query.
+# RETURN STRICT JSON ONLY.
 
-# USER QUERY:
-# {query}
-
-# REQUIRED OUTPUT FORMAT (STRICT):
+# FORMAT:
 
 # {{
 #   "normalized": "string",
-#   "roles": ["string"],
-#   "locations": ["string"]
+#   "roles": [],
+#   "locations": [],
+#   "intent": "search | faq | chat",
+#   "category": "job | company | article | professional | general"
 # }}
 
 # RULES:
-# - ONLY return valid JSON
-# - DO NOT add extra keys
-# - DO NOT rename keys
-# - DO NOT create new fields
-# - "roles" must be a list of job titles (e.g., "cook", "chef")
-# - "locations" must be cities/countries (e.g., "Dubai")
-# - If nothing found → return empty list []
+# - valid JSON only
+# - no markdown
+# - no explanation
+# - normalized = cleaned search query
+# - roles = job titles only
+# - locations = city/country only
+# - intent:
+#     - search = searching jobs/companies/articles/profiles
+#     - faq = informational/how-to questions
+#     - chat = casual conversation
+# - category:
+#     - job
+#     - company
+#     - article
+#     - professional
+#     - general
+# - if unsure use:
+#     "intent": "chat"
+#     "category": "general"
 
-# INVALID EXAMPLES (DO NOT DO):
-# ❌ "roits"
-# ❌ "job_roles"
-# ❌ "places"
-
-# VALID EXAMPLE:
-# {{
-#   "normalized": "cook jobs in dubai",
-#   "roles": ["cook"],
-#   "locations": ["Dubai"]
-# }}
+# QUERY:
+# {query}
 # """
 
 #     try:
+
 #         res = requests.post(
 #             OLLAMA_URL,
-#             json={"model": "phi3-hoz", "prompt": prompt, "stream": False},
-#             timeout=20
+#             json={
+#                 "model": "phi3-hoz",
+#                 "prompt": prompt,
+#                 "stream": False,
+#                 "options": {
+#                     "temperature": 0,
+#                     "num_predict": 120
+#                 }
+#             },
+#             timeout=15
+#         )
+
+#         raw = res.json().get(
+#             "response",
+#             ""
 #         )
 
 #         import re
-#         match = re.search(r'\{.*\}', res.json().get("response", ""), re.DOTALL)
 
-#         print("🧩 Expanding query response...", res, flush=True)
+#         match = re.search(
+#             r'\{.*\}',
+#             raw,
+#             re.DOTALL
+#         )
 
 #         if match:
-#             data = json.loads(match.group())
 
-#             print("🧩 Expanding data response...", data, flush=True)
+#             data = json.loads(
+#                 match.group()
+#             )
 
-#             data["roles"] = data.get("roles", [])[:5]
-#             data["locations"] = data.get("locations", [])[:3]
+#             # SAFE FALLBACKS
 
+#             if "normalized" not in data:
+#                 data["normalized"] = query
 
-#             redis_client.setex(cache_k, 600, json.dumps(data))
+#             if "roles" not in data:
+#                 data["roles"] = []
+
+#             if "locations" not in data:
+#                 data["locations"] = []
+
+#             if "intent" not in data:
+#                 data["intent"] = "chat"
+
+#             if "category" not in data:
+#                 data["category"] = "general"
+
+#             redis_client.setex(
+#                 cache_key,
+#                 300,
+#                 json.dumps(data)
+#             )
+
+#             print(
+#                 "🧠 QUERY DATA:",
+#                 json.dumps(data, indent=2),
+#                 flush=True
+#             )
+
 #             return data
 
 #     except Exception as e:
-#         print("❌ expand_query_llm error:", e)
+
+#         print("❌ expand error:", e)
 
 #     return {
 #         "normalized": query,
 #         "roles": [],
-#         "locations": []
+#         "locations": [],
+#         "intent": "chat",
+#         "category": "general"
 #     }
+
 
 def expand_query_llm(query: str):
 
@@ -1156,203 +1208,315 @@ def expand_query_llm(query: str):
     cached = redis_client.get(cache_key)
 
     if cached:
+
         return json.loads(cached)
 
-    prompt = f"""
-Extract structured search data from this query.
+    q = query.lower().strip()
 
-RETURN STRICT JSON ONLY.
+
+    try:
+
+        es_query = {
+
+            "size": 15,
+
+            "_source": [
+                "title",
+                "location",
+                "category",
+                "ai_keywords"
+            ],
+
+            "query": {
+
+                "multi_match": {
+
+                    "query": q,
+
+                    "fields": [
+
+                        "title^5",
+
+                        "ai_keywords^4",
+
+                        "location^3",
+
+                        "content"
+                    ],
+
+                    "operator": "or",
+
+                    "fuzziness": "AUTO"
+                }
+            }
+        }
+
+        res = es.search(
+            index="hozpitality",
+            body=es_query
+        )
+
+        hits = res["hits"]["hits"]
+
+    except Exception as e:
+
+        print(
+            "❌ ES expand search failed:",
+            repr(e),
+            flush=True
+        )
+
+        hits = []
+
+    role_candidates = []
+
+    location_candidates = []
+
+    category_counter = Counter()
+
+    for hit in hits:
+
+        src = hit["_source"]
+
+        title = (
+            src.get("title")
+            or ""
+        ).lower()
+
+        location = (
+            src.get("location")
+            or ""
+        ).lower()
+
+        category = (
+            src.get("category")
+            or "general"
+        )
+
+        category_counter[
+            category
+        ] += 1
+
+        title_parts = re.split(
+            r'[^a-zA-Z]+',
+            title
+        )
+
+        for p in title_parts:
+
+            p = p.strip()
+
+            if len(p) > 2:
+
+                role_candidates.append(p)
+
+        if location:
+
+            location_candidates.append(
+                location
+            )
+
+            parts = re.split(
+                r'[,/|-]',
+                location
+            )
+
+            for p in parts:
+
+                p = p.strip()
+
+                if len(p) > 2:
+
+                    location_candidates.append(
+                        p
+                    )
+
+    query_tokens = set(
+
+        re.findall(
+            r"[a-zA-Z]+",
+            q
+        )
+    )
+
+    detected_roles = []
+
+    for role in role_candidates:
+
+        role_tokens = set(
+
+            re.findall(
+                r"[a-zA-Z]+",
+                role
+            )
+        )
+
+        if query_tokens.intersection(
+            role_tokens
+        ):
+
+            detected_roles.append(
+                role
+            )
+
+    detected_locations = []
+
+    for loc in location_candidates:
+
+        if loc in q:
+
+            detected_locations.append(
+                loc
+            )
+
+    category = "general"
+
+    if category_counter:
+
+        category = (
+            category_counter
+            .most_common(1)[0][0]
+        )
+
+    intent = "chat"
+
+    if hits:
+
+        intent = "search"
+
+    data = {
+
+        "normalized": query,
+
+        "roles": list(
+            set(detected_roles)
+        )[:5],
+
+        "locations": list(
+            set(detected_locations)
+        )[:5],
+
+        "intent": intent,
+
+        "category": category
+    }
+
+
+    if (
+        not data["roles"]
+        and
+        not data["locations"]
+        and
+        len(query_tokens) > 2
+    ):
+
+        try:
+
+            prompt = f"""
+Extract structured search data.
+
+Return STRICT JSON only.
 
 FORMAT:
 
 {{
-  "normalized": "string",
   "roles": [],
-  "locations": [],
-  "intent": "search | faq | chat",
-  "category": "job | company | article | professional | general"
+  "locations": []
 }}
-
-RULES:
-- valid JSON only
-- no markdown
-- no explanation
-- normalized = cleaned search query
-- roles = job titles only
-- locations = city/country only
-- intent:
-    - search = searching jobs/companies/articles/profiles
-    - faq = informational/how-to questions
-    - chat = casual conversation
-- category:
-    - job
-    - company
-    - article
-    - professional
-    - general
-- if unsure use:
-    "intent": "chat"
-    "category": "general"
 
 QUERY:
 {query}
 """
 
-    try:
+            res = requests.post(
 
-        res = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": "phi3-hoz",
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0,
-                    "num_predict": 120
-                }
-            },
-            timeout=15
-        )
+                OLLAMA_URL,
 
-        raw = res.json().get(
-            "response",
-            ""
-        )
+                json={
 
-        import re
+                    "model": "phi3-hoz",
 
-        match = re.search(
-            r'\{.*\}',
-            raw,
-            re.DOTALL
-        )
+                    "prompt": prompt,
 
-        if match:
+                    "stream": False,
 
-            data = json.loads(
-                match.group()
+                    "options": {
+
+                        "temperature": 0,
+
+                        "num_predict": 40
+                    }
+                },
+
+                timeout=2
             )
 
-            # SAFE FALLBACKS
-
-            if "normalized" not in data:
-                data["normalized"] = query
-
-            if "roles" not in data:
-                data["roles"] = []
-
-            if "locations" not in data:
-                data["locations"] = []
-
-            if "intent" not in data:
-                data["intent"] = "chat"
-
-            if "category" not in data:
-                data["category"] = "general"
-
-            redis_client.setex(
-                cache_key,
-                300,
-                json.dumps(data)
+            raw = (
+                res.json()
+                .get("response", "")
             )
+
+            match = re.search(
+                r'\{.*\}',
+                raw,
+                re.DOTALL
+            )
+
+            if match:
+
+                llm_data = json.loads(
+                    match.group()
+                )
+
+                data["roles"].extend(
+                    llm_data.get(
+                        "roles",
+                        []
+                    )
+                )
+
+                data["locations"].extend(
+                    llm_data.get(
+                        "locations",
+                        []
+                    )
+                )
+
+                data["roles"] = list(
+                    set(data["roles"])
+                )[:5]
+
+                data["locations"] = list(
+                    set(data["locations"])
+                )[:5]
+
+        except Exception as e:
 
             print(
-                "🧠 QUERY DATA:",
-                json.dumps(data, indent=2),
+                "⚠️ optional refine failed:",
+                repr(e),
                 flush=True
             )
 
-            return data
+    redis_client.setex(
 
-    except Exception as e:
+        cache_key,
 
-        print("❌ expand error:", e)
+        300,
 
-    return {
-        "normalized": query,
-        "roles": [],
-        "locations": [],
-        "intent": "chat",
-        "category": "general"
-    }
+        json.dumps(data)
+    )
 
+    print(
+        "🧠 QUERY DATA:",
+        json.dumps(
+            data,
+            indent=2
+        ),
+        flush=True
+    )
 
-# def elastic_search_v2(query_data, intent):
-#     must_clauses = []
-#     should_clauses = []
-
-#     must_clauses.append({
-#         "multi_match": {
-#             "query": query_data["normalized"],
-#             "fields": ["title^4", "content^2"],
-#             "operator": "or",
-#             "minimum_should_match": "60%"   
-#         }
-#     })
-
-#     for role in query_data.get("roles", []):
-#         should_clauses.append({
-#             "match": {
-#                 "content": {
-#                     "query": role,
-#                     "boost": 1.5
-#                 }
-#             }
-#         })
-
-#     for loc in query_data.get("locations", []):
-#         should_clauses.append({
-#             "match": {
-#                 "location": {
-#                     "query": loc,
-#                     "boost": 2
-#                 }
-#             }
-#         })
-
-#     filters = []
-#     if intent != "general":
-#         filters.append({"term": {"category": intent}})
-
-#     body = {
-#         "query": {
-#             "bool": {
-#                 "must": must_clauses,
-#                 "should": should_clauses,
-#                 "filter": filters
-#             }
-#         }
-#     }
-
-#     print("🔎 ES FINAL QUERY:", json.dumps(body, indent=2), flush=True)
-
-#     res = es.search(
-#         index="hozpitality",
-#         body=body,
-#         size=30
-#     )
-
-#     hits = res["hits"]["hits"]
-
-#     print(f"📊 ES RAW HITS: {len(hits)}", flush=True)
-
-#     results = []
-#     for hit in hits:
-#         src = hit["_source"]
-
-#         print("➡️ ES HIT:", {
-#             "title": src.get("title"),
-#             "category": src.get("category"),
-#             "slug": src.get("slug"),
-#             "score": hit["_score"]
-#         }, flush=True)
-
-#         doc = src.copy()
-#         doc["bm25_score"] = hit["_score"]
-
-#         results.append(doc)
-
-#     return results
+    return data
 
 def elastic_search_v2(query_data, category):
 
