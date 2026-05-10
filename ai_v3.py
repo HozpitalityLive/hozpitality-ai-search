@@ -794,7 +794,7 @@ async def websocket_ai_search(
                         query
                     ),
 
-                    timeout=2.5
+                    timeout=15
 
                 )
 
