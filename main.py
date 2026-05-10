@@ -49,14 +49,30 @@ async def ollama_chat(request: Request):
         body = await request.json()
 
         async with httpx.AsyncClient(
-            timeout=None
+            timeout=120
         ) as client:
 
             response = await client.post(
 
-                "http://ollama:11434/v1/chat/completions",
+                "http://ollama:11434/api/chat",
 
-                json=body,
+                json={
+
+                    "model":
+                        body.get(
+                            "model",
+                            "phi3-hoz:latest"
+                        ),
+
+                    "messages":
+                        body.get(
+                            "messages",
+                            []
+                        ),
+
+                    "stream": False
+
+                },
 
                 headers={
                     "Content-Type":
@@ -67,13 +83,15 @@ async def ollama_chat(request: Request):
 
         data = response.json()
 
-        return JSONResponse(content=data)
+        return JSONResponse(
+            content=data
+        )
 
     except Exception as e:
 
         print(
             "❌ OLLAMA PROXY ERROR:",
-            e,
+            repr(e),
             flush=True
         )
 
@@ -82,8 +100,7 @@ async def ollama_chat(request: Request):
             status_code=500,
 
             content={
-                "error":
-                    str(e)
+                "error": str(e)
             }
 
         )
