@@ -132,16 +132,44 @@ def generate_followups(category):
 async def stream_chat_response(
     ws,
     query,
-    memory_text=""
+    memory_text="",
+    intent="chat"
 ):
 
-    prompt = f"""
+    if intent == "faq":
+
+        prompt = f"""
+You are Hozpitality AI.
+
+RULES:
+- answer step-by-step
+- use numbered points
+- practical guidance
+- concise
+- conversational
+- hospitality focused
+- no hallucinations
+- under 150 words
+
+MEMORY:
+{memory_text}
+
+USER:
+{query}
+
+ASSISTANT:
+"""
+
+    else:
+
+        prompt = f"""
 You are Hozpitality AI.
 
 RULES:
 - conversational
 - concise
 - helpful
+- friendly
 - no hallucinations
 - under 120 words
 
@@ -968,7 +996,8 @@ async def websocket_ai_search(
             answer = await stream_chat_response(
                 ws,
                 query,
-                memory_text
+                memory_text,
+                intent
             )
 
             answer = answer.strip()

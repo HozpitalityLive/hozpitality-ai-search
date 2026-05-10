@@ -1208,11 +1208,9 @@ def expand_query_llm(query: str):
     cached = redis_client.get(cache_key)
 
     if cached:
-
         return json.loads(cached)
 
     q = query.lower().strip()
-
 
     try:
 
@@ -1267,6 +1265,7 @@ def expand_query_llm(query: str):
         )
 
         hits = []
+
 
     role_candidates = []
 
@@ -1385,8 +1384,7 @@ def expand_query_llm(query: str):
         "vacancies",
         "hiring",
         "career",
-        "careers",
-        "apply"
+        "careers"
     }
 
     article_words = {
@@ -1410,7 +1408,8 @@ def expand_query_llm(query: str):
         "hotel",
         "hotels",
         "group",
-        "restaurant"
+        "restaurant",
+        "restaurants"
     }
 
     if tokens.intersection(job_words):
@@ -1436,11 +1435,67 @@ def expand_query_llm(query: str):
             .most_common(1)[0][0]
         )
 
+    faq_words = {
+        "how",
+        "what",
+        "why",
+        "guide",
+        "steps",
+        "process",
+        "tutorial",
+        "help"
+    }
+
+    greeting_words = {
+        "hi",
+        "hello",
+        "hey",
+        "hola"
+    }
+
+    search_words = {
+        "job",
+        "jobs",
+        "vacancy",
+        "vacancies",
+        "hiring",
+        "hotel",
+        "hotels",
+        "restaurant",
+        "restaurants",
+        "company",
+        "companies",
+        "chef",
+        "waiter",
+        "manager"
+    }
+
     intent = "chat"
 
-    if hits:
+
+    if q in greeting_words:
+
+        intent = "greeting"
+
+
+    elif tokens.intersection(faq_words):
+
+        intent = "faq"
+
+
+    elif (
+        hits
+        or
+        tokens.intersection(search_words)
+    ):
 
         intent = "search"
+
+
+    else:
+
+        intent = "chat"
+
 
     data = {
 
@@ -1461,6 +1516,8 @@ def expand_query_llm(query: str):
 
 
     if (
+        intent == "search"
+        and
         not data["roles"]
         and
         not data["locations"]
@@ -1485,7 +1542,7 @@ FORMAT:
 QUERY:
 {query}
 """
-
+            
             res = requests.post(
 
                 OLLAMA_URL,
@@ -1555,6 +1612,7 @@ QUERY:
                 repr(e),
                 flush=True
             )
+
 
     redis_client.setex(
 
