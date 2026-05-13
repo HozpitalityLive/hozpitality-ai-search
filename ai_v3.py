@@ -475,6 +475,15 @@ async def handle_search(
                     f"company/{slug}"
                 )
 
+            elif result_category == "professional":
+                url = f"https://www.hozpitality.com/professional/{slug}/about"
+
+            elif result_category == "event":
+                url = f"https://www.hozpitality.com/events/details/{slug}"
+
+            elif result_category == "article":
+                url = f"https://www.hozpitality.com/articles/details/{slug}"
+
             else:
 
                 url = (
