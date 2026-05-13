@@ -729,8 +729,10 @@ def build_url(category, slug):
         return f"https://www.hozpitality.com/articles/details/{slug}/"
     elif "event" in category:
         return f"https://www.hozpitality.com/events/details/{slug}/"
-    elif "company" in category or "professional" in category or "supplier" in category:
-        return f"https://www.hozpitality.com/profile/{slug}/"
+    elif "professional" in category:
+        return f"https://www.hozpitality.com/professional/{slug}/about"
+    elif "company" in category:
+        return f"https://www.hozpitality.com/company/{slug}/about"
     elif "award" in category:
         return "https://www.hozpitality.com/awards"
 
