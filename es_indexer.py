@@ -53,47 +53,53 @@ def wait_for_es():
 
     return False
 
-def normalize_category(category_raw):
+def normalize_category(category_raw,content_raw=""):
 
-    category_raw = (
-        category_raw or ""
-    ).lower()
+    category_raw = (category_raw or "").lower()
+    content_raw = (content_raw or "").lower()
 
-    if "job" in category_raw:
+    if "job" in category_raw or "job role:" in content_raw:
         return "job"
 
     elif (
         "candidate" in category_raw
-        or
-        "profile" in category_raw
+        or "profile" in category_raw
+        or "user type: professional" in content_raw
     ):
         return "professional"
 
-    elif "company" in category_raw:
+    elif (
+        "company" in category_raw 
+        or "user type: company" in content_raw
+        or "industries:" in content_raw
+    ):
         return "company"
 
-    elif "supplier" in category_raw:
+    elif "supplier" in category_raw or "user type: supplier" in content_raw:
         return "supplier"
 
-    elif "product" in category_raw:
+    elif "product" in category_raw or "product name:" in content_raw:
         return "product"
 
-    elif "event" in category_raw:
+    elif "event" in category_raw or "event name:" in content_raw:
         return "event"
 
     elif (
         "article" in category_raw
-        or
-        "blog" in category_raw
-        or
-        "news" in category_raw
+        or "blog" in category_raw
+        or "news" in category_raw
+        or "post type: article" in content_raw
     ):
         return "article"
 
-    elif "award" in category_raw:
+    elif "award" in category_raw or "award" in content_raw:
         return "award"
 
-    elif "faq" in category_raw:
+    elif (
+        "faq" in category_raw 
+        or "question:" in content_raw 
+        or "answer:" in content_raw
+    ):
         return "faq"
 
     return "general"
@@ -303,7 +309,8 @@ def run_reindex():
         for r in rows:
 
             category = normalize_category(
-                r[3]
+                r[3], 
+                r[2]  
             )
 
             ai_keywords = build_ai_keywords(

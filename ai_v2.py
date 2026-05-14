@@ -1399,7 +1399,9 @@ def expand_query_llm(query: str):
         "candidate",
         "profile",
         "resume",
-        "cv"
+        "cv",
+        "person",
+        "who"
     }
 
     company_words = {
@@ -1427,6 +1429,11 @@ def expand_query_llm(query: str):
     elif tokens.intersection(company_words):
 
         category = "company"
+
+    elif category == "general" and 1 < len(tokens) <= 3:
+        
+        if not tokens.intersection(company_words):
+            category = "professional"
 
     elif category_counter:
 
