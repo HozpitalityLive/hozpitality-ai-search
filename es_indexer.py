@@ -55,51 +55,34 @@ def wait_for_es():
 
 def normalize_category(category_raw,content_raw=""):
 
-    category_raw = (category_raw or "").lower()
-    content_raw = (content_raw or "").lower()
+    category_raw = (category_raw or "").lower().strip()
+    content_raw = (content_raw or "").lower().strip()
 
-    if "job" in category_raw or "job role:" in content_raw:
-        return "job"
-
-    elif (
-        "candidate" in category_raw
-        or "profile" in category_raw
-        or "user type: professional" in content_raw
-    ):
+    if re.search(r"user type\s*:\s*professional", content_raw):
         return "professional"
-
-    elif (
-        "company" in category_raw 
-        or "user type: company" in content_raw
-        or "industries:" in content_raw
-    ):
+    
+    if re.search(r"user type\s*:\s*company", content_raw):
         return "company"
-
-    elif "supplier" in category_raw or "user type: supplier" in content_raw:
+    
+    if re.search(r"user type\s*:\s*supplier", content_raw):
         return "supplier"
 
-    elif "product" in category_raw or "product name:" in content_raw:
+    if "job role:" in content_raw or "job" in category_raw:
+        return "job"
+
+    if "product name:" in content_raw or "product" in category_raw:
         return "product"
 
-    elif "event" in category_raw or "event name:" in content_raw:
+    if "event name:" in content_raw or "event" in category_raw:
         return "event"
 
-    elif (
-        "article" in category_raw
-        or "blog" in category_raw
-        or "news" in category_raw
-        or "post type: article" in content_raw
-    ):
+    if "post type: article" in content_raw or any(k in category_raw for k in ["article", "blog", "news"]):
         return "article"
 
-    elif "award" in category_raw or "award" in content_raw:
+    if "award" in content_raw or "award" in category_raw:
         return "award"
 
-    elif (
-        "faq" in category_raw 
-        or "question:" in content_raw 
-        or "answer:" in content_raw
-    ):
+    if any(k in content_raw for k in ["question:", "answer:"]) or "faq" in category_raw:
         return "faq"
 
     return "general"
