@@ -1430,6 +1430,11 @@ def expand_query_llm(query: str):
 
         category = "company"
 
+    elif category == "general" and 1 < len(tokens) <= 3:
+        
+        if not tokens.intersection(company_words):
+            category = "professional"
+
     elif category_counter:
 
         category = (
