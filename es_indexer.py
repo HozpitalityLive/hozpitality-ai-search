@@ -138,7 +138,7 @@ def create_index():
         body={
 
             "settings": {
-                "number_of_replicas": 0,
+
                 "analysis": {
 
                     "analyzer": {
@@ -229,6 +229,15 @@ def run_reindex():
         "🔥 FULL AI REINDEX START",
         flush=True
     )
+
+    if not wait_for_es():
+
+        print(
+            "❌ ES NOT READY",
+            flush=True
+        )
+
+        return
 
     create_index()
 
