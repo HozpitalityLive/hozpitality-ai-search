@@ -217,12 +217,23 @@ def chunked_bulk_index(
             flush=True
         )
 
-        bulk(
-            es,
-            chunk,
-            request_timeout=120
+        success, errors = bulk(
+            es, 
+            chunk, 
+            request_timeout=120, 
+            raise_on_error=False,
+            stats_only=False 
         )
 
+        if errors:
+            print(f"❌ {len(errors)} errors found in this chunk. Details:")
+            for error in errors[:5]:  
+                error_info = error.get('index', {})
+                print(f"   -> Document ID: {error_info.get('_id')}, Error: {error_info.get('error', {}).get('reason')}")
+            
+            if len(errors) > 5:
+                print(f"   -> ... and {len(errors) - 5} more errors.")
+        
         time.sleep(0.2)
 
 def run_reindex():
