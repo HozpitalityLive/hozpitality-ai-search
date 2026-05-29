@@ -197,44 +197,31 @@ def create_index():
         flush=True
     )
 
-def chunked_bulk_index(
-    actions,
-    chunk_size=1000
-):
+def chunked_bulk_index(actions, chunk_size=200): 
+    import json
+    
+    for i in range(0, len(actions), chunk_size):
+        chunk = actions[i:i + chunk_size]
+        print(f"⚡ ES BULK {i} → {i + len(chunk)}", flush=True)
 
-    for i in range(
-        0,
-        len(actions),
-        chunk_size
-    ):
-
-        chunk = actions[
-            i:i + chunk_size
-        ]
-
-        print(
-            f"⚡ ES BULK {i} → {i + len(chunk)}",
-            flush=True
-        )
-
+        # Bulk operation
         success, errors = bulk(
             es, 
             chunk, 
-            request_timeout=120, 
+            request_timeout=300, # Timeout badhaya
             raise_on_error=False,
             stats_only=False 
         )
 
         if errors:
-            print(f"❌ {len(errors)} errors found in this chunk. Details:")
-            for error in errors[:5]:  
-                error_info = error.get('index', {})
-                print(f"   -> Document ID: {error_info.get('_id')}, Error: {error_info.get('error', {}).get('reason')}")
+            print(f"❌ {len(errors)} errors found in this chunk. Dumping first error for analysis:")
             
-            if len(errors) > 5:
-                print(f"   -> ... and {len(errors) - 5} more errors.")
+            print(json.dumps(errors[0], indent=2))
+            
+            print("🛑 STOPPING SCRIPT DUE TO ERROR. Analyze the JSON above.")
+            exit(1) 
         
-        time.sleep(0.2)
+        time.sleep(0.5) 
 
 def run_reindex():
 
