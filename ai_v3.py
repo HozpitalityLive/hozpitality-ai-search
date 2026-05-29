@@ -75,7 +75,7 @@ async def automatic_bulk_flusher_loop():
                 actions = []
                 for doc in BULK_BUFFER:
                     doc_dict = doc.dict()
-                    
+                    print(f"🚀 Processing ID {doc_dict['id']} | Title: {doc_dict['title'][:20]}", flush=True)
                     if doc_dict["is_deleted"] or not doc_dict["is_live"]:
                         actions.append({
                             "_op_type": "delete",        
@@ -119,8 +119,18 @@ async def start_bulk_worker():
 @app.post("/api/v1/bulk-sync-es/")
 async def receive_single_post_api(data: SyncPayload):
     global BULK_BUFFER
+    
+    print(f"--- DEBUG DEBUG DEBUG ---", flush=True)
+    print(f"📥 Received Job ID: {data.id}", flush=True)
+    print(f"📦 Payload Data: {data.dict()}", flush=True) 
+    
     async with BUFFER_LOCK:
+        is_duplicate = any(item.id == data.id for item in BULK_BUFFER)
         BULK_BUFFER.append(data)
+        
+    print(f"✅ Buffered. Total Queue Size: {len(BULK_BUFFER)}", flush=True)
+    print(f"🔄 Is Duplicate ID? {is_duplicate}", flush=True)
+    print(f"--- DEBUG END ---", flush=True)
             
     return {"status": "buffered", "queue_size": len(BULK_BUFFER)}
 
