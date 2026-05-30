@@ -1379,6 +1379,7 @@ def expand_query_llm(query: str):
     q_lower = q.lower()
     if "award" in q_lower or "awards" in q_lower:
         category = "award"
+        print(f"DEBUG: Award keyword detected! Category locked to: {category}", flush=True)
     else:
 
         job_words = {
@@ -1444,6 +1445,7 @@ def expand_query_llm(query: str):
                 category_counter
                 .most_common(1)[0][0]
             )
+            print(f"DEBUG: General category detected. Overriding with category_counter: {category}", flush=True)
 
     faq_words = {
         "how",
