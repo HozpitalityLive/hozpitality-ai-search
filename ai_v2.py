@@ -1439,8 +1439,7 @@ def expand_query_llm(query: str):
             if not tokens.intersection(company_words):
                 category = "professional"
 
-        elif category_counter:
-
+        if category == "general" and category_counter:
             category = (
                 category_counter
                 .most_common(1)[0][0]
