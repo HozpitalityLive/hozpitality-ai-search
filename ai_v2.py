@@ -1376,71 +1376,75 @@ def expand_query_llm(query: str):
             q
         )
     )
+    q_lower = q.lower()
+    if "award" in q_lower or "awards" in q_lower:
+        category = "award"
+    else:
 
-    job_words = {
-        "job",
-        "jobs",
-        "vacancy",
-        "vacancies",
-        "hiring",
-        "career",
-        "careers"
-    }
+        job_words = {
+            "job",
+            "jobs",
+            "vacancy",
+            "vacancies",
+            "hiring",
+            "career",
+            "careers"
+        }
 
-    article_words = {
-        "article",
-        "articles",
-        "blog",
-        "blogs",
-        "news"
-    }
+        article_words = {
+            "article",
+            "articles",
+            "blog",
+            "blogs",
+            "news"
+        }
 
-    professional_words = {
-        "candidate",
-        "profile",
-        "resume",
-        "cv",
-        "person",
-        "who"
-    }
+        professional_words = {
+            "candidate",
+            "profile",
+            "resume",
+            "cv",
+            "person",
+            "who"
+        }
 
-    company_words = {
-        "company",
-        "companies",
-        "hotel",
-        "hotels",
-        "group",
-        "restaurant",
-        "restaurants"
-    }
+        company_words = {
+            "company",
+            "companies",
+            "hotel",
+            "hotels",
+            "group",
+            "restaurant",
+            "restaurants"
+        }
 
-    if tokens.intersection(job_words):
+        if tokens.intersection(job_words):
 
-        category = "job"
+            category = "job"
 
-    elif tokens.intersection(article_words):
+        elif tokens.intersection(article_words):
 
-        category = "article"
+            category = "article"
 
-    elif tokens.intersection(professional_words):
+        elif tokens.intersection(professional_words):
 
-        category = "professional"
-
-    elif tokens.intersection(company_words):
-
-        category = "company"
-
-    elif category == "general" and 1 < len(tokens) <= 3:
-        
-        if not tokens.intersection(company_words):
             category = "professional"
 
-    elif category_counter:
+        elif tokens.intersection(company_words):
 
-        category = (
-            category_counter
-            .most_common(1)[0][0]
-        )
+            category = "company"
+
+        elif category == "general" and 1 < len(tokens) <= 3:
+            
+            if not tokens.intersection(company_words):
+                category = "professional"
+
+        elif category_counter:
+
+            category = (
+                category_counter
+                .most_common(1)[0][0]
+            )
 
     faq_words = {
         "how",
