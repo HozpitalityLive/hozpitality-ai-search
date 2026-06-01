@@ -580,6 +580,9 @@ async def handle_search(
 
             elif result_category == "article":
                 url = f"https://www.hozpitality.com/articles/details/{slug}"
+            
+            elif result_category == "awards":
+                url = f"https://www.hozpitality.com/awards/"
 
             else:
 
