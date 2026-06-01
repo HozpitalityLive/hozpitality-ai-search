@@ -282,11 +282,7 @@ def run_reindex():
 
         for r in rows:
 
-            category = normalize_category(
-                r[3], 
-                r[2],
-                r[5]
-            )
+            category = (r[3] or "general").lower().strip()
 
             ai_keywords = build_ai_keywords(
 
