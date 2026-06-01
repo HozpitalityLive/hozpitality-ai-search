@@ -1383,7 +1383,7 @@ def expand_query_llm(query: str):
     elif "supplier" in q_lower or "suppliers" in q_lower:
         category = ["supplier", "company"] 
         print(f"DEBUG: Supplier/Company keyword detected! Category: {category}", flush=True)
-    if "event" in q_lower or "events" in q_lower:
+    elif "event" in q_lower or "events" in q_lower:
         category = "event"
     else:
 
