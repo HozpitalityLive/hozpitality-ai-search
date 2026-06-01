@@ -730,8 +730,8 @@ def build_link(slug, category):
         return f"{base}/article/details/{slug}"
     elif category == "event":
         return f"{base}/event/details/{slug}"
-    elif category == "award":
-        return f"{base}/award/{slug}"
+    elif category == "awards":
+        return f"{base}/awards/"
     else:
         return f"{base}/{slug}"
 
@@ -2338,8 +2338,8 @@ def load_faiss_only():
             category = "event"
         elif "article" in category_raw or "blog" in category_raw:
             category = "article"
-        elif "award" in category_raw:
-            category = "award"
+        elif "awards" in category_raw:
+            category = "awards"
         elif "faq" in category_raw:
             category = "faq"
         else:
