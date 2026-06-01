@@ -572,6 +572,13 @@ async def handle_search(
                     f"company/{slug}"
                 )
 
+            elif result_category == "supplier":
+
+                url = (
+                    "https://www.hozpitality.com/"
+                    f"company/{slug}"
+                )
+
             elif result_category == "professional":
                 url = f"https://www.hozpitality.com/professional/{slug}/about"
 
