@@ -1380,6 +1380,9 @@ def expand_query_llm(query: str):
     if "award" in q_lower or "awards" in q_lower:
         category = "awards"
         print(f"DEBUG: Award keyword detected! Category locked to: {category}", flush=True)
+    elif "supplier" in q_lower or "suppliers" in q_lower:
+        category = ["supplier", "company"] 
+        print(f"DEBUG: Supplier/Company keyword detected! Category: {category}", flush=True)
     else:
 
         job_words = {
@@ -1726,8 +1729,8 @@ def elastic_search_v2(query_data, category):
     if category:
 
         filters.append({
-            "term": {
-                "category": category
+            "terms": {
+                "category": category if isinstance(category, list) else [category]
             }
         })
 
