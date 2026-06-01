@@ -1378,7 +1378,7 @@ def expand_query_llm(query: str):
     )
     q_lower = q.lower()
     if "award" in q_lower or "awards" in q_lower:
-        category = "award"
+        category = "awards"
         print(f"DEBUG: Award keyword detected! Category locked to: {category}", flush=True)
     else:
 
