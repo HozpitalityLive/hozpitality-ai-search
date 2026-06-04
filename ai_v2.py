@@ -1666,6 +1666,8 @@ def elastic_search_v2(query_data, category):
             "profile_country"
         )
     )
+    
+    detected_locations = query_data.get("locations", [])
 
     if not normalized_query:
         return []
@@ -1705,16 +1707,33 @@ def elastic_search_v2(query_data, category):
             }
         })
 
-    for loc in query_data.get("locations", []):
-
-        should_clauses.append({
-            "match": {
-                "location": {
-                    "query": loc,
-                    "boost": 4
+    if detected_locations:
+        location_filters = []
+        for loc in detected_locations:
+            location_filters.append({
+                "match": {
+                    "location": loc.lower() 
                 }
+            })
+        
+        filters.append({
+            "bool": {
+                "should": location_filters,
+                "minimum_should_match": 1
             }
         })
+        print(f"DEBUG: Flexible Location Filter Applied: {detected_locations}", flush=True)
+
+    elif query_data.get("locations"): 
+        for loc in query_data.get("locations"):
+            should_clauses.append({
+                "match": {
+                    "location": {
+                        "query": loc,
+                        "boost": 4
+                    }
+                }
+            })
     
     if profile_country:
 
