@@ -4,8 +4,9 @@ uvicorn[standard]
 requests
 pydantic
 
-torch
-sentence-transformers
+torch==2.5.1
+transformers==4.57.1
+sentence-transformers==5.5.1
 faiss-gpu
 numpy<2.0
 
