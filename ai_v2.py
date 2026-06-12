@@ -1201,7 +1201,7 @@ def click(user_id: int, category: str):
 #     }
 
 
-def expand_query_llm(query: str,user_id: str, org_id: str,context=None):
+def expand_query_llm(query: str,user_id: str, org_id: str,context: str = ""):
 
     cache_key = f"expand:{query.lower()}"
 

@@ -935,7 +935,9 @@ async def websocket_ai_search(
 
                     asyncio.to_thread(
                         expand_query_llm,
-                        query,
+                        query=query,           
+                        user_id=str(user_id),  
+                        org_id=str(org_id),   
                         context=memory_text
                     ),
 
