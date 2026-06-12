@@ -935,7 +935,8 @@ async def websocket_ai_search(
 
                     asyncio.to_thread(
                         expand_query_llm,
-                        query
+                        query,
+                        context=memory_text
                     ),
 
                     timeout=15

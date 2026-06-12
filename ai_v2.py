@@ -1201,7 +1201,7 @@ def click(user_id: int, category: str):
 #     }
 
 
-def expand_query_llm(query: str):
+def expand_query_llm(query: str,user_id: str, org_id: str,context=None):
 
     cache_key = f"expand:{query.lower()}"
 
@@ -1211,6 +1211,26 @@ def expand_query_llm(query: str):
         return json.loads(cached)
 
     q = query.lower().strip()
+
+    last_ctx = get_last_context(user_id, org_id)
+    print(f"DEBUG: Last Context retrieved: {last_ctx}", flush=True)
+
+    if last_ctx and last_ctx.get("context"):
+        prompt = f"""
+        Previous Context: "{last_ctx.get('context', '')}"
+        New Query: "{query}"
+        
+        Task: Decide if the user is refining the previous search (adding location/role) or starting a new topic.
+        Return ONLY one word: "MERGE" or "NEW".
+        """
+        decision = call_ollama_decision(prompt) 
+        print(f"🧠 LLM Decision for context: {decision}", flush=True)
+        
+        if decision == "MERGE":
+            q = f"{last_ctx.get('context', '')} {q}"
+            print(f"✅ Context Merged! New Query: '{q}'", flush=True)
+        else:
+            print("🔄 New Topic detected. Ignoring context.", flush=True)
 
     try:
 
@@ -1649,7 +1669,29 @@ QUERY:
         flush=True
     )
 
+    store_last_context(user_id, org_id, data['intent'], q)
+    print(f"💾 Saved query '{q}' to context for future turns.", flush=True)
+
     return data
+
+def call_ollama_decision(prompt):
+    print("⏳ Asking LLM for context decision...", flush=True)
+    try:
+        res = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": "phi3-hoz",
+                "prompt": prompt,
+                "stream": False,
+                "options": {"temperature": 0}
+            },
+            timeout=5 # Thoda timeout badha diya hai taaki model time le sake
+        )
+        decision = res.json().get("response", "NEW").strip().upper()
+        return decision
+    except Exception as e:
+        print(f"⚠️ LLM decision error: {e}, defaulting to NEW.", flush=True)
+        return "NEW"
 
 def elastic_search_v2(query_data, category):
 

@@ -347,6 +347,7 @@ def store_last_context(user_id, org_id, intent_type, context):
 def get_last_context(user_id, org_id):
     key = f"ctx:{org_id}:{user_id}"
     data = redis_client.get(key)
+    print(f"DEBUG: Fetching from Redis key: {key} | Data found: {data}", flush=True)
     return json.loads(data) if data else None
 
 def normalize_query_llm(query: str):
