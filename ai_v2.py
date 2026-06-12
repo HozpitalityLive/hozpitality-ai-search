@@ -1685,7 +1685,7 @@ def call_ollama_decision(prompt):
                 "stream": False,
                 "options": {"temperature": 0}
             },
-            timeout=5 # Thoda timeout badha diya hai taaki model time le sake
+            timeout=30
         )
         decision = res.json().get("response", "NEW").strip().upper()
         return decision
