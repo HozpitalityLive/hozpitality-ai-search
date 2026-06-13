@@ -1555,6 +1555,11 @@ CRITICAL RULES:
 3. If a word is a geographic location (city, country, region), it MUST go into 'locations' and NEVER in 'roles'.
 4. If no clear role or location is found, return empty lists.
 
+EXAMPLES:
+QUERY: "who is megha arora from bathinda" -> {{"roles": [], "locations": ["bathinda"]}}
+QUERY: "find hotel manager in dubai" -> {{"roles": ["hotel manager"], "locations": ["dubai"]}}
+QUERY: "from dubai" -> {{"roles": [], "locations": ["dubai"]}}
+
 CONTEXT:
 {context}
 
