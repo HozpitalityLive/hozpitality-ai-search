@@ -48,91 +48,91 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class SyncPayload(BaseModel):
-    id: int                                 
-    title: Optional[str] = ""               
-    content: Optional[str] = ""               
-    category: Optional[str] = "general"   
-    location: Optional[str] = ""        
-    slug: Optional[str] = ""                 
-    user_name: Optional[str] = ""            
-    ai_keywords: Optional[str] = ""          
-    is_live: bool = True                     
-    is_deleted: bool = False                 
-    entity_type: Optional[str] = ""
+# class SyncPayload(BaseModel):
+#     id: int                                 
+#     title: Optional[str] = ""               
+#     content: Optional[str] = ""               
+#     category: Optional[str] = "general"   
+#     location: Optional[str] = ""        
+#     slug: Optional[str] = ""                 
+#     user_name: Optional[str] = ""            
+#     ai_keywords: Optional[str] = ""          
+#     is_live: bool = True                     
+#     is_deleted: bool = False                 
+#     entity_type: Optional[str] = ""
 
-async def automatic_bulk_flusher_loop():
-    """Background worker thread flusher loop"""
-    global BULK_BUFFER
-    while True:
-        await asyncio.sleep(BATCH_TIMEOUT)
+# async def automatic_bulk_flusher_loop():
+#     """Background worker thread flusher loop"""
+#     global BULK_BUFFER
+#     while True:
+#         await asyncio.sleep(BATCH_TIMEOUT)
         
-        async with BUFFER_LOCK:
-            if not BULK_BUFFER:
-                continue
+#         async with BUFFER_LOCK:
+#             if not BULK_BUFFER:
+#                 continue
                 
-            try:
-                actions = []
-                for doc in BULK_BUFFER:
-                    doc_dict = doc.dict()
-                    print(f"🚀 Processing ID {doc_dict['id']} | Title: {doc_dict['title'][:20]}", flush=True)
-                    if doc_dict["is_deleted"] or not doc_dict["is_live"]:
-                        actions.append({
-                            "_op_type": "delete",        
-                            "_index": "hozpitality",     
-                            "_id": str(doc_dict["id"])           
-                        })
-                    else:
-                        category_clean = (doc_dict["category"] or "general").lower().strip()
-                        entity_clean = (doc_dict["entity_type"] or category_clean).lower().strip()
+#             try:
+#                 actions = []
+#                 for doc in BULK_BUFFER:
+#                     doc_dict = doc.dict()
+#                     print(f"🚀 Processing ID {doc_dict['id']} | Title: {doc_dict['title'][:20]}", flush=True)
+#                     if doc_dict["is_deleted"] or not doc_dict["is_live"]:
+#                         actions.append({
+#                             "_op_type": "delete",        
+#                             "_index": "hozpitality",     
+#                             "_id": str(doc_dict["id"])           
+#                         })
+#                     else:
+#                         category_clean = (doc_dict["category"] or "general").lower().strip()
+#                         entity_clean = (doc_dict["entity_type"] or category_clean).lower().strip()
 
-                        actions.append({
-                            "_index": "hozpitality",     
-                            "_id": str(doc_dict["id"]),          
-                            "_source": {                 
-                                "title": doc_dict["title"] or "",
-                                "content": doc_dict["content"] or "",
-                                "category": category_clean, 
-                                "location": doc_dict["location"] or "",
-                                "slug": doc_dict["slug"] or "",
-                                "user_name": doc_dict["user_name"] or "",
-                                "ai_keywords": doc_dict["ai_keywords"] or "",
-                                "entity_type": entity_clean
-                            }
-                        })
+#                         actions.append({
+#                             "_index": "hozpitality",     
+#                             "_id": str(doc_dict["id"]),          
+#                             "_source": {                 
+#                                 "title": doc_dict["title"] or "",
+#                                 "content": doc_dict["content"] or "",
+#                                 "category": category_clean, 
+#                                 "location": doc_dict["location"] or "",
+#                                 "slug": doc_dict["slug"] or "",
+#                                 "user_name": doc_dict["user_name"] or "",
+#                                 "ai_keywords": doc_dict["ai_keywords"] or "",
+#                                 "entity_type": entity_clean
+#                             }
+#                         })
                 
-                if actions:
-                    success, errors = bulk(es_sync, actions, request_timeout=60, raise_on_error=False)
-                    es_sync.indices.refresh(index="hozpitality")
-                    print(f"⚡ Real-time Sync: {success} actions processed into Elasticsearch index [hozpitality].", flush=True)
+#                 if actions:
+#                     success, errors = bulk(es_sync, actions, request_timeout=60, raise_on_error=False)
+#                     es_sync.indices.refresh(index="hozpitality")
+#                     print(f"⚡ Real-time Sync: {success} actions processed into Elasticsearch index [hozpitality].", flush=True)
                 
-                BULK_BUFFER.clear()
+#                 BULK_BUFFER.clear()
                 
-            except Exception as e:
-                print(f"❌ Failed to execute bulk sync: {e}", flush=True)
-                traceback.print_exc()
+#             except Exception as e:
+#                 print(f"❌ Failed to execute bulk sync: {e}", flush=True)
+#                 traceback.print_exc()
 
-@app.on_event("startup")
-async def start_bulk_worker():
-    asyncio.create_task(automatic_bulk_flusher_loop())
+# @app.on_event("startup")
+# async def start_bulk_worker():
+#     asyncio.create_task(automatic_bulk_flusher_loop())
 
-@app.post("/api/v1/bulk-sync-es/")
-async def receive_single_post_api(data: SyncPayload):
-    global BULK_BUFFER
+# @app.post("/api/v1/bulk-sync-es/")
+# async def receive_single_post_api(data: SyncPayload):
+#     global BULK_BUFFER
     
-    print(f"--- DEBUG DEBUG DEBUG ---", flush=True)
-    print(f"📥 Received Job ID: {data.id}", flush=True)
-    print(f"📦 Payload Data: {data.dict()}", flush=True) 
+#     print(f"--- DEBUG DEBUG DEBUG ---", flush=True)
+#     print(f"📥 Received Job ID: {data.id}", flush=True)
+#     print(f"📦 Payload Data: {data.dict()}", flush=True) 
     
-    async with BUFFER_LOCK:
-        is_duplicate = any(item.id == data.id for item in BULK_BUFFER)
-        BULK_BUFFER.append(data)
+#     async with BUFFER_LOCK:
+#         is_duplicate = any(item.id == data.id for item in BULK_BUFFER)
+#         BULK_BUFFER.append(data)
         
-    print(f"✅ Buffered. Total Queue Size: {len(BULK_BUFFER)}", flush=True)
-    print(f"🔄 Is Duplicate ID? {is_duplicate}", flush=True)
-    print(f"--- DEBUG END ---", flush=True)
+#     print(f"✅ Buffered. Total Queue Size: {len(BULK_BUFFER)}", flush=True)
+#     print(f"🔄 Is Duplicate ID? {is_duplicate}", flush=True)
+#     print(f"--- DEBUG END ---", flush=True)
             
-    return {"status": "buffered", "queue_size": len(BULK_BUFFER)}
+#     return {"status": "buffered", "queue_size": len(BULK_BUFFER)}
 
 OLLAMA_URL = "http://ollama:11434/api/generate"
 
