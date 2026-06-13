@@ -1549,6 +1549,11 @@ Extract structured search data.
 If the QUERY is a follow-up (like "in Dubai"), use the CONTEXT to refine the search parameters.
 If the QUERY is a new, unrelated topic, ignore the CONTEXT.
 
+CRITICAL RULES:
+1. Do NOT extract prepositions or common stop-words (from, in, at, the, to, and, with) as roles.
+2. If a word is not a professional role, do not include it in the 'roles' list.
+3. If no clear role or location is found, return an empty list.
+
 CONTEXT:
 {context}
 
