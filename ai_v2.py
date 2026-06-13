@@ -1201,7 +1201,7 @@ def click(user_id: int, category: str):
 #     }
 
 
-def expand_query_llm(query: str):
+def expand_query_llm(query: str,context: str = ""):
 
     cache_key = f"expand:{query.lower()}"
 
@@ -1546,20 +1546,25 @@ def expand_query_llm(query: str):
 
             prompt = f"""
 Extract structured search data.
+If the QUERY is a follow-up (like "in Dubai"), use the CONTEXT to refine the search parameters.
+If the QUERY is a new, unrelated topic, ignore the CONTEXT.
+
+CONTEXT:
+{context}
+
+QUERY:
+{query}
 
 Return STRICT JSON only.
 
 FORMAT:
-
 {{
   "roles": [],
   "locations": []
 }}
-
-QUERY:
-{query}
 """
-            
+            print(f"DEBUG: Expanding Query: '{query}'", flush=True)
+            print(f"DEBUG: Context received by LLM function: '{context}'", flush=True)
             res = requests.post(
 
                 OLLAMA_URL,
@@ -1580,8 +1585,9 @@ QUERY:
                     }
                 },
 
-                timeout=2
+                timeout=10
             )
+            print(f"DEBUG: Raw LLM Response: {res.text}", flush=True)
 
             raw = (
                 res.json()
@@ -1599,6 +1605,11 @@ QUERY:
                 llm_data = json.loads(
                     match.group()
                 )
+                print(f"DEBUG: LLM Extracted Data: {llm_data}", flush=True)
+            else:
+                print("DEBUG: Regex match failed, LLM output was:", raw, flush=True)
+
+            
 
                 data["roles"].extend(
                     llm_data.get(
