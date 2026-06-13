@@ -580,18 +580,20 @@ OUTPUT (STRICT JSON ONLY):
             "rephrased_query": query.lower()
         }
 
-def tenant_key(user_id, org_id):
+def tenant_key(user_id, org_id,conversation_id=None):
+    if conversation_id:
+        return f"{org_id}:{user_id}:{conversation_id}"
     return f"{org_id}:{user_id}"
 
-def get_memory(user_id, org_id):
-    key = tenant_key(user_id, org_id)
+def get_memory(user_id, org_id,conversation_id=None):
+    key = tenant_key(user_id, org_id,conversation_id)
     if key not in memory_indexes:
         memory_indexes[key] = faiss.IndexFlatL2(EMBED_DIM)
         memory_store[key] = []
     return memory_indexes[key], memory_store[key]
 
-def store_memory(user_id, org_id, text):
-    idx, store = get_memory(user_id, org_id)
+def store_memory(user_id, org_id, text,conversation_id=None):
+    idx, store = get_memory(user_id, org_id,conversation_id)
     vec = np.array([get_embedding(text)], dtype="float32")
     faiss.normalize_L2(vec)
     idx.add(vec)
@@ -599,8 +601,8 @@ def store_memory(user_id, org_id, text):
     if len(store) > 50:
         store.pop(0)
 
-def retrieve_memory(user_id, org_id, query):
-    idx, store = get_memory(user_id, org_id)
+def retrieve_memory(user_id, org_id, query,conversation_id=None):
+    idx, store = get_memory(user_id, org_id,conversation_id)
     if not store:
         return []
     q_vec = np.array([get_embedding(query)], dtype="float32")

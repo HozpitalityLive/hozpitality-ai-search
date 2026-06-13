@@ -428,7 +428,10 @@ def get_user_profile(user_id):
 async def handle_search(
     ws,
     query,
-    query_data
+    query_data,
+    user_id=None,        
+    org_id=None,
+    conversation_id=None
 ):
 
     try:
@@ -707,6 +710,14 @@ async def handle_search(
             "data": payload
         })
 
+        if conversation_id:
+            store_memory(
+                user_id=user_id, 
+                org_id=org_id,
+                text=f"User searched for: {query}. Found {len(clean_results)} results: {intro}",
+                conversation_id=conversation_id
+            )
+
         # =================================
         # CACHE
         # =================================
@@ -889,12 +900,16 @@ async def websocket_ai_search(
             memory_items = retrieve_memory(
                 user_id,
                 org_id,
-                query
+                query,
+                conversation_id
             )
+            print(f"DEBUG: Memory Items Found: {len(memory_items)} items", flush=True)
+            print(f"DEBUG: RAW Memory Content: {memory_items}", flush=True)
 
             memory_text = "\n".join(
-                memory_items[-3:]
+                memory_items[-5:]
             )
+            print(f"DEBUG: FINAL Context String for LLM:\n{memory_text}", flush=True)
 
             fast_intent = detect_intent(query)
 
@@ -935,10 +950,11 @@ async def websocket_ai_search(
 
                     asyncio.to_thread(
                         expand_query_llm,
-                        query
+                        query,
+                        memory_text
                     ),
 
-                    timeout=15
+                    timeout=30
 
                 )
 
@@ -1104,7 +1120,10 @@ async def websocket_ai_search(
                 await handle_search(
                     ws,
                     query,
-                    query_data
+                    query_data,
+                    user_id,         
+                    org_id,
+                    conversation_id
                 )
 
                 continue
@@ -1129,13 +1148,15 @@ async def websocket_ai_search(
                 store_memory(
                     user_id,
                     org_id,
-                    f"USER: {query}\nAI: {answer}"
+                    f"USER: {query}\nAI: {answer}",
+                    conversation_id
                 )
 
                 store_last_ai_response(
                     user_id,
                     org_id,
-                    answer
+                    answer,
+                    conversation_id
                 )
 
             await safe_send(ws, {
