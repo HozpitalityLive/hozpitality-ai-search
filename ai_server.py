@@ -588,27 +588,45 @@ def tenant_key(user_id, org_id,conversation_id=None):
 def get_memory(user_id, org_id,conversation_id=None):
     key = tenant_key(user_id, org_id,conversation_id)
     if key not in memory_indexes:
+        print(f"DEBUG: Initializing new memory index/store for key: {key}", flush=True)
         memory_indexes[key] = faiss.IndexFlatL2(EMBED_DIM)
         memory_store[key] = []
     return memory_indexes[key], memory_store[key]
 
-def store_memory(user_id, org_id, text,conversation_id=None):
+def store_memory(user_id, org_id, text,category,conversation_id=None):
     idx, store = get_memory(user_id, org_id,conversation_id)
+    if store:
+        last_item = json.loads(store[-1])
+        if last_item["text"] == text:
+            print(f"DEBUG: Skipping duplicate store. Text already exists: {text}", flush=True)
+            return
+    memory_obj = {"text": text, "category": category}
+    memory_json = json.dumps(memory_obj)
     vec = np.array([get_embedding(text)], dtype="float32")
     faiss.normalize_L2(vec)
     idx.add(vec)
-    store.append(text)
+    store.append(memory_json)
+    print(f"DEBUG: Successfully stored in memory | Category: {category} | Text: {text}", flush=True)
     if len(store) > 50:
-        store.pop(0)
+        removed = store.pop(0)
+        print(f"DEBUG: Memory limit exceeded. Removed oldest item: {removed}", flush=True)
 
 def retrieve_memory(user_id, org_id, query,conversation_id=None):
     idx, store = get_memory(user_id, org_id,conversation_id)
     if not store:
+        print("DEBUG: Memory store is empty, nothing to retrieve.", flush=True)
         return []
     q_vec = np.array([get_embedding(query)], dtype="float32")
     faiss.normalize_L2(q_vec)
     D, I = idx.search(q_vec, 5)
-    return [store[i] for i in I[0] if i < len(store)]
+    print(f"DEBUG: Search initiated for query: '{query}' | Found indices: {I[0]}", flush=True)
+    results = []
+    for i in I[0]:
+        if i != -1 and i < len(store): 
+            mem_item = json.loads(store[i])
+            results.append(mem_item)
+            print(f"DEBUG: Retrieved memory at index {i}: {mem_item}", flush=True)
+    return results
 
 embedding_cache = LRUCache(maxsize=5000)
 
