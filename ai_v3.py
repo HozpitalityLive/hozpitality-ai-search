@@ -424,7 +424,34 @@ def get_user_profile(user_id):
         except:
             pass
 
-
+async def get_ai_generated_intro(query, clean_results, category):
+    results_summary = [
+        {"title": r["title"], "category": r["category"]} 
+        for r in clean_results[:3]  
+    ]
+    
+    prompt = f"""
+    You are Hozpitality AI. Write a friendly, 3-line professional intro for these results.
+    
+    Query: "{query}"
+    Category: {category}
+    Top Results: {json.dumps(results_summary)}
+    
+    Instruction: Mention the results naturally and keep it conversational. 
+    Return ONLY the intro text.
+    """
+    
+    try:
+        response = await asyncio.to_thread(httpx.post, OLLAMA_URL, json={
+            "model": MODEL_CHAT, 
+            "prompt": prompt, 
+            "stream": False, 
+            "options": {"temperature": 0.4, "num_predict": 80}
+        }, timeout=10)
+        return response.json().get("response", "I found these relevant results for you.").strip()
+    except:
+        return f"I found {len(clean_results)} relevant results for your search."
+     
 async def handle_search(
     ws,
     query,
@@ -627,76 +654,21 @@ async def handle_search(
         # =================================
 
         if clean_results:
-
-            if (
-                category == "job"
-                and
-                query_data.get(
-                    "roles"
-                )
-                and
-                not query_data.get(
-                    "explicit_role"
-                )
-            ):
-
-                role = (
-                    query_data["roles"][0]
-                )
-
-                intro = (
-                    f"I found hospitality jobs "
-                    f"matching your "
-                    f"{role} profile."
-                )
-
-            else:
-
-                intro = (
-                    f"I found "
-                    f"{len(clean_results)} "
-                    f"relevant hospitality "
-                    f"results."
-                )
-
+            intro = await get_ai_generated_intro(query, clean_results, category)
         else:
+            intro = "I couldn't find any matching hospitality results."
 
-            intro = (
-                "I couldn't find "
-                "matching results."
-            )
+        # Fallback message (kya ye abhi bhi chahiye?)
+        if len(clean_results) < 3 and category == "job":
+            intro += " I also included related hospitality opportunities outside your profile."
 
-        # =================================
-        # FALLBACK MESSAGE
-        # =================================
-
-        if (
-            len(clean_results) < 3
-            and
-            category == "job"
-        ):
-
-            intro += (
-                " I also included related "
-                "hospitality opportunities "
-                "outside your profile."
-            )
-
-        # =================================
-        # FOLLOWUPS
-        # =================================
-
-        followups = generate_followups(
-            category
-        )
 
         payload = {
 
-            "message": intro,
+            "content": intro,
 
             "results": clean_results,
 
-            "followups": followups
         }
 
         # =================================
