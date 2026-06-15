@@ -425,16 +425,32 @@ def get_user_profile(user_id):
             pass
 
 async def get_ai_generated_intro(query, clean_results, category):
-    # Sirf content aur query bhej rahe hain LLM ko
-    prompt = f"Write a professional 3-line intro for these hospitality results. Query: {query}. Category: {category}. Results count: {len(clean_results)}. Keep it conversational. Return only text."
+    results_summary = [
+        {"title": r["title"], "category": r["category"]} 
+        for r in clean_results[:3]  
+    ]
+    
+    prompt = f"""
+    You are Hozpitality AI. Write a friendly, 3-line professional intro for these results.
+    
+    Query: "{query}"
+    Category: {category}
+    Top Results: {json.dumps(results_summary)}
+    
+    Instruction: Mention the results naturally and keep it conversational. 
+    Return ONLY the intro text.
+    """
+    
     try:
         response = await asyncio.to_thread(httpx.post, OLLAMA_URL, json={
-            "model": MODEL_CHAT, "prompt": prompt, "stream": False, 
+            "model": MODEL_CHAT, 
+            "prompt": prompt, 
+            "stream": False, 
             "options": {"temperature": 0.4, "num_predict": 80}
         }, timeout=10)
-        return response.json().get("response", "I found relevant results for you.").strip()
+        return response.json().get("response", "I found these relevant results for you.").strip()
     except:
-        return "I found some relevant hospitality results for you."
+        return f"I found {len(clean_results)} relevant results for your search."
      
 async def handle_search(
     ws,
