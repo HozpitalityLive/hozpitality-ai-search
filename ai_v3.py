@@ -628,18 +628,19 @@ async def handle_search(
 
         async def generate_and_send_intro():
             try:
-                print(f"🚀 [INTRO_TASK] Background start for: {query}", flush=True)
+                summary = [f"{r.get('title')} ({r.get('category')})" for r in clean_results[:3]]
+                summary_str = ", ".join(summary)
                 
-                # Prompt setup
-                results_summary = [{"title": r.get("title"), "category": r.get("category")} for r in clean_results[:3]]
-                prompt = f"Write a friendly 3-line intro for: {query}. Category: {category}. Found {len(clean_results)} results. Return ONLY the intro text."
+                prompt = f"Write a friendly 3-line intro for search: '{query}'. Context/Results found: {summary_str}. Return ONLY the intro text."
                 
                 print(f"📡 [INTRO_TASK] Requesting Ollama...", flush=True)
                 
                 response = await asyncio.to_thread(httpx.post, OLLAMA_URL, json={
-                    "model": MODEL_CHAT, "prompt": prompt, "stream": False, 
-                    "options": {"temperature": 0.4, "num_predict": 80}
-                }, timeout=20.0)
+                    "model": MODEL_CHAT, 
+                    "prompt": prompt, 
+                    "stream": False, 
+                    "options": {"temperature": 0.3, "num_predict": 50}
+                }, timeout=45.0)
                 
                 print(f"📥 [INTRO_TASK] Response status: {response.status_code}", flush=True)
                 
@@ -648,11 +649,9 @@ async def handle_search(
                 else:
                     intro = f"I found {len(clean_results)} relevant results for your search."
                 
-                # Fallback logic
                 if len(clean_results) < 3 and category == "job":
                     intro += " I also included related hospitality opportunities outside your profile."
 
-                # Frontend update
                 await safe_send(ws, {"type": "update_intro", "content": intro})
                 print("✅ [INTRO_TASK] Intro successfully updated on UI", flush=True)
                 
@@ -662,7 +661,7 @@ async def handle_search(
             
             except Exception as e:
                 print(f"❌ [INTRO_TASK] CRITICAL ERROR: {e}", flush=True)
-                fallback = f"I found {len(clean_results)} relevant results for your search."
+                fallback = "I found some relevant results for your search."
                 await safe_send(ws, {"type": "update_intro", "content": fallback})
 
         asyncio.create_task(generate_and_send_intro())
