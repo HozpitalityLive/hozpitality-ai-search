@@ -640,7 +640,7 @@ async def handle_search(
                     "prompt": prompt, 
                     "stream": False, 
                     "options": {"temperature": 0.3, "num_predict": 50}
-                }, timeout=45.0)
+                }, timeout=10.0)
                 
                 print(f"📥 [INTRO_TASK] Response status: {response.status_code}", flush=True)
                 
@@ -653,7 +653,7 @@ async def handle_search(
                     intro += " I also included related hospitality opportunities outside your profile."
 
                 await safe_send(ws, {"type": "update_intro", "content": intro})
-                print("✅ [INTRO_TASK] Intro successfully updated on UI", flush=True)
+                print(" [INTRO_TASK] Intro successfully updated on UI", flush=True)
                 
                 # Memory
                 if conversation_id:
