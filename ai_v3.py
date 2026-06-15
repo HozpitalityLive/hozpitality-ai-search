@@ -423,35 +423,40 @@ def get_user_profile(user_id):
                 db_pool.putconn(conn)
         except:
             pass
-
+        
 async def get_ai_generated_intro(query, clean_results, category):
-    results_summary = [
-        {"title": r["title"], "category": r["category"]} 
-        for r in clean_results[:3]  
-    ]
-    
-    prompt = f"""
-    You are Hozpitality AI. Write a friendly, 3-line professional intro for these results.
-    
-    Query: "{query}"
-    Category: {category}
-    Top Results: {json.dumps(results_summary)}
-    
-    Instruction: Mention the results naturally and keep it conversational. 
-    Return ONLY the intro text.
-    """
-    
     try:
+        results_summary = [{"title": r["title"], "category": r["category"]} for r in clean_results[:3]]
+        
+        prompt = f"""
+        You are Hozpitality AI. Write a friendly, 3-line professional intro for these results.
+        Query: "{query}"
+        Category: {category}
+        Top Results: {json.dumps(results_summary)}
+        Return ONLY the intro text.
+        """
+        
+        print(f"🔄 CALLING LLM FOR INTRO. Query: {query}", flush=True)
+        
         response = await asyncio.to_thread(httpx.post, OLLAMA_URL, json={
             "model": MODEL_CHAT, 
             "prompt": prompt, 
             "stream": False, 
             "options": {"temperature": 0.4, "num_predict": 80}
         }, timeout=10)
-        return response.json().get("response", "I found these relevant results for you.").strip()
-    except:
+        
+        if response.status_code == 200:
+            intro = response.json().get("response", "").strip()
+            print(f"✅ LLM INTRO GENERATED: {intro[:50]}...", flush=True)
+            return intro
+        else:
+            print(f"❌ LLM ERROR: Status Code {response.status_code}", flush=True)
+            return f"I found {len(clean_results)} relevant results for your search."
+            
+    except Exception as e:
+        print(f"⚠️ EXCEPTION IN LLM INTRO: {e}", flush=True)
         return f"I found {len(clean_results)} relevant results for your search."
-     
+    
 async def handle_search(
     ws,
     query,
