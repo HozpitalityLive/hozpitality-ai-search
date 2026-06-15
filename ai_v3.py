@@ -424,39 +424,7 @@ def get_user_profile(user_id):
         except:
             pass
         
-async def get_ai_generated_intro(query, clean_results, category):
-    try:
-        results_summary = [{"title": r["title"], "category": r["category"]} for r in clean_results[:3]]
-        
-        prompt = f"""
-        You are Hozpitality AI. Write a friendly, 3-line professional intro for these results.
-        Query: "{query}"
-        Category: {category}
-        Top Results: {json.dumps(results_summary)}
-        Return ONLY the intro text.
-        """
-        
-        print(f"🔄 CALLING LLM FOR INTRO. Query: {query}", flush=True)
-        
-        response = await asyncio.to_thread(httpx.post, OLLAMA_URL, json={
-            "model": MODEL_CHAT, 
-            "prompt": prompt, 
-            "stream": False, 
-            "options": {"temperature": 0.4, "num_predict": 80}
-        }, timeout=10)
-        
-        if response.status_code == 200:
-            intro = response.json().get("response", "").strip()
-            print(f"✅ LLM INTRO GENERATED: {intro[:50]}...", flush=True)
-            return intro
-        else:
-            print(f"❌ LLM ERROR: Status Code {response.status_code}", flush=True)
-            return f"I found {len(clean_results)} relevant results for your search."
-            
-    except Exception as e:
-        print(f"⚠️ EXCEPTION IN LLM INTRO: {e}", flush=True)
-        return f"I found {len(clean_results)} relevant results for your search."
-    
+
 async def handle_search(
     ws,
     query,
@@ -658,43 +626,46 @@ async def handle_search(
         # PERSONALIZED INTRO
         # =================================
 
-        if clean_results:
-            intro = await get_ai_generated_intro(query, clean_results, category)
-        else:
-            intro = "I couldn't find any matching hospitality results."
+        async def generate_and_send_intro():
+            try:
+                # LLM se intro generate karwayein
+                results_summary = [{"title": r.get("title"), "category": r.get("category")} for r in clean_results[:3]]
+                prompt = f"Write a friendly 3-line intro for: {query}. Category: {category}. Found {len(clean_results)} results. Return ONLY the intro text."
+                
+                response = await asyncio.to_thread(httpx.post, OLLAMA_URL, json={
+                    "model": MODEL_CHAT, "prompt": prompt, "stream": False, 
+                    "options": {"temperature": 0.4, "num_predict": 80}
+                }, timeout=10)
+                
+                intro = response.json().get("response", f"I found {len(clean_results)} relevant hospitality results.").strip()
+                
+                # Agar results kam hain toh fallback add karein
+                if len(clean_results) < 3 and category == "job":
+                    intro += " I also included related hospitality opportunities outside your profile."
 
-        # Fallback message (kya ye abhi bhi chahiye?)
-        if len(clean_results) < 3 and category == "job":
-            intro += " I also included related hospitality opportunities outside your profile."
+                # Frontend ko update bhejein (message ki jagah content)
+                await safe_send(ws, {"type": "update_intro", "content": intro})
+                
+                # Memory update karein (final intro ke saath)
+                if conversation_id:
+                    store_memory(
+                        user_id=user_id, org_id=org_id,
+                        text=f"User searched for: {query}. Result: {intro}",
+                        category=category,
+                        conversation_id=conversation_id,
+                    )
+            except Exception as e:
+                print(f"⚠️ INTRO GENERATION ERROR: {e}", flush=True)
 
+        # Background mein start kar dein
+        asyncio.create_task(generate_and_send_intro())
 
         payload = {
-
-            "content": intro,
-
-            "results": clean_results,
-
+            "content": "Searching for results...", 
+            "results": clean_results
         }
 
-        # =================================
-        # SEND SEARCH RESULTS
-        # =================================
-
-        await safe_send(ws, {
-
-            "type": "search",
-
-            "data": payload
-        })
-
-        if conversation_id:
-            store_memory(
-                user_id=user_id, 
-                org_id=org_id,
-                text=f"User searched for: {query}. Found {len(clean_results)} results: {intro}",
-                category=category,
-                conversation_id=conversation_id,
-            )
+        await safe_send(ws, {"type": "search", "data": payload})
 
         # =================================
         # CACHE
@@ -809,8 +780,6 @@ TASK:
         await safe_send(ws, {
             "type": "done"
         })
-
-
 
 @app.websocket("/ws/ai-search")
 async def websocket_ai_search(
