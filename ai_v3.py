@@ -626,53 +626,98 @@ async def handle_search(
         # PERSONALIZED INTRO
         # =================================
 
-        async def generate_and_send_intro():
-            try:
-                summary = [f"{r.get('title')} ({r.get('category')})" for r in clean_results[:3]]
-                summary_str = ", ".join(summary)
-                
-                prompt = f"Write a friendly 3-line intro for search: '{query}'. Context/Results found: {summary_str}. Return ONLY the intro text."
-                
-                print(f"📡 [INTRO_TASK] Requesting Ollama...", flush=True)
-                
-                response = await asyncio.to_thread(httpx.post, OLLAMA_URL, json={
-                    "model": MODEL_CHAT, 
-                    "prompt": prompt, 
-                    "stream": False, 
-                    "options": {"temperature": 0.3, "num_predict": 50}
-                }, timeout=10.0)
-                
-                print(f"📥 [INTRO_TASK] Response status: {response.status_code}", flush=True)
-                
-                if response.status_code == 200:
-                    intro = response.json().get("response", "").strip()
-                else:
-                    intro = f"I found {len(clean_results)} relevant results for your search."
-                
-                if len(clean_results) < 3 and category == "job":
-                    intro += " I also included related hospitality opportunities outside your profile."
+        if clean_results:
 
-                await safe_send(ws, {"type": "update_intro", "content": intro})
-                print(" [INTRO_TASK] Intro successfully updated on UI", flush=True)
-                
-                # Memory
-                if conversation_id:
-                    store_memory(user_id=user_id, org_id=org_id, text=f"User searched for: {query}. Result: {intro}", category=category, conversation_id=conversation_id)
-            
-            except Exception as e:
-                print(f"❌ [INTRO_TASK] CRITICAL ERROR: {e}", flush=True)
-                fallback = "I found some relevant results for your search."
-                await safe_send(ws, {"type": "update_intro", "content": fallback})
+            if (
+                category == "job"
+                and
+                query_data.get(
+                    "roles"
+                )
+                and
+                not query_data.get(
+                    "explicit_role"
+                )
+            ):
 
-        asyncio.create_task(generate_and_send_intro())
+                role = (
+                    query_data["roles"][0]
+                )
+
+                intro = (
+                    f"I found hospitality jobs "
+                    f"matching your "
+                    f"{role} profile."
+                )
+
+            else:
+
+                intro = (
+                    f"I found "
+                    f"{len(clean_results)} "
+                    f"relevant hospitality "
+                    f"results."
+                )
+
+        else:
+
+            intro = (
+                "I couldn't find "
+                "matching results."
+            )
+
+        # =================================
+        # FALLBACK MESSAGE
+        # =================================
+
+        if (
+            len(clean_results) < 3
+            and
+            category == "job"
+        ):
+
+            intro += (
+                " I also included related "
+                "hospitality opportunities "
+                "outside your profile."
+            )
+
+        # =================================
+        # FOLLOWUPS
+        # =================================
+
+        followups = generate_followups(
+            category
+        )
 
         payload = {
-            "content": "Searching...", 
-            "results": clean_results
+
+            "message": intro,
+
+            "results": clean_results,
+
+            "followups": followups
         }
 
+        # =================================
+        # SEND SEARCH RESULTS
+        # =================================
 
-        await safe_send(ws, {"type": "search", "data": payload})
+        await safe_send(ws, {
+
+            "type": "search",
+
+            "data": payload
+        })
+
+        if conversation_id:
+            store_memory(
+                user_id=user_id, 
+                org_id=org_id,
+                text=f"User searched for: {query}. Found {len(clean_results)} results: {intro}",
+                category=category,
+                conversation_id=conversation_id,
+            )
 
         # =================================
         # CACHE
@@ -787,6 +832,7 @@ TASK:
         await safe_send(ws, {
             "type": "done"
         })
+
 
 @app.websocket("/ws/ai-search")
 async def websocket_ai_search(
