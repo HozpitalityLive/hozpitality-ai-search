@@ -715,7 +715,8 @@ async def handle_search(
                 user_id=user_id, 
                 org_id=org_id,
                 text=f"User searched for: {query}. Found {len(clean_results)} results: {intro}",
-                conversation_id=conversation_id
+                category=category,
+                conversation_id=conversation_id,
             )
 
         # =================================
@@ -906,9 +907,8 @@ async def websocket_ai_search(
             print(f"DEBUG: Memory Items Found: {len(memory_items)} items", flush=True)
             print(f"DEBUG: RAW Memory Content: {memory_items}", flush=True)
 
-            memory_text = "\n".join(
-                memory_items[-5:]
-            )
+            formatted_strings = [f"Category: {item.get('category')} | Query: {item.get('text')}" for item in memory_items[-5:]]
+            memory_text = "\n".join(formatted_strings)
             print(f"DEBUG: FINAL Context String for LLM:\n{memory_text}", flush=True)
 
             fast_intent = detect_intent(query)
@@ -1144,12 +1144,14 @@ async def websocket_ai_search(
                     "assistant",
                     answer
                 )
-
+                
+                final_category = query_data.get("category", "general")
                 store_memory(
-                    user_id,
-                    org_id,
-                    f"USER: {query}\nAI: {answer}",
-                    conversation_id
+                    user_id=user_id,
+                    org_id=org_id,
+                    text=f"USER: {query}\nAI: {answer}",
+                    category=final_category,
+                    conversation_id=conversation_id
                 )
 
                 store_last_ai_response(

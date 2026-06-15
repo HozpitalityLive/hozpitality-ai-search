@@ -1554,11 +1554,13 @@ CRITICAL RULES:
 2. If a word is not a professional role, do not include it in the 'roles' list.
 3. If a word is a geographic location (city, country, region), it MUST go into 'locations' and NEVER in 'roles'.
 4. If no clear role or location is found, return empty lists.
+5. CATEGORY PERSISTENCE: If the QUERY is a follow-up, the CATEGORY must remain the same as in the CONTEXT (e.g., if context is 'company', keep 'company'). Only change category if the user explicitly changes the topic.
 
 EXAMPLES:
-QUERY: "who is megha arora from bathinda" -> {{"roles": [], "locations": ["bathinda"]}}
-QUERY: "find hotel manager in dubai" -> {{"roles": ["hotel manager"], "locations": ["dubai"]}}
-QUERY: "from dubai" -> {{"roles": [], "locations": ["dubai"]}}
+QUERY: "who is raj bhatt from USA" -> {{"roles": [], "locations": ["USA"], "category": "professional"}}
+QUERY: "from dubai" -> {{"roles": [], "locations": ["dubai"], "category": "professional"}}
+QUERY: "hotels in USA" (Context category is 'company') -> {{"roles": ["hotels"], "locations": ["USA"], "category": "company"}}
+QUERY: "in dubai" (Context category is 'company') -> {{"roles": [], "locations": ["dubai"], "category": "company"}}
 
 CONTEXT:
 {context}
@@ -1571,7 +1573,8 @@ Return STRICT JSON only.
 FORMAT:
 {{
   "roles": [],
-  "locations": []
+  "locations": [],
+  "category": "detected_category"
 }}
 """
             print(f"DEBUG: Expanding Query: '{query}'", flush=True)
@@ -1617,10 +1620,10 @@ FORMAT:
                     match.group()
                 )
                 print(f"DEBUG: LLM Extracted Data: {llm_data}", flush=True)
-            else:
-                print("DEBUG: Regex match failed, LLM output was:", raw, flush=True)
 
-            
+                if llm_data.get("category"):
+                    data["category"] = llm_data["category"]
+                    print(f"DEBUG: Category persisted/updated via LLM: {data['category']}", flush=True)
 
                 data["roles"].extend(
                     llm_data.get(
