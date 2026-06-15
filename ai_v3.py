@@ -628,42 +628,50 @@ async def handle_search(
 
         async def generate_and_send_intro():
             try:
-                # LLM se intro generate karwayein
+                print(f"🚀 [INTRO_TASK] Background start for: {query}", flush=True)
+                
+                # Prompt setup
                 results_summary = [{"title": r.get("title"), "category": r.get("category")} for r in clean_results[:3]]
                 prompt = f"Write a friendly 3-line intro for: {query}. Category: {category}. Found {len(clean_results)} results. Return ONLY the intro text."
+                
+                print(f"📡 [INTRO_TASK] Requesting Ollama...", flush=True)
                 
                 response = await asyncio.to_thread(httpx.post, OLLAMA_URL, json={
                     "model": MODEL_CHAT, "prompt": prompt, "stream": False, 
                     "options": {"temperature": 0.4, "num_predict": 80}
-                }, timeout=10)
+                }, timeout=20.0)
                 
-                intro = response.json().get("response", f"I found {len(clean_results)} relevant hospitality results.").strip()
+                print(f"📥 [INTRO_TASK] Response status: {response.status_code}", flush=True)
                 
-                # Agar results kam hain toh fallback add karein
+                if response.status_code == 200:
+                    intro = response.json().get("response", "").strip()
+                else:
+                    intro = f"I found {len(clean_results)} relevant results for your search."
+                
+                # Fallback logic
                 if len(clean_results) < 3 and category == "job":
                     intro += " I also included related hospitality opportunities outside your profile."
 
-                # Frontend ko update bhejein (message ki jagah content)
+                # Frontend update
                 await safe_send(ws, {"type": "update_intro", "content": intro})
+                print("✅ [INTRO_TASK] Intro successfully updated on UI", flush=True)
                 
-                # Memory update karein (final intro ke saath)
+                # Memory
                 if conversation_id:
-                    store_memory(
-                        user_id=user_id, org_id=org_id,
-                        text=f"User searched for: {query}. Result: {intro}",
-                        category=category,
-                        conversation_id=conversation_id,
-                    )
+                    store_memory(user_id=user_id, org_id=org_id, text=f"User searched for: {query}. Result: {intro}", category=category, conversation_id=conversation_id)
+            
             except Exception as e:
-                print(f"⚠️ INTRO GENERATION ERROR: {e}", flush=True)
+                print(f"❌ [INTRO_TASK] CRITICAL ERROR: {e}", flush=True)
+                fallback = f"I found {len(clean_results)} relevant results for your search."
+                await safe_send(ws, {"type": "update_intro", "content": fallback})
 
-        # Background mein start kar dein
         asyncio.create_task(generate_and_send_intro())
 
         payload = {
-            "content": "Searching for results...", 
+            "content": "Searching...", 
             "results": clean_results
         }
+
 
         await safe_send(ws, {"type": "search", "data": payload})
 
