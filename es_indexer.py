@@ -53,48 +53,28 @@ def wait_for_es():
 
     return False
 
-def normalize_category(category_raw):
+def normalize_category(category_raw, content_raw="", slug_raw=""):
+    category_raw = (category_raw or "").lower().strip()
+    content_raw = (content_raw or "").lower().strip()
+    slug_raw = (slug_raw or "").lower().strip()
 
-    category_raw = (
-        category_raw or ""
-    ).lower()
-
-    if "job" in category_raw:
-        return "job"
-
-    elif (
-        "candidate" in category_raw
-        or
-        "profile" in category_raw
-    ):
-        return "professional"
-
-    elif "company" in category_raw:
+    if "hozpitality.com/companies" in slug_raw or slug_raw.startswith("/companies"):
         return "company"
-
-    elif "supplier" in category_raw:
-        return "supplier"
-
-    elif "product" in category_raw:
+        
+    if "hozpitality.com/jobs" in slug_raw or slug_raw.startswith("/jobs"):
+        return "job"
+        
+    if "hozpitality.com/marketplace" in slug_raw or slug_raw.startswith("/marketplace"):
         return "product"
-
-    elif "event" in category_raw:
-        return "event"
-
-    elif (
-        "article" in category_raw
-        or
-        "blog" in category_raw
-        or
-        "news" in category_raw
-    ):
+        
+    if "hozpitality.com/articles" in slug_raw or slug_raw.startswith("/articles"):
         return "article"
-
-    elif "award" in category_raw:
-        return "award"
-
-    elif "faq" in category_raw:
-        return "faq"
+        
+    if "hozpitality.com/events" in slug_raw or slug_raw.startswith("/events"):
+        return "event"
+        
+    if "hozpitality.com/professional" in slug_raw or slug_raw.startswith("/professional"):
+        return "professional"
 
     return "general"
 
@@ -302,9 +282,7 @@ def run_reindex():
 
         for r in rows:
 
-            category = normalize_category(
-                r[3]
-            )
+            category = (r[3] or "general").lower().strip()
 
             ai_keywords = build_ai_keywords(
 
