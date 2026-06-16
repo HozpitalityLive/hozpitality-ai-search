@@ -53,37 +53,28 @@ def wait_for_es():
 
     return False
 
-def normalize_category(category_raw,content_raw=""):
-
+def normalize_category(category_raw, content_raw="", slug_raw=""):
     category_raw = (category_raw or "").lower().strip()
     content_raw = (content_raw or "").lower().strip()
+    slug_raw = (slug_raw or "").lower().strip()
 
-    if re.search(r"user type\s*:\s*professional", content_raw):
-        return "professional"
-    
-    if re.search(r"user type\s*:\s*company", content_raw):
+    if "hozpitality.com/companies" in slug_raw or slug_raw.startswith("/companies"):
         return "company"
-    
-    if re.search(r"user type\s*:\s*supplier", content_raw):
-        return "supplier"
-
-    if "job role:" in content_raw or "job" in category_raw:
+        
+    if "hozpitality.com/jobs" in slug_raw or slug_raw.startswith("/jobs"):
         return "job"
-
-    if "product name:" in content_raw or "product" in category_raw:
+        
+    if "hozpitality.com/marketplace" in slug_raw or slug_raw.startswith("/marketplace"):
         return "product"
-
-    if "event name:" in content_raw or "event" in category_raw:
-        return "event"
-
-    if "post type: article" in content_raw or any(k in category_raw for k in ["article", "blog", "news"]):
+        
+    if "hozpitality.com/articles" in slug_raw or slug_raw.startswith("/articles"):
         return "article"
-
-    if "award" in content_raw or "award" in category_raw:
-        return "award"
-
-    if any(k in content_raw for k in ["question:", "answer:"]) or "faq" in category_raw:
-        return "faq"
+        
+    if "hozpitality.com/events" in slug_raw or slug_raw.startswith("/events"):
+        return "event"
+        
+    if "hozpitality.com/professional" in slug_raw or slug_raw.startswith("/professional"):
+        return "professional"
 
     return "general"
 
@@ -291,10 +282,7 @@ def run_reindex():
 
         for r in rows:
 
-            category = normalize_category(
-                r[3], 
-                r[2]  
-            )
+            category = (r[3] or "general").lower().strip()
 
             ai_keywords = build_ai_keywords(
 

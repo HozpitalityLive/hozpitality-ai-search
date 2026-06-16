@@ -179,8 +179,8 @@ def load_data(force_reindex=False):
             category = "event"
         elif "article" in category_raw or "blog" in category_raw:
             category = "article"
-        elif "award" in category_raw:
-            category = "award"
+        elif "award" in category_raw or "awards" in category_raw:
+            category = "awards"
         elif "faq" in category_raw:
             category = "faq"
         else:
@@ -730,8 +730,8 @@ def build_link(slug, category):
         return f"{base}/article/details/{slug}"
     elif category == "event":
         return f"{base}/event/details/{slug}"
-    elif category == "award":
-        return f"{base}/award/{slug}"
+    elif category == "awards":
+        return f"{base}/awards/"
     else:
         return f"{base}/{slug}"
 
@@ -1377,70 +1377,86 @@ def expand_query_llm(query: str):
         )
     )
 
-    job_words = {
-        "job",
-        "jobs",
-        "vacancy",
-        "vacancies",
-        "hiring",
-        "career",
-        "careers"
-    }
-
-    article_words = {
-        "article",
-        "articles",
-        "blog",
-        "blogs",
-        "news"
-    }
-
-    professional_words = {
-        "candidate",
-        "profile",
-        "resume",
-        "cv",
-        "person",
-        "who"
-    }
-
-    company_words = {
-        "company",
-        "companies",
-        "hotel",
-        "hotels",
-        "group",
-        "restaurant",
-        "restaurants"
-    }
-
-    if tokens.intersection(job_words):
-
-        category = "job"
-
-    elif tokens.intersection(article_words):
-
-        category = "article"
-
-    elif tokens.intersection(professional_words):
-
-        category = "professional"
-
-    elif tokens.intersection(company_words):
-
-        category = "company"
-
-    elif category == "general" and 1 < len(tokens) <= 3:
+    q_lower = q.lower()
+    
+    if "award" in q_lower or "awards" in q_lower:
+        category = "awards"
+        print(f"DEBUG: Award keyword detected! Category locked to: {category}", flush=True)
         
-        if not tokens.intersection(company_words):
+    elif "supplier" in q_lower or "suppliers" in q_lower:
+        category = ["supplier", "company"] 
+        print(f"DEBUG: Supplier/Company keyword detected! Category: {category}", flush=True)
+        
+    elif "event" in q_lower or "events" in q_lower:
+        category = "event"
+        print(f"DEBUG: Event keyword detected! Category locked to: {category}", flush=True)
+
+    else:
+
+        job_words = {
+            "job",
+            "jobs",
+            "vacancy",
+            "vacancies",
+            "hiring",
+            "career",
+            "careers"
+        }
+
+        article_words = {
+            "article",
+            "articles",
+            "blog",
+            "blogs",
+            "news"
+        }
+
+        professional_words = {
+            "candidate",
+            "profile",
+            "resume",
+            "cv",
+            "person",
+            "who"
+        }
+
+        company_words = {
+            "company",
+            "companies",
+            "hotel",
+            "hotels",
+            "group",
+            "restaurant",
+            "restaurants"
+        }
+
+        if tokens.intersection(job_words):
+
+            category = "job"
+
+        elif tokens.intersection(article_words):
+
+            category = "article"
+
+        elif tokens.intersection(professional_words):
+
             category = "professional"
 
-    elif category_counter:
+        elif tokens.intersection(company_words):
 
-        category = (
-            category_counter
-            .most_common(1)[0][0]
-        )
+            category = "company"
+
+        elif category == "general" and 1 < len(tokens) <= 3:
+            
+            if not tokens.intersection(company_words):
+                category = "professional"
+
+        elif category_counter:
+
+            category = (
+                category_counter
+                .most_common(1)[0][0]
+            )
 
     faq_words = {
         "how",
@@ -1656,6 +1672,8 @@ def elastic_search_v2(query_data, category):
             "profile_country"
         )
     )
+    
+    detected_locations = query_data.get("locations", [])
 
     if not normalized_query:
         return []
@@ -1695,16 +1713,33 @@ def elastic_search_v2(query_data, category):
             }
         })
 
-    for loc in query_data.get("locations", []):
-
-        should_clauses.append({
-            "match": {
-                "location": {
-                    "query": loc,
-                    "boost": 4
+    if detected_locations:
+        location_filters = []
+        for loc in detected_locations:
+            location_filters.append({
+                "match": {
+                    "location": loc.lower() 
                 }
+            })
+        
+        filters.append({
+            "bool": {
+                "should": location_filters,
+                "minimum_should_match": 1
             }
         })
+        print(f"DEBUG: Flexible Location Filter Applied: {detected_locations}", flush=True)
+
+    elif query_data.get("locations"): 
+        for loc in query_data.get("locations"):
+            should_clauses.append({
+                "match": {
+                    "location": {
+                        "query": loc,
+                        "boost": 4
+                    }
+                }
+            })
     
     if profile_country:
 
@@ -1721,8 +1756,8 @@ def elastic_search_v2(query_data, category):
     if category:
 
         filters.append({
-            "term": {
-                "category": category
+            "terms": {
+                "category": category if isinstance(category, list) else [category]
             }
         })
 
@@ -2333,8 +2368,8 @@ def load_faiss_only():
             category = "event"
         elif "article" in category_raw or "blog" in category_raw:
             category = "article"
-        elif "award" in category_raw:
-            category = "award"
+        elif "awards" in category_raw:
+            category = "awards"
         elif "faq" in category_raw:
             category = "faq"
         else:
