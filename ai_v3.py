@@ -185,7 +185,7 @@ ASSISTANT:
     full = ""
 
     try:
-
+        print(f"DEBUG: Starting Ollama stream for intent: {intent}", flush=True)
         async with httpx.AsyncClient(
             timeout=None
         ) as client:
@@ -203,6 +203,10 @@ ASSISTANT:
                     }
                 }
             ) as response:
+                
+                if response.status_code != 200:
+                    print(f"❌ OLLAMA ERROR CODE: {response.status_code}", flush=True)
+                    return ""
 
                 async for line in response.aiter_lines():
 
@@ -214,6 +218,7 @@ ASSISTANT:
                         data = json.loads(line)
 
                     except:
+                        print(f"DEBUG: Skipped invalid JSON line: {line[:50]}", flush=True)
                         continue
 
                     token = data.get("response")
@@ -228,8 +233,9 @@ ASSISTANT:
                         })
 
     except Exception as e:
-
-        print("❌ STREAM ERROR:", e)
+        import traceback
+        print("❌ STREAM ERROR:", e,flush=True)
+        traceback.print_exc()
 
         await safe_send(ws, {
             "type": "stream",
