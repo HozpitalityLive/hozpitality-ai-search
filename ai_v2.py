@@ -1430,6 +1430,17 @@ def expand_query_llm(query: str):
             "restaurants"
         }
 
+        faq_words = {
+            "how",
+            "what",
+            "why",
+            "guide",
+            "steps",
+            "process",
+            "tutorial",
+            "help"
+        }
+
         if tokens.intersection(job_words):
 
             category = "job"
@@ -1445,6 +1456,10 @@ def expand_query_llm(query: str):
         elif tokens.intersection(company_words):
 
             category = "company"
+
+        elif tokens.intersection(faq_words):
+            category = "faq"
+            print(f"DEBUG: FAQ detected, category: {category}", flush=True)
 
         elif category == "general" and 1 < len(tokens) <= 3:
             
