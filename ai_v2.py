@@ -1438,7 +1438,9 @@ def expand_query_llm(query: str):
             "steps",
             "process",
             "tutorial",
-            "help"
+            "help",
+            "memberships",
+            "membership"
         }
 
         if tokens.intersection(job_words):
@@ -1481,7 +1483,9 @@ def expand_query_llm(query: str):
         "steps",
         "process",
         "tutorial",
-        "help"
+        "help",
+        "memberships",
+        "membership"
     }
 
     greeting_words = {
