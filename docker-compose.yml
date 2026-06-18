@@ -39,13 +39,13 @@ services:
     restart: always
 
   ollama:
-    image: ollama/ollama
+    image: ollama/ollama:0.9.6
     container_name: ai-ollama
     ports:
       - "11434:11434"
     volumes:
       - .:/app
-      - ollama_data:/root/.ollama   
+      - ollama_data:/root/.ollama
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     runtime: nvidia
