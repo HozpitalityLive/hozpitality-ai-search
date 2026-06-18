@@ -1712,15 +1712,6 @@ def elastic_search_v2(query_data, category):
         }
     })
 
-    should_clauses.append({
-        "match_phrase": {
-            "title": {
-                "query": normalized_query,
-                "boost": 20 
-            }
-        }
-    })
-
     for role in query_data.get("roles", []):
 
         should_clauses.append({
@@ -1789,14 +1780,46 @@ def elastic_search_v2(query_data, category):
             }
         })
 
+    # body = {
+    #     "size": 30,
+    #     "query": {
+    #         "bool": {
+    #             "must": must_clauses,
+    #             "should": should_clauses,
+    #             "filter": filters,
+    #             "minimum_should_match": 0
+    #         }
+    #     }
+    # }
+
     body = {
         "size": 30,
         "query": {
             "bool": {
-                "must": must_clauses,
-                "should": should_clauses,
-                "filter": filters,
-                "minimum_should_match": 0
+                "must": [
+                    {
+                        "bool": {
+                            "should": [
+                                {
+                                    "bool": {
+                                        "must": must_clauses,
+                                        "filter": filters
+                                    }
+                                },
+                                {
+                                    "match_phrase": {
+                                        "title": {
+                                            "query": normalized_query,
+                                            "boost": 500
+                                        }
+                                    }
+                                }
+                            ],
+                            "minimum_should_match": 1
+                        }
+                    }
+                ],
+                "should": should_clauses
             }
         }
     }
