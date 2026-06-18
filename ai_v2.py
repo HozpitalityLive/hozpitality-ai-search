@@ -1712,6 +1712,15 @@ def elastic_search_v2(query_data, category):
         }
     })
 
+    should_clauses.append({
+        "match_phrase": {
+            "title": {
+                "query": normalized_query,
+                "boost": 20 
+            }
+        }
+    })
+
     for role in query_data.get("roles", []):
 
         should_clauses.append({
