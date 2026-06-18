@@ -1809,11 +1809,10 @@ def elastic_search_v2(query_data, category):
                                     }
                                 },
                                 {
-                                    "match_phrase": {
-                                        "title": {
-                                            "query": normalized_query,
-                                            "boost": 500,
-                                            "slop": 0
+                                    "term": {
+                                    "title.keyword": {
+                                        "value": normalized_query,
+                                        "boost": 500
                                         }
                                     }
                                 }
