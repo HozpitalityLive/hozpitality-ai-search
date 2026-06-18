@@ -1440,7 +1440,8 @@ def expand_query_llm(query: str):
             "tutorial",
             "help",
             "memberships",
-            "membership"
+            "membership",
+            "artifacts"
         }
 
         if tokens.intersection(job_words):
@@ -1485,7 +1486,8 @@ def expand_query_llm(query: str):
         "tutorial",
         "help",
         "memberships",
-        "membership"
+        "membership",
+        "artifacts"
     }
 
     greeting_words = {
@@ -1807,11 +1809,10 @@ def elastic_search_v2(query_data, category):
                                     }
                                 },
                                 {
-                                    "match_phrase": {
-                                        "title": {
-                                            "query": normalized_query,
-                                            "boost": 500,
-                                            "slop": 0
+                                    "term": {
+                                        "title.keyword": {
+                                            "value": normalized_query,
+                                            "boost": 500
                                         }
                                     }
                                 }
