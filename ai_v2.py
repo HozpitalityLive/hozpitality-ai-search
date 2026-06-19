@@ -1850,7 +1850,7 @@ def elastic_search_v2(query_data, category):
                     },
                     *should_clauses 
                 ],
-                "minimum_should_match": 1
+                "minimum_should_match": 0
             }
         }
     }
