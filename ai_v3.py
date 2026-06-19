@@ -497,7 +497,15 @@ async def handle_search(
                 url = f"https://www.hozpitality.com/awards/"
 
             elif result_category == "product":
-                url = f"https://www.hozpitality.com/marketplace/product-details/{sub_cat}/none/{slug}/{doc_id}"
+                parts = slug.strip("/").split("/")
+                product_slug = parts[-1] if len(parts) > 0 else slug
+                
+                sub_cat = r.get("sub_category")
+                if not sub_cat or sub_cat == "none":
+                    sub_cat = parts[0] if len(parts) > 0 else "none"
+
+                url = f"https://www.hozpitality.com/marketplace/product-details/{sub_cat}/{product_slug}"
+                
 
             else:
 
