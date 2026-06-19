@@ -467,6 +467,9 @@ async def handle_search(
                 or ""
             )
 
+            doc_id = r.get("id") or r.get("_id") or "0"
+            sub_cat = r.get("sub_category", "none")
+
             if result_category == "job":
 
                 url = (
@@ -493,12 +496,17 @@ async def handle_search(
             elif result_category == "awards":
                 url = f"https://www.hozpitality.com/awards/"
 
+            elif result_category == "product":
+                url = f"https://www.hozpitality.com/marketplace/product-details/{sub_cat}/none/{slug}/{doc_id}"
+
             else:
 
                 url = (
                     "https://www.hozpitality.com/"
                     f"{slug}"
                 )
+
+            print(f"DEBUGGING URL: Category={result_category} | Slug={slug} | SubCat={r.get('sub_category', 'none')} | ID={r.get('id', r.get('_id', '0'))} | FINAL_URL={url}", flush=True)
 
             clean_results.append({
 
