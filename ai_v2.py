@@ -1226,25 +1226,23 @@ def expand_query_llm(query: str):
             ],
 
             "query": {
-
-                "multi_match": {
-
-                    "query": q,
-
-                    "fields": [
-
-                        "title^5",
-
-                        "ai_keywords^4",
-
-                        "location^3",
-
-                        "content"
-                    ],
-
-                    "operator": "or",
-
-                    "fuzziness": "AUTO"
+                "bool": {
+                    "must": {
+                        "multi_match": {
+                            "query": q,
+                            "fields": [
+                                "title^5",
+                                "ai_keywords^4",
+                                "location^3",
+                                "content"
+                            ],
+                            "operator": "or",
+                            "fuzziness": "AUTO"
+                        }
+                    },
+                    "must_not": [
+                        { "term": { "category": "supplier" } }
+                    ]
                 }
             }
         }
@@ -1384,8 +1382,8 @@ def expand_query_llm(query: str):
         print(f"DEBUG: Award keyword detected! Category locked to: {category}", flush=True)
         
     elif "supplier" in q_lower or "suppliers" in q_lower:
-        category = ["supplier", "company"] 
-        print(f"DEBUG: Supplier/Company keyword detected! Category: {category}", flush=True)
+        category = "company"
+        print(f"DEBUG: Company keyword detected! Category: {category}", flush=True)
         
     elif "event" in q_lower or "events" in q_lower:
         category = "event"
