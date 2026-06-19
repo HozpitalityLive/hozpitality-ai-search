@@ -1829,21 +1829,13 @@ def elastic_search_v2(query_data, category):
         "size": 30,
         "query": {
             "bool": {
-                "must": [
-                    {
-                        "bool": {
-                            "must": must_clauses,
-                            "filter": filters
-                        }
-                    }
-                ],
+                "must": must_clauses,
+                "filter": filters,
                 "should": [
                     {
-                        "match": {
+                        "match_phrase": {
                             "title": {
                                 "query": normalized_query,
-                                "operator": "and",
-                                "minimum_should_match": "100%",
                                 "boost": 1000 
                             }
                         }
