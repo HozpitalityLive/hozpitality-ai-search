@@ -1792,6 +1792,39 @@ def elastic_search_v2(query_data, category):
     #     }
     # }
 
+    # body = {
+    #     "size": 30,
+    #     "query": {
+    #         "bool": {
+    #             "must": [
+    #                 {
+    #                     "bool": {
+    #                         "should": [
+    #                             {
+    #                                 "bool": {
+    #                                     "must": must_clauses,
+    #                                     "filter": filters
+    #                                 }
+    #                             },
+    #                             {
+    #                                 "match_phrase": {
+    #                                     "title": {
+    #                                         "query": normalized_query,
+    #                                         "boost": 500,
+    #                                         "slop": 0
+    #                                     }
+    #                                 }
+    #                             }
+    #                         ],
+    #                         "minimum_should_match": 1
+    #                     }
+    #                 }
+    #             ],
+    #             "should": should_clauses
+    #         }
+    #     }
+    # }
+
     body = {
         "size": 30,
         "query": {
@@ -1799,28 +1832,25 @@ def elastic_search_v2(query_data, category):
                 "must": [
                     {
                         "bool": {
-                            "should": [
-                                {
-                                    "bool": {
-                                        "must": must_clauses,
-                                        "filter": filters
-                                    }
-                                },
-                                {
-                                    "match_phrase": {
-                                        "title": {
-                                            "query": normalized_query,
-                                            "boost": 500,
-                                            "slop": 0
-                                        }
-                                    }
-                                }
-                            ],
-                            "minimum_should_match": 1
+                            "must": must_clauses,
+                            "filter": filters
                         }
                     }
                 ],
-                "should": should_clauses
+                "should": [
+                    {
+                        "match": {
+                            "title": {
+                                "query": normalized_query,
+                                "operator": "and",
+                                "minimum_should_match": "100%",
+                                "boost": 1000 
+                            }
+                        }
+                    },
+                    *should_clauses 
+                ],
+                "minimum_should_match": 1
             }
         }
     }
