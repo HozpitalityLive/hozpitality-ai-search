@@ -1741,7 +1741,7 @@ def elastic_search_v2(query_data, category):
         })
 
     LOCATION_SYNONYMS = {
-        "uae": ["dubai", "abu dhabi", "sharjah", "uae", "united arab emirates"]
+        "uae": ["Dubai - United Arab Emirates, United Arab Emirates","dubai", "abu dhabi", "sharjah", "uae", "united arab emirates"]
     }
 
     if detected_locations:
@@ -1752,8 +1752,9 @@ def elastic_search_v2(query_data, category):
             
             for term in search_terms:
                 location_filters.append({
-                    "match": {
-                        "location": term
+                    "query_string": {
+                        "default_field": "location",
+                        "query": f"\"{term}\"~2"  
                     }
                 })
         
