@@ -1752,9 +1752,11 @@ def elastic_search_v2(query_data, category):
             
             for term in search_terms:
                 location_filters.append({
-                    "query_string": {
-                        "default_field": "location",
-                        "query": f"\"{term}\"~2"  
+                    "match": {
+                        "location": {
+                            "query": term,
+                            "operator": "and"  
+                        }
                     }
                 })
         
