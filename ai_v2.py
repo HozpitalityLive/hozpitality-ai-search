@@ -1792,6 +1792,44 @@ def elastic_search_v2(query_data, category):
     #     }
     # }
 
+    # body = {
+    #     "size": 30,
+    #     "query": {
+    #         "bool": {
+    #             "must": [
+    #                 {
+    #                     "bool": {
+    #                         "should": [
+    #                             {
+    #                                 "bool": {
+    #                                     "must": must_clauses,
+    #                                     "filter": filters
+    #                                 }
+    #                             },
+    #                             {
+    #                                 "match_phrase": {
+    #                                     "title": {
+    #                                         "query": normalized_query,
+    #                                         "boost": 500,
+    #                                         "slop": 0
+    #                                     }
+    #                                 }
+    #                             }
+    #                         ],
+    #                         "minimum_should_match": 1
+    #                     }
+    #                 }
+    #             ],
+    #             "should": should_clauses
+    #         }
+    #     }
+    # }
+
+    print(f"DEBUG: Category Filters: {json.dumps(cat_filters, indent=2)}", flush=True)
+    print(f"DEBUG: Location Filters: {json.dumps(loc_filters, indent=2)}", flush=True)
+    cat_filters = [f for f in filters if "category" in f.get("terms", {})]
+    loc_filters = [f for f in filters if "category" not in f.get("terms", {})]
+
     body = {
         "size": 30,
         "query": {
@@ -1803,16 +1841,23 @@ def elastic_search_v2(query_data, category):
                                 {
                                     "bool": {
                                         "must": must_clauses,
-                                        "filter": filters
+                                        "filter": cat_filters + loc_filters 
                                     }
                                 },
                                 {
-                                    "match_phrase": {
-                                        "title": {
-                                            "query": normalized_query,
-                                            "boost": 500,
-                                            "slop": 0
-                                        }
+                                    "bool": {
+                                        "must": [
+                                            {
+                                                "match_phrase": {
+                                                    "title": {
+                                                        "query": normalized_query,
+                                                        "boost": 500,
+                                                        "slop": 0
+                                                    }
+                                                }
+                                            }
+                                        ],
+                                        "filter": loc_filters 
                                     }
                                 }
                             ],
