@@ -1694,6 +1694,14 @@ def elastic_search_v2(query_data, category):
     
     detected_locations = query_data.get("locations", [])
 
+    if not detected_locations:
+        query_str = normalized_query.lower()
+        if "uae" in query_str or "united arab emirates" in query_str:
+            detected_locations = ["uae"]
+        elif "india" in query_str:
+            detected_locations = ["india"]
+        print(f"DEBUG: Fallback location detection: {detected_locations}", flush=True)
+
     if not normalized_query:
         return []
 
