@@ -1732,14 +1732,22 @@ def elastic_search_v2(query_data, category):
             }
         })
 
+    LOCATION_SYNONYMS = {
+        "uae": ["dubai", "abu dhabi", "sharjah", "uae", "united arab emirates"]
+    }
+
     if detected_locations:
         location_filters = []
         for loc in detected_locations:
-            location_filters.append({
-                "match": {
-                    "location": loc.lower() 
-                }
-            })
+            loc_lower = loc.lower()
+            search_terms = LOCATION_SYNONYMS.get(loc_lower, [loc_lower])
+            
+            for term in search_terms:
+                location_filters.append({
+                    "match": {
+                        "location": term
+                    }
+                })
         
         filters.append({
             "bool": {
