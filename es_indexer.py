@@ -184,7 +184,11 @@ def create_index():
 
                     "entity_type": {
                         "type": "keyword"
-                    }
+                    },
+                    "is_EP": { "type": "boolean" },
+                    "is_SP": { "type": "boolean" },
+                    "is_GP": { "type": "boolean" },
+                    "is_PREMIUM": { "type": "boolean" }
                 }
             }
         },
@@ -253,22 +257,17 @@ def run_reindex():
         cur = conn.cursor()
 
         cur.execute("""
-
-            SELECT
-
-                id,
-                title,
-                content,
-                category_text,
-                location_text,
-                slug,
-                user_name,
-                ai_keywords
-
-            FROM master_search_mastersearchindex
-
-            WHERE is_live = TRUE
-
+            SELECT 
+                m.id, m.title, m.content, m.category_text, m.location_text, 
+                m.slug, m.user_name, m.ai_keywords,
+                COALESCE(pt."is_EP", FALSE) as is_ep,
+                COALESCE(pt."is_SP", FALSE) as is_sp,
+                COALESCE(pt."is_GP", FALSE) as is_gp,
+                COALESCE(pt."is_PREMIUM", FALSE) as is_premium
+            FROM master_search_mastersearchindex m
+            LEFT JOIN user_accounts u ON m.object_id = u.id
+            LEFT JOIN base_packagetype pt ON u.package_id = pt.id
+            WHERE m.is_live = TRUE
         """)
 
         rows = cur.fetchall()
@@ -325,7 +324,11 @@ def run_reindex():
                         ai_keywords,
 
                     "entity_type":
-                        entity_type
+                        entity_type,
+                    "is_EP": bool(r[8]),
+                    "is_SP": bool(r[9]),
+                    "is_GP": bool(r[10]),
+                    "is_PREMIUM": bool(r[11])
                 }
             })
 
