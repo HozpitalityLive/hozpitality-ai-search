@@ -1825,10 +1825,11 @@ def elastic_search_v2(query_data, category):
     #     }
     # }
 
-    print(f"DEBUG: Category Filters: {json.dumps(cat_filters, indent=2)}", flush=True)
-    print(f"DEBUG: Location Filters: {json.dumps(loc_filters, indent=2)}", flush=True)
     cat_filters = [f for f in filters if "category" in f.get("terms", {})]
     loc_filters = [f for f in filters if "category" not in f.get("terms", {})]
+
+    print(f"DEBUG: Category Filters: {json.dumps(cat_filters, indent=2)}", flush=True)
+    print(f"DEBUG: Location Filters: {json.dumps(loc_filters, indent=2)}", flush=True)
 
     body = {
         "size": 30,
