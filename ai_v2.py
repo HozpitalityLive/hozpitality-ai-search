@@ -1899,7 +1899,7 @@ def elastic_search_v2(query_data, category):
                 },
                 "functions": boost_functions, 
                 "score_mode": "multiply",    
-                "boost_mode": "sum"           
+                "boost_mode": "multiply"           
             }
         }
     }
