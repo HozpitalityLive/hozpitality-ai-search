@@ -1850,42 +1850,56 @@ def elastic_search_v2(query_data, category):
     print(f"DEBUG: Category Filters: {json.dumps(cat_filters, indent=2)}", flush=True)
     print(f"DEBUG: Location Filters: {json.dumps(loc_filters, indent=2)}", flush=True)
 
+    boost_functions = [
+        {"filter": {"term": {"is_EP": True}}, "weight": 5.0},
+        {"filter": {"term": {"is_SP": True}}, "weight": 4.0},
+        {"filter": {"term": {"is_GP": True}}, "weight": 3.0},
+        {"filter": {"term": {"is_PREMIUM": True}}, "weight": 2.0}
+    ]
+
     body = {
         "size": 30,
         "query": {
-            "bool": {
-                "must": [
-                    {
-                        "bool": {
-                            "should": [
-                                {
-                                    "bool": {
-                                        "must": must_clauses,
-                                        "filter": cat_filters + loc_filters 
-                                    }
-                                },
-                                {
-                                    "bool": {
-                                        "must": [
-                                            {
-                                                "match_phrase": {
-                                                    "title": {
-                                                        "query": normalized_query,
-                                                        "boost": 500,
-                                                        "slop": 0
-                                                    }
-                                                }
+            "function_score": { 
+                "query": {
+                    "bool": {  
+                        "must": [
+                            {
+                                "bool": {
+                                    "should": [
+                                        {
+                                            "bool": {
+                                                "must": must_clauses,
+                                                "filter": cat_filters + loc_filters 
                                             }
-                                        ],
-                                        "filter": loc_filters 
-                                    }
+                                        },
+                                        {
+                                            "bool": {
+                                                "must": [
+                                                    {
+                                                        "match_phrase": {
+                                                            "title": {
+                                                                "query": normalized_query,
+                                                                "boost": 500,
+                                                                "slop": 0
+                                                            }
+                                                        }
+                                                    }
+                                                ],
+                                                "filter": loc_filters 
+                                            }
+                                        }
+                                    ],
+                                    "minimum_should_match": 1
                                 }
-                            ],
-                            "minimum_should_match": 1
-                        }
+                            }
+                        ],
+                        "should": should_clauses
                     }
-                ],
-                "should": should_clauses
+                },
+                "functions": boost_functions, 
+                "score_mode": "multiply",    
+                "boost_mode": "sum"           
             }
         }
     }
