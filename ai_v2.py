@@ -1851,7 +1851,7 @@ def elastic_search_v2(query_data, category):
     print(f"DEBUG: Location Filters: {json.dumps(loc_filters, indent=2)}", flush=True)
 
     boost_functions = [
-        {"filter": {"term": {"is_EP": True}}, "weight": 2.0},
+        {"filter": {"term": {"is_EP": True}}, "weight": 3.0},
         {"filter": {"term": {"is_SP": True}}, "weight": 1.7},
         {"filter": {"term": {"is_GP": True}}, "weight": 1.4},
         {"filter": {"term": {"is_PREMIUM": True}}, "weight": 1.2}
@@ -1933,7 +1933,11 @@ def elastic_search_v2(query_data, category):
             print("➡️ ES HIT:", {
                 "title": src.get("title"),
                 "category": src.get("category"),
-                "score": hit["_score"]
+                "score": hit["_score"],
+                "is_EP": src.get("is_EP", False),
+                "is_SP": src.get("is_SP", False),
+                "is_GP": src.get("is_GP", False),
+                "is_PREMIUM": src.get("is_PREMIUM", False)
             }, flush=True)
 
             doc = src.copy()
