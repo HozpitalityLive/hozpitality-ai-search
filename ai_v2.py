@@ -1799,51 +1799,6 @@ def elastic_search_v2(query_data, category):
             }
         })
 
-    # body = {
-    #     "size": 30,
-    #     "query": {
-    #         "bool": {
-    #             "must": must_clauses,
-    #             "should": should_clauses,
-    #             "filter": filters,
-    #             "minimum_should_match": 0
-    #         }
-    #     }
-    # }
-
-    # body = {
-    #     "size": 30,
-    #     "query": {
-    #         "bool": {
-    #             "must": [
-    #                 {
-    #                     "bool": {
-    #                         "should": [
-    #                             {
-    #                                 "bool": {
-    #                                     "must": must_clauses,
-    #                                     "filter": filters
-    #                                 }
-    #                             },
-    #                             {
-    #                                 "match_phrase": {
-    #                                     "title": {
-    #                                         "query": normalized_query,
-    #                                         "boost": 500,
-    #                                         "slop": 0
-    #                                     }
-    #                                 }
-    #                             }
-    #                         ],
-    #                         "minimum_should_match": 1
-    #                     }
-    #                 }
-    #             ],
-    #             "should": should_clauses
-    #         }
-    #     }
-    # }
-
     cat_filters = [f for f in filters if "category" in f.get("terms", {})]
     loc_filters = [f for f in filters if "category" not in f.get("terms", {})]
 
@@ -1898,8 +1853,8 @@ def elastic_search_v2(query_data, category):
                     }
                 },
                 "functions": boost_functions, 
-                "score_mode": "multiply",    
-                "boost_mode": "multiply"           
+                "score_mode": "sum",    
+                "boost_mode": "sum"           
             }
         }
     }
