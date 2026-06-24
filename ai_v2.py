@@ -1806,10 +1806,10 @@ def elastic_search_v2(query_data, category):
     print(f"DEBUG: Location Filters: {json.dumps(loc_filters, indent=2)}", flush=True)
 
     boost_functions = [
-        {"filter": {"term": {"is_EP": True}}, "weight": 5.0},
-        {"filter": {"term": {"is_SP": True}}, "weight": 3.0},
-        {"filter": {"term": {"is_GP": True}}, "weight": 3.0},
-        {"filter": {"term": {"is_PREMIUM": True}}, "weight": 3.0}
+        {"filter": {"term": {"is_EP": True}}, "weight": 1.5},
+        {"filter": {"term": {"is_SP": True}}, "weight": 1.2},
+        {"filter": {"term": {"is_GP": True}}, "weight": 1.2},
+        {"filter": {"term": {"is_PREMIUM": True}}, "weight": 1.1}
     ]
 
     body = {
@@ -1835,7 +1835,7 @@ def elastic_search_v2(query_data, category):
                                                         "match_phrase": {
                                                             "title": {
                                                                 "query": normalized_query,
-                                                                "boost": 500,
+                                                                "boost": 30,
                                                                 "slop": 0
                                                             }
                                                         }
@@ -1853,8 +1853,8 @@ def elastic_search_v2(query_data, category):
                     }
                 },
                 "functions": boost_functions, 
-                "score_mode": "sum",    
-                "boost_mode": "sum"           
+                "score_mode": "multiply",    
+                "boost_mode": "multiply"           
             }
         }
     }
@@ -1885,6 +1885,16 @@ def elastic_search_v2(query_data, category):
 
             src = hit["_source"]
 
+            final_score = hit["_score"]
+            
+            weight = 1.0
+            if src.get("is_EP"): weight = 1.5 
+            elif src.get("is_SP") or src.get("is_GP"): weight = 1.2
+            elif src.get("is_PREMIUM"): weight = 1.1
+            
+            
+            bm25_relevance = final_score / weight
+
             print("➡️ ES HIT:", {
                 "title": src.get("title"),
                 "category": src.get("category"),
@@ -1892,7 +1902,9 @@ def elastic_search_v2(query_data, category):
                 "is_EP": src.get("is_EP", False),
                 "is_SP": src.get("is_SP", False),
                 "is_GP": src.get("is_GP", False),
-                "is_PREMIUM": src.get("is_PREMIUM", False)
+                "is_PREMIUM": src.get("is_PREMIUM", False),
+                "bm25_relevance": round(bm25_relevance, 2), 
+                "weight_used": weight,
             }, flush=True)
 
             doc = src.copy()
