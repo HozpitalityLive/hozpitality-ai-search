@@ -1509,7 +1509,8 @@ def expand_query_llm(query: str):
         "companies",
         "chef",
         "waiter",
-        "manager"
+        "manager",
+        "role"
     }
 
     intent = "chat"
