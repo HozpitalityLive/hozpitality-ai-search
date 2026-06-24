@@ -1398,7 +1398,9 @@ def expand_query_llm(query: str):
             "vacancies",
             "hiring",
             "career",
-            "careers"
+            "careers",
+            "role",
+            "roles"
         }
 
         article_words = {
@@ -1509,8 +1511,7 @@ def expand_query_llm(query: str):
         "companies",
         "chef",
         "waiter",
-        "manager",
-        "role"
+        "manager"
     }
 
     intent = "chat"
