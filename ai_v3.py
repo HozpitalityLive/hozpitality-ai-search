@@ -150,6 +150,7 @@ RULES:
 - hospitality focused
 - no hallucinations
 - under 150 words
+- IMPORTANT: If your answer is getting long and hitting the limit, do not stop. Instead, summarize the remaining points into very short phrases to complete the answer gracefully before the limit. NEVER stop mid-sentence.
 
 MEMORY:
 {memory_text}
