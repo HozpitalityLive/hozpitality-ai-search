@@ -1,0 +1,47 @@
+from ai_v4.planner.intent import IntentDetector
+from ai_v4.planner.entities import EntityExtractor
+from ai_v4.planner.router import PlannerRouter
+from ai_v4.config.logger import logger
+
+class Planner:
+
+    def __init__(self):
+        self.intent = IntentDetector()
+        self.entities = EntityExtractor()
+        self.router = PlannerRouter()
+
+    async def create_plan(
+        self,
+        query: str
+    ):
+        
+        logger.info("[1/4] Creating execution plan...")
+
+        intent = await self.intent.detect(query)
+        entities = await self.entities.extract(query)
+        route = await self.router.route(
+            intent=intent,
+            entities=entities
+        )
+
+        plan = {
+            "query": query,
+            "intent": intent,
+            "entities": entities,
+            "route": route,
+            "search": {
+                "engines": [
+                    "elastic",
+                    "postgres"
+                ],
+                "limit": 20,
+                "rerank": True
+            },
+
+            "llm": {
+                "model": "llama3",
+                "temperature": 0.2
+            }
+        }
+
+        return plan
