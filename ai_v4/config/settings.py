@@ -8,21 +8,21 @@ class Settings(BaseSettings):
     DB_USER: str
     DB_PASSWORD: str
 
-    REDIS_HOST: str = "redis"
-    REDIS_PORT: int = 6379
+    REDIS_HOST: str
+    REDIS_PORT: int
 
-    ELASTIC_HOST: str = "http://elasticsearch:9200"
-    ELASTIC_INDEX: str = "hozpitality"
+    ELASTIC_HOST: str
+    ELASTIC_INDEX: str
 
-    OLLAMA_URL: str = "http://ollama:11434"
-    DEFAULT_MODEL: str = "llama3-hoz:latest"
+    OLLAMA_URL: str
+    DEFAULT_MODEL: str
 
     MAX_SEARCH_RESULTS: int = 20
     MAX_CONTEXT_RESULTS: int = 10
-
     WS_HEARTBEAT: int = 30
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 settings = Settings()
