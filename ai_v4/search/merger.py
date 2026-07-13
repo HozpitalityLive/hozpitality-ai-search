@@ -3,7 +3,7 @@ from ai_v4.config.logger import logger
 
 class SearchMerger:
 
-    def get_key(doc):
+    def get_key(self, doc):
 
         if doc.get("id"):
             return f"id:{doc['id']}"
