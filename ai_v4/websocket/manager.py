@@ -18,8 +18,6 @@ class ConnectionManager:
         user_id: int
     ):
 
-        await websocket.accept()
-
         async with self.lock:
 
             self.active_connections[user_id] = websocket

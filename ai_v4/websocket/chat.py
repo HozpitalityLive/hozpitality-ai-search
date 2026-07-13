@@ -19,17 +19,14 @@ async def ai_search(websocket: WebSocket):
 
     user_id = 0
 
+    await websocket.accept()
+
     try:
 
         first_message = await websocket.receive_text()
         payload = json.loads(first_message)
 
-        user_id = int(
-            payload.get(
-                "user_id",
-                0
-            )
-        )
+        user_id = int(payload.get("user_id", 0))
 
         await manager.connect(
             websocket,
@@ -56,14 +53,10 @@ async def ai_search(websocket: WebSocket):
 
     except WebSocketDisconnect:
         logger.info(
-            f"Disconnected User : {user_id}"
+            f"User Disconnected : {user_id}"
         )
-        await manager.disconnect(
-            user_id
-        )
+        await manager.disconnect(user_id)
 
     except Exception as e:
         logger.exception(e)
-        await manager.disconnect(
-            user_id
-        )
+        await manager.disconnect(user_id)
