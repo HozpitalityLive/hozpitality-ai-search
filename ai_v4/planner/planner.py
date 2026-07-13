@@ -39,7 +39,7 @@ class Planner:
             },
 
             "llm": {
-                "model": "llama3",
+                "model": "llama3-hoz:latest",
                 "temperature": 0.2
             }
         }
