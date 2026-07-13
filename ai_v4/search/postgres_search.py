@@ -24,41 +24,41 @@ class PostgresSearch:
                 cursor_factory=RealDictCursor
             )
 
-            sql = """
+            where = [
+                "is_live = TRUE",
+                "search_vector @@ plainto_tsquery(%s)"
+            ]
 
-                SELECT
+            params = [query]
 
-                    id,
-                    title,
-                    slug,
-                    category_text,
-                    location_text,
-                    content,
-                    ai_keywords,
-                    user_name,
-                    content_type_id,
-                    object_id
+            if filters and filters.get("category"):
+                where.append("category_text = %s")
+                params.append(filters["category"])
 
-                FROM master_search_mastersearchindex
+            params.append(limit)
 
-                WHERE
+            sql = f"""
+            SELECT
+                id,
+                title,
+                slug,
+                category_text,
+                location_text,
+                content,
+                ai_keywords,
+                user_name,
+                content_type_id,
+                object_id
 
-                    is_live = TRUE
+            FROM master_search_mastersearchindex
 
-                    AND search_vector @@ plainto_tsquery(%s)
+            WHERE {' AND '.join(where)}
 
-                LIMIT %s
-
+            LIMIT %s
             """
 
-            cur.execute(
-                sql,
-                (
-                    query,
-                    limit
-                )
-            )
-
+            cur.execute(sql, params)
+           
             rows = cur.fetchall()
 
             logger.info(
