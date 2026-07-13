@@ -39,6 +39,11 @@ class AIEngine:
             memory=memory
         )
 
+        logger.info("=" * 80)
+        logger.info("RAW SEARCH RESULTS")
+        logger.info(json.dumps(agent_output["results"], indent=2, default=str))
+        logger.info("=" * 80)
+
         logger.info(
             f"Agent : {agent_output['agent']}"
         )
