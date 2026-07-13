@@ -39,7 +39,10 @@ app.add_middleware(
 )
 
 
-app.include_router(websocket_router)
+app.include_router(
+    websocket_router,
+    prefix="/v4"
+)
 
 
 @app.get("/")
