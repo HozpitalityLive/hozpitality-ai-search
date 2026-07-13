@@ -20,12 +20,22 @@ class Brain:
 
         logger.info(f"Brain Thinking ({agent})")
 
+        logger.info("=" * 80)
+        logger.info("CONTEXT PASSED TO BRAIN")
+        logger.info(context)
+        logger.info("=" * 80)
+
         prompt = self.prompt_manager.build(
             agent=agent,
             query=query,
             context=context,
             memory=memory
         )
+
+        logger.info("=" * 80)
+        logger.info("PROMPT")
+        logger.info(prompt)
+        logger.info("=" * 80)
 
         async for chunk in self.ollama.stream(
             prompt=prompt,

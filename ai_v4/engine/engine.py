@@ -5,6 +5,7 @@ from ai_v4.planner.planner import Planner
 from ai_v4.services.agent_service import AgentService
 from ai_v4.context.builder import ContextBuilder
 from ai_v4.llm.response import ResponseGenerator
+import json
 
 
 class AIEngine:
@@ -51,6 +52,11 @@ class AIEngine:
             search_results=agent_output["results"],
             memory=memory
         )
+
+        logger.info("=" * 80)
+        logger.info("FINAL CONTEXT")
+        logger.info(json.dumps(context, indent=2, default=str))
+        logger.info("=" * 80)
 
         logger.info("Context Created")
   
