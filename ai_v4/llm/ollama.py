@@ -25,7 +25,8 @@ class OllamaClient:
         payload = {
             "model": model or settings.DEFAULT_MODEL,
             "prompt": prompt,
-            "stream": True
+            "stream": True,
+            "keep_alive": "24h"
         }
 
         async with self.client.stream(
