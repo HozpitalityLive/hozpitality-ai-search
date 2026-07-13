@@ -26,9 +26,6 @@ class OllamaClient:
 
         url = f"{self.base_url}/api/generate"
 
-        print(settings.OLLAMA_URL)
-        print(settings.DEFAULT_MODEL)
-
         payload = {
             "model": model or settings.DEFAULT_MODEL,
             "prompt": prompt,
@@ -36,16 +33,51 @@ class OllamaClient:
             "keep_alive": "24h"
         }
 
-        async with self.client.stream(
-            "POST",
-            url,
-            json=payload
-        ) as response:
+        logger.info("=" * 80)
+        logger.info("OLLAMA REQUEST")
+        logger.info(f"URL          : {url}")
+        logger.info(f"MODEL        : {payload['model']}")
+        logger.info(f"BASE URL     : {settings.OLLAMA_URL}")
+        logger.info(f"PROMPT CHARS : {len(prompt)}")
+        logger.info(f"STREAM       : {payload['stream']}")
+        logger.info("=" * 80)
 
-            async for line in response.aiter_lines():
-                if not line:
-                    continue
-                yield json.loads(line)
+        try:
+
+            async with self.client.stream(
+                "POST",
+                url,
+                json=payload
+            ) as response:
+
+                logger.info("=" * 80)
+                logger.info("OLLAMA RESPONSE")
+                logger.info(f"STATUS  : {response.status_code}")
+                logger.info(f"HEADERS : {dict(response.headers)}")
+                logger.info("=" * 80)
+
+                if response.status_code != 200:
+
+                    body = await response.aread()
+
+                    logger.error("OLLAMA ERROR")
+                    logger.error(body.decode(errors="ignore"))
+
+                    return
+
+                async for line in response.aiter_lines():
+
+                    if not line:
+                        continue
+
+                    logger.info(f"TOKEN: {line[:150]}")
+
+                    yield json.loads(line)
+
+        except Exception as e:
+
+            logger.exception("OLLAMA EXCEPTION")
+            raise
 
     
     async def generate(
