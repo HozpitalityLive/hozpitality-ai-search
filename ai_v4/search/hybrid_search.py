@@ -53,24 +53,13 @@ class HybridSearch:
             results=merged
         )
 
-        # Agent-specific filtering
-        if filters and filters.get("category"):
+        for r in reranked:
+            d = r["document"]
 
-            category = filters["category"].lower()
-
-            filtered = [
-                r for r in reranked
-                if (
-                    r["document"].get("category", "").lower() == category
-                    or
-                    r["document"].get("category_text", "").lower() == category
-                )
-            ]
-
-            if filtered:
-                logger.info(
-                    f"Filtered {len(filtered)} {category} results"
-                )
-                return filtered[:limit]
+            logger.info(
+                f"title={d.get('title')} "
+                f"category={d.get('category')} "
+                f"category_text={d.get('category_text')}"
+            )
 
         return reranked[:limit]
