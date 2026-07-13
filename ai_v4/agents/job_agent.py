@@ -2,6 +2,8 @@ from ai_v4.agents.base import BaseAgent
 
 from ai_v4.agents.job.filter_builder import JobFilterBuilder
 from ai_v4.agents.job.search import JobSearch
+from ai_v4.config.logger import logger
+from pprint import pformat
 
 
 class JobAgent(BaseAgent):
@@ -21,6 +23,11 @@ class JobAgent(BaseAgent):
         filters = self.builder.build(
             plan
         )
+
+        logger.info("=" * 80)
+        logger.info("JOB FILTERS")
+        logger.info(pformat(filters))
+        logger.info("=" * 80)
 
         results = await self.search.search_jobs(
             query=query,
