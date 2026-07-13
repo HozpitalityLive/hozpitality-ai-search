@@ -2,7 +2,11 @@ import json
 import httpx
 
 from ai_v4.config.logger import logger
+
 from ai_v4.config.settings import settings
+
+print(settings.OLLAMA_URL)
+print(settings.DEFAULT_MODEL)
 
 
 class OllamaClient:
@@ -21,6 +25,9 @@ class OllamaClient:
     ):
 
         url = f"{self.base_url}/api/generate"
+
+        print(settings.OLLAMA_URL)
+        print(settings.DEFAULT_MODEL)
 
         payload = {
             "model": model or settings.DEFAULT_MODEL,
