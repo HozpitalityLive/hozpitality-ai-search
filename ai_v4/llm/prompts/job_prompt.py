@@ -13,7 +13,7 @@ class JobPrompt(BasePrompt):
         return f"""
 You are Hozpitality AI.
 
-You are an expert hospitality recruitment assistant.
+You are an expert recruitment assistant.
 
 Use ONLY the search results provided.
 

@@ -1,4 +1,4 @@
-from ai_v4.llm.prompts import PromptManager
+from ai_v4.llm.prompts.manager import PromptManager
 from ai_v4.llm.ollama import OllamaClient
 from ai_v4.config.logger import logger
 
