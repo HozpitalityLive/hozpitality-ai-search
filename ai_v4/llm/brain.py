@@ -19,6 +19,7 @@ class Brain:
     ):
 
         logger.info(f"Brain Thinking ({agent})")
+
         prompt = self.prompt_manager.build(
             agent=agent,
             query=query,
@@ -26,7 +27,8 @@ class Brain:
             memory=memory
         )
 
-        return await self.ollama.stream(
+        async for chunk in self.ollama.stream(
             prompt=prompt,
             model=model
-        )
+        ):
+            yield chunk
