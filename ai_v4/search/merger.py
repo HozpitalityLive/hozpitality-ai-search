@@ -3,6 +3,22 @@ from ai_v4.config.logger import logger
 
 class SearchMerger:
 
+    def get_key(doc):
+
+        if doc.get("id"):
+            return f"id:{doc['id']}"
+
+        if doc.get("slug"):
+            return f"slug:{doc['slug']}"
+
+        if doc.get("content_type_id") and doc.get("object_id"):
+            return (
+                doc["content_type_id"],
+                doc["object_id"]
+            )
+
+        return id(doc)
+
     def merge(
         self,
         elastic_results: list,
@@ -24,10 +40,7 @@ class SearchMerger:
 
             doc = item["document"]
 
-            unique_key = (
-                doc.get("content_type_id"),
-                doc.get("object_id")
-            )
+            unique_key = self.get_key(doc)
 
             logger.info(
                 f"[ES {index}] "
