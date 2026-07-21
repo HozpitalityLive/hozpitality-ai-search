@@ -3,6 +3,7 @@ from fastapi import WebSocket
 from ai_v4.config.logger import logger
 from ai_v4.planner.planner import Planner
 from ai_v4.services.agent_service import AgentService
+from ai_v4.services.memory_service import MemoryService
 from ai_v4.context.builder import ContextBuilder
 from ai_v4.llm.response import ResponseGenerator
 import json
@@ -15,13 +16,17 @@ class AIEngine:
         self.agent_service = AgentService()
         self.context_builder = ContextBuilder()
         self.response = ResponseGenerator()
+        self.memory_service = MemoryService()
 
     async def execute(
         self,
+        user_id,
         websocket: WebSocket,
         query: str,
         memory=None
     ):
+        
+        memory = await self.memory_service.load(user_id)
 
         logger.info("=" * 80)
         logger.info("AI ENGINE STARTED")
@@ -43,7 +48,6 @@ class AIEngine:
             "query": query,
             "agent": agent_output["agent"],
             "filters": agent_output["filters"],
-            "results": agent_output["results"],
             "page": 1,
             "page_size": 5,
             "total": len(agent_output["results"])
@@ -64,7 +68,7 @@ class AIEngine:
 
         context = await self.context_builder.build(
             query=query,
-            search_results=agent_output["results"][:5],
+            search_results=agent_output["results"],
             memory=memory
         )
 
@@ -85,5 +89,21 @@ class AIEngine:
         )
 
         logger.info("AI ENGINE FINISHED")
+
+
+        memory["conversation"].append({
+            "role": "user",
+            "content": query
+        })
+
+        memory["conversation"].append({
+            "role": "assistant",
+            "content": response.get("intro", "")
+        })
+
+        await self.memory_service.save(
+            user_id,
+            memory
+        )
 
         return response

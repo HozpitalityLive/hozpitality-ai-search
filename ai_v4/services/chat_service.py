@@ -9,6 +9,7 @@ class ChatService:
 
     async def handle_message(
         self,
+        user_id:None,
         websocket: WebSocket,
         payload: dict
     ):
@@ -25,5 +26,6 @@ class ChatService:
 
         await self.engine.execute(
             websocket=websocket,
-            query=query
+            query=query,
+            user_id=user_id,
         )

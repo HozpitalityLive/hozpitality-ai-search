@@ -38,6 +38,7 @@ async def ai_search(websocket: WebSocket):
         )
 
         await chat_service.handle_message(
+            user_id,
             websocket,
             payload
         )
@@ -47,6 +48,7 @@ async def ai_search(websocket: WebSocket):
             payload = json.loads(message)
 
             await chat_service.handle_message(
+                user_id,
                 websocket,
                 payload
             )
