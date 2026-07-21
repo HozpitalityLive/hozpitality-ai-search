@@ -36,6 +36,23 @@ class AIEngine:
             query=query
         )
 
+        if plan["execution"]["type"] == "chat":
+            response = await self.response.generate(
+                websocket=websocket,
+                agent="chat",
+                query=query,
+                context={
+                    "query": query,
+                    "memory": memory,
+                    "documents": "",
+                    "results": []
+                },
+                memory=memory,
+                model=plan["llm"]["model"]
+            )
+
+            return response
+
         logger.info(f"Plan : {plan}")
 
         agent_output = await self.agent_service.execute(

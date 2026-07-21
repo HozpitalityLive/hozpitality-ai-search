@@ -2,6 +2,9 @@ from ai_v4.planner.intent import IntentDetector
 from ai_v4.planner.entities import EntityExtractor
 from ai_v4.planner.router import PlannerRouter
 from ai_v4.config.logger import logger
+from ai_v4.planner.clarification import ClarificationDetector
+from ai_v4.planner.intent import Intent
+
 
 class Planner:
 
@@ -9,6 +12,7 @@ class Planner:
         self.intent = IntentDetector()
         self.entities = EntityExtractor()
         self.router = PlannerRouter()
+        self.clarification = ClarificationDetector()
 
     async def create_plan(
         self,
@@ -24,6 +28,13 @@ class Planner:
             entities=entities
         )
 
+        execution = {
+            "type": "search"
+        }
+
+        if intent == Intent.GREETING:
+            execution["type"] = "chat"
+
         plan = {
             "query": query,
             "intent": intent,
@@ -36,6 +47,13 @@ class Planner:
                 ],
                 "limit": 20,
                 "rerank": True
+            },
+            "execution": execution,
+
+            "clarification": {
+                "required": False,
+                "question": None,
+                "missing": []
             },
 
             "llm": {

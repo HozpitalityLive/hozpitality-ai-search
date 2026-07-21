@@ -1,4 +1,5 @@
 from ai_v4.llm.prompts.job_prompt import JobPrompt
+from ai_v4.llm.prompts.chat_prompt import ChatPrompt
 # from ai_v4.llm.prompts.company_prompt import CompanyPrompt
 # from ai_v4.llm.prompts.professional_prompt import ProfessionalPrompt
 # from ai_v4.llm.prompts.article_prompt import ArticlePrompt
@@ -14,6 +15,7 @@ class PromptManager:
     def __init__(self):
 
         self.prompts = {
+            "chat": ChatPrompt(),
             "job": JobPrompt(),
             # "company": CompanyPrompt(),
             # "professional": ProfessionalPrompt(),
