@@ -41,11 +41,27 @@ class ResponseGenerator:
 
         try:
 
-            ai = json.loads(llm_response)
+            response = llm_response.strip()
+
+            if response.startswith("```json"):
+                response = response.replace("```json", "", 1)
+
+            if response.startswith("```"):
+                response = response.replace("```", "", 1)
+
+            if response.endswith("```"):
+                response = response[:-3]
+
+            response = response.strip()
+
+            ai = json.loads(response)
 
         except Exception:
 
             logger.exception("Invalid JSON from LLM")
+
+            logger.error("RAW RESPONSE:")
+            logger.error(repr(llm_response))
 
             ai = {
                 "intro": "I found matching results.",
