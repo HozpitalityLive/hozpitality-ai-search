@@ -32,7 +32,10 @@ class Planner:
             "type": "search"
         }
 
-        if intent == Intent.GREETING:
+        if intent in (
+            Intent.GREETING,
+            Intent.CHAT
+        ):
             execution["type"] = "chat"
 
         plan = {
