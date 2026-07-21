@@ -75,6 +75,18 @@ class ResponseGenerator:
 
             ai = json.loads(response)
 
+            intro = ai.get("intro")
+            description = ai.get("description")
+
+            if not intro and "response" in ai:
+                intro = ai["response"]
+                description = ""
+
+            ai["intro"] = intro or ""
+            ai["description"] = description or ""
+            ai.setdefault("follow_up", [])
+            ai.setdefault("intent", agent)
+
         except Exception:
 
             logger.exception("Invalid JSON from LLM")
