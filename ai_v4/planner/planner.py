@@ -28,6 +28,12 @@ class Planner:
             entities=entities
         )
 
+        clarification = await self.clarification.analyze(
+            query=query,
+            intent=intent,
+            entities=entities
+        )
+
         execution = {
             "type": "search"
         }
@@ -37,6 +43,9 @@ class Planner:
             Intent.CHAT
         ):
             execution["type"] = "chat"
+
+        elif clarification["required"]:
+            execution["type"] = "clarification"
 
         plan = {
             "query": query,
@@ -53,11 +62,7 @@ class Planner:
             },
             "execution": execution,
 
-            "clarification": {
-                "required": False,
-                "question": None,
-                "missing": []
-            },
+            "clarification": clarification,
 
             "llm": {
                 "model": "llama3-hoz:latest",

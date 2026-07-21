@@ -53,6 +53,22 @@ class AIEngine:
 
             return response
 
+        elif plan["execution"]["type"] == "clarification":
+
+            await websocket.send_json({
+                "type": "clarification",
+                "question": plan["clarification"]["question"]
+            })
+
+            memory["pending_query"] = query
+
+            await self.memory_service.save(
+                user_id,
+                memory
+            )
+
+            return
+
         logger.info(f"Plan : {plan}")
 
         agent_output = await self.agent_service.execute(
