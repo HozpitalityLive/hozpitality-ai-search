@@ -54,7 +54,15 @@ class ResponseGenerator:
 
             response = response.strip()
 
-            ai = json.loads(response)
+            start = response.find("{")
+            end = response.rfind("}")
+
+            if start == -1 or end == -1:
+                raise ValueError("No JSON object found in LLM response")
+
+            json_text = response[start:end + 1]
+
+            ai = json.loads(json_text)
 
         except Exception:
 

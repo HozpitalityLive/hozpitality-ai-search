@@ -76,7 +76,19 @@ Generate:
    - Exactly 3 relevant follow-up questions.
    - Keep each under 12 words.
 
-Return ONLY this JSON:
+Return ONLY a valid JSON object.
+Do NOT include:
+- "Here is the response"
+- Markdown
+- Triple backticks
+- Explanations
+- Notes
+
+
+The first character of your response MUST be '{{'
+The last character MUST be '}}'
+
+Output exactly this schema:
 
 {{
     "intent": "job_search",
@@ -88,4 +100,5 @@ Return ONLY this JSON:
         ""
     ]
 }}
+
 """
