@@ -39,6 +39,8 @@ class Brain:
         logger.info("DOCUMENTS")
         logger.info(context.get("documents"))
         logger.info("=" * 80)
+        logger.info("FINAL PROMPT")
+        logger.info(prompt)
 
         async for chunk in self.ollama.stream(
             prompt=prompt,
