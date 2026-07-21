@@ -22,6 +22,11 @@ class ResponseGenerator:
 
         logger.info("[4/4] Generating AI response...")
 
+        await websocket.send_json({
+            "type": "thinking",
+            "message": "Thinking..."
+        })
+
         llm_response = ""
 
         async for chunk in self.brain.think(
@@ -39,6 +44,11 @@ class ResponseGenerator:
 
         logger.info("LLM Response Received")
 
+        logger.info("=" * 80)
+        logger.info("RAW LLM RESPONSE")
+        logger.info(llm_response)
+        logger.info("=" * 80)
+
         try:
 
             response = llm_response.strip()
@@ -54,24 +64,25 @@ class ResponseGenerator:
 
             response = response.strip()
 
+            # Extract JSON object
             start = response.find("{")
             end = response.rfind("}")
 
             if start == -1 or end == -1:
-                raise ValueError("No JSON object found in LLM response")
+                raise ValueError("No JSON object found.")
 
-            json_text = response[start:end + 1]
+            response = response[start:end + 1]
 
-            ai = json.loads(json_text)
+            ai = json.loads(response)
 
         except Exception:
 
             logger.exception("Invalid JSON from LLM")
-
             logger.error("RAW RESPONSE:")
             logger.error(repr(llm_response))
 
             ai = {
+                "intent": agent,
                 "intro": "I found matching results.",
                 "description": "I'm unable to generate a summary right now, but the search results are available below.",
                 "follow_up": []
@@ -79,7 +90,7 @@ class ResponseGenerator:
 
         await websocket.send_json({
             "type": "intro",
-            "intent": ai.get("intent", ""),
+            "intent": ai.get("intent", agent),
             "content": ai.get("intro", "")
         })
 
@@ -90,7 +101,7 @@ class ResponseGenerator:
 
         await websocket.send_json({
             "type": "results",
-            "intent": ai.get("intent", ""),
+            "intent": ai.get("intent", agent),
             "total": context.get("total", 0),
             "results": context.get("results", [])
         })
@@ -103,5 +114,7 @@ class ResponseGenerator:
         await websocket.send_json({
             "type": "done"
         })
+
+        logger.info("[4/4] Response sent successfully")
 
         return ai
