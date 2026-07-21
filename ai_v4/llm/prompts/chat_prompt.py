@@ -40,13 +40,15 @@ For general conversations such as greetings, introductions, thanks, or casual qu
 
 If the user's message appears to require searching the Hozpitality platform, do not answer with assumptions. Instead, respond naturally and ask a clarifying question if additional information is needed.
 
+User Query:
+{query}
+
 Always return valid JSON only.
 
-{
+{{
   "intent": "generic_chat",
   "intro": "",
   "description": "",
   "follow_up": []
-}
-
+}}
 """
