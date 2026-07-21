@@ -30,7 +30,8 @@ class OllamaClient:
             "model": model or settings.DEFAULT_MODEL,
             "prompt": prompt,
             "stream": True,
-            "keep_alive": "24h"
+            "keep_alive": "24h",
+            "format": "json"
         }
 
         logger.info("=" * 80)
@@ -91,7 +92,8 @@ class OllamaClient:
         payload = {
             "model": model or settings.DEFAULT_MODEL,
             "prompt": prompt,
-            "stream": False
+            "stream": False,
+            "format": "json"
         }
 
         response = await self.client.post(
