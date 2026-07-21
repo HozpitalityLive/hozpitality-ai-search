@@ -37,5 +37,9 @@ class JobAgent(BaseAgent):
         return {
             "agent": self.name,
             "filters": filters,
+            "query": query,
+            "total": len(results),
+            "page": 1,
+            "page_size": 5,
             "results": results
         }

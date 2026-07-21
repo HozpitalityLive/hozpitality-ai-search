@@ -39,6 +39,16 @@ class AIEngine:
             memory=memory
         )
 
+        memory["last_search"] = {
+            "query": query,
+            "agent": agent_output["agent"],
+            "filters": agent_output["filters"],
+            "results": agent_output["results"],
+            "page": 1,
+            "page_size": 5,
+            "total": len(agent_output["results"])
+        }
+
         logger.info("=" * 80)
         logger.info("RAW SEARCH RESULTS")
         logger.info(json.dumps(agent_output["results"], indent=2, default=str))
@@ -54,7 +64,7 @@ class AIEngine:
 
         context = await self.context_builder.build(
             query=query,
-            search_results=agent_output["results"],
+            search_results=agent_output["results"][:5],
             memory=memory
         )
 

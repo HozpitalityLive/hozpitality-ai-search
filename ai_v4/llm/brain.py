@@ -32,9 +32,12 @@ class Brain:
             memory=memory
         )
 
+        
         logger.info("=" * 80)
-        logger.info("PROMPT")
-        logger.info(prompt)
+        logger.info("LLM SUMMARY")
+        logger.info(context.get("summary"))
+        logger.info("DOCUMENTS")
+        logger.info(context.get("documents"))
         logger.info("=" * 80)
 
         async for chunk in self.ollama.stream(
