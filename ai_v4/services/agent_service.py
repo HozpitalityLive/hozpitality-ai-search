@@ -17,11 +17,11 @@ class AgentService:
             "job": JobAgent(),
             "company": CompanyAgent(),
             "professional": ProfessionalAgent(),
-            "article": ArticleAgent(),
-            "product": ProductAgent(),
-            "event": EventAgent(),
-            "award": AwardsAgent(),
-            "faq": FaqAgent()
+            # "article": ArticleAgent(),
+            # "product": ProductAgent(),
+            # "event": EventAgent(),
+            # "award": AwardsAgent(),
+            # "faq": FaqAgent()
         }
 
     async def execute(
