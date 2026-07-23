@@ -18,16 +18,24 @@ class QueryRewriter:
     ) -> str:
 
         prompt = f"""
-You are an AI query rewriting engine.
+You are an AI Query Rewriter.
 
-Your job is to merge a user's original request with their clarification
-answer into ONE complete search query.
+Your ONLY task is to combine the user's original request with their latest clarification answer into ONE complete search query.
 
-Do NOT answer the user.
+IMPORTANT RULES
 
-Do NOT explain anything.
-
-Return ONLY valid JSON.
+1. NEVER invent information.
+2. NEVER assume missing values.
+3. NEVER use values from the examples.
+4. ONLY use information explicitly provided in:
+   - Original Query
+   - Clarification Answer
+5. Preserve the user's intent.
+6. Remove duplicate words.
+7. Make the query natural and concise.
+8. Do NOT add locations, job titles, company names, dates, skills, experience, or any other information unless the user explicitly provided them.
+9. Return ONLY valid JSON.
+10. Do NOT explain your reasoning.
 
 Intent:
 {intent}
@@ -43,10 +51,12 @@ Previously Extracted Entities:
 
 Examples
 
+Example 1
+
 Original Query:
 Find a job
 
-Clarification:
+Clarification Answer:
 Waiter
 
 Output:
@@ -54,10 +64,12 @@ Output:
     "query": "Find waiter jobs"
 }}
 
+Example 2
+
 Original Query:
 Find waiter jobs
 
-Clarification:
+Clarification Answer:
 Dubai
 
 Output:
@@ -65,10 +77,12 @@ Output:
     "query": "Find waiter jobs in Dubai"
 }}
 
+Example 3
+
 Original Query:
 Show hotels
 
-Clarification:
+Clarification Answer:
 Abu Dhabi
 
 Output:
@@ -76,10 +90,24 @@ Output:
     "query": "Show hotels in Abu Dhabi"
 }}
 
-Return JSON ONLY.
+Now rewrite ONLY the following request.
+
+Original Query:
+{original_query}
+
+Clarification Answer:
+{clarification_answer}
+
+Remember:
+
+- Do NOT invent any information.
+- Do NOT use words from the examples.
+- ONLY use information from the Original Query and Clarification Answer.
+
+Return ONLY:
 
 {{
-    "query": ""
+    "query": "<rewritten query>"
 }}
 """
 
