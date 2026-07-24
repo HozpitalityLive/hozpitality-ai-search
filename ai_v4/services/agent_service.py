@@ -1,11 +1,9 @@
+import asyncio
+
 from ai_v4.agents.job_agent import JobAgent
 from ai_v4.agents.company_agent import CompanyAgent
 from ai_v4.agents.professional_agent import ProfessionalAgent
-from ai_v4.agents.article_agent import ArticleAgent
-from ai_v4.agents.product_agent import ProductAgent
-from ai_v4.agents.event_agent import EventAgent
-from ai_v4.agents.awards_agent import AwardsAgent
-from ai_v4.agents.faq_agent import FaqAgent
+
 from ai_v4.config.logger import logger
 
 
@@ -21,7 +19,7 @@ class AgentService:
             # "product": ProductAgent(),
             # "event": EventAgent(),
             # "award": AwardsAgent(),
-            # "faq": FaqAgent()
+            # "faq": FaqAgent(),
         }
 
     async def execute(
@@ -30,20 +28,54 @@ class AgentService:
         query,
         memory
     ):
-        
-        logger.info("[2/4] Executing agent...")
+
+        logger.info("[2/4] Executing Agent(s)...")
 
         route = plan["route"]
-        agent_name = route["agents"][0]
-        agent = self.agents.get(agent_name)
+        agent_names = route["agents"]
 
-        if not agent:
-            raise Exception(
-                f"Unknown Agent {agent_name}"
+        tasks = []
+
+        for agent_name in agent_names:
+
+            agent = self.agents.get(agent_name)
+
+            if not agent:
+                raise Exception(
+                    f"Unknown Agent {agent_name}"
+                )
+
+            tasks.append(
+                agent.execute(
+                    query=query,
+                    plan=plan,
+                    memory=memory
+                )
             )
 
-        return await agent.execute(
-            query=query,
-            plan=plan,
-            memory=memory
-        )
+        results = await asyncio.gather(*tasks)
+
+        if len(results) == 1:
+            return results[0]
+
+        merged = {
+            "agent": ",".join(agent_names),
+            "query": query,
+            "filters": {},
+            "page": 1,
+            "page_size": 5,
+            "total": 0,
+            "results": []
+        }
+
+        for result in results:
+
+            merged["filters"][result["agent"]] = result["filters"]
+
+            merged["results"].extend(
+                result["results"]
+            )
+
+            merged["total"] += result["total"]
+
+        return merged

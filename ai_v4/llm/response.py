@@ -64,7 +64,6 @@ class ResponseGenerator:
 
             response = response.strip()
 
-            # Extract JSON object
             start = response.find("{")
             end = response.rfind("}")
 

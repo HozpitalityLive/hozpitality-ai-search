@@ -1,29 +1,11 @@
 from ai_v4.agents.base import BaseAgent
-
+from ai_v4.agents.event.filter_builder import EventFilterBuilder
 
 
 class EventAgent(BaseAgent):
 
     def __init__(self):
-        super().__init__("event")
-
-    async def execute(
-        self,
-        query: str,
-        plan: dict,
-        memory: dict
-    ):
-
-        filters = {
-            "category": "event"
-        }
-
-        results = await self.search_service.search(
-            query=query,
-            filters=filters
+        super().__init__(
+            name="event",
+            builder=EventFilterBuilder()
         )
-
-        return {
-            "agent": self.name,
-            "results": results
-        }
