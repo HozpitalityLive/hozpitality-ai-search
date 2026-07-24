@@ -1,4 +1,5 @@
 from ai_v4.planner.intent import IntentDetector
+from ai_v4.planner.RuleBasedClarification import RuleBasedClarification
 from ai_v4.planner.entities import EntityExtractor
 from ai_v4.planner.router import PlannerRouter
 from ai_v4.config.logger import logger
@@ -13,6 +14,7 @@ class Planner:
         self.entities = EntityExtractor()
         self.router = PlannerRouter()
         self.clarification = ClarificationDetector()
+        self.rule_based_clarification = RuleBasedClarification()
 
     async def create_plan(
         self,
@@ -23,16 +25,26 @@ class Planner:
 
         intent = await self.intent.detect(query)
         entities = await self.entities.extract(query)
+        logger.info("="*60)
+        logger.info("ENTITIES")
+        logger.info(entities)
+        logger.info("="*60)
         route = await self.router.route(
             intent=intent,
             entities=entities
         )
 
-        clarification = await self.clarification.analyze(
-            query=query,
+        clarification = self.rule_based_clarification.get_clarifications(
             intent=intent,
             entities=entities
         )
+
+        if clarification is None:
+            clarification = await self.clarification.analyze(
+                query=query,
+                intent=intent,
+                entities=entities
+            )
 
         execution = {
             "type": "search"
