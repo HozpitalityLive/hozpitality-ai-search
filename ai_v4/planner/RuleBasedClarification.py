@@ -3,7 +3,7 @@ from ai_v4.planner.intent import Intent
 
 
 class RuleBasedClarification:
-    async def get_clarifications(
+    def get_clarifications(
         self,
         intent,
         entities
