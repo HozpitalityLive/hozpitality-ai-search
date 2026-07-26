@@ -48,12 +48,12 @@ app.include_router(
 
 app.include_router(
     profile_writer_router,
-    prefix="/ai-profile-writer",
+    prefix="/v4/ai-profile-writer",
     tags=["AI Profile Writer"]
 )
 
 
-@app.get("/")
+@app.get("/v4/")
 async def home():
 
     return {
@@ -62,7 +62,7 @@ async def home():
     }
 
 
-@app.get("/health")
+@app.get("/v4/health")
 async def health():
 
     return {
