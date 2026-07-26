@@ -1,9 +1,11 @@
 import httpx
 from fastapi import APIRouter, HTTPException
+from ai_v4.config.settings import settings
 
 router = APIRouter()
 
-OLLAMA_URL = "http://ollama:11434/api/generate"
+
+OLLAMA_URL = f"{settings.OLLAMA_URL}/api/generate"
 MODEL = "llama3-hoz:latest"
 
 
