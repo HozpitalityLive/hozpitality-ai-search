@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ai_v4.config.logger import logger
 from ai_v4.websocket.chat import router as websocket_router
+from ai_v4.ai_profile_writer import router as profile_writer_router
 
 
 app = FastAPI(
@@ -42,6 +43,13 @@ app.add_middleware(
 app.include_router(
     websocket_router,
     prefix="/v4"
+)
+
+
+app.include_router(
+    profile_writer_router,
+    prefix="/ai-profile-writer",
+    tags=["AI Profile Writer"]
 )
 
 

@@ -1,6 +1,7 @@
 from ai_v4.planner.intent import IntentDetector
-from ai_v4.planner.RuleBasedClarification import RuleBasedClarification
 from ai_v4.planner.entities import EntityExtractor
+from ai_v4.planner.query_parser import QueryParser
+from ai_v4.planner.search_planner import SearchPlanner
 from ai_v4.planner.router import PlannerRouter
 from ai_v4.config.logger import logger
 from ai_v4.planner.clarification import ClarificationDetector
@@ -14,7 +15,8 @@ class Planner:
         self.entities = EntityExtractor()
         self.router = PlannerRouter()
         self.clarification = ClarificationDetector()
-        self.rule_based_clarification = RuleBasedClarification()
+        self.parser = QueryParser()
+        self.search_planner = SearchPlanner()
 
     async def create_plan(
         self,
@@ -29,21 +31,34 @@ class Planner:
         logger.info("ENTITIES")
         logger.info(entities)
         logger.info("="*60)
+        
+        filters = await self.parser.parse(
+            query=query,
+            intent=intent,
+            entities=entities
+        )
+
         route = await self.router.route(
             intent=intent,
-            entities=entities
+            entities=filters
         )
 
-        clarification = self.rule_based_clarification.get_clarifications(
+        search_plan = await self.search_planner.build(
             intent=intent,
-            entities=entities
+            filters=filters
         )
 
-        if clarification is None:
+        if search_plan["can_search"]:
+            clarification = {
+                "required": False,
+                "question": None,
+                "missing": []
+            }
+        else:
             clarification = await self.clarification.analyze(
                 query=query,
                 intent=intent,
-                entities=entities
+                search_plan=search_plan
             )
 
         execution = {
@@ -63,6 +78,8 @@ class Planner:
             "query": query,
             "intent": intent,
             "entities": entities,
+            "filters": filters,
+            "search_plan": search_plan,
             "route": route,
             "search": {
                 "engines": [
