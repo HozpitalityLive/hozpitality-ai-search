@@ -1,6 +1,9 @@
 import httpx
 from fastapi import APIRouter, HTTPException
 from ai_v4.config.settings import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -59,22 +62,64 @@ async def generate_profile_content(
 
     profile_text = build_profile(profile)
 
+    logger.info("Profile: %s", profile)
+
+    name = (
+        profile.get("name")
+        or profile.get("full_name")
+        or profile.get("company_name")
+        or profile.get("company")
+        or ""
+    )
+
+    profile_type = profile.get("profile_type", "professional").lower()
+
     if content_type.lower() == "tagline":
+        if profile_type == "company":
+            prompt = f"""
+You are an expert branding copywriter.
 
-        prompt = f"""
-You are an expert LinkedIn and resume writer.
+Create ONE memorable company tagline.
 
-Write ONE professional profile tagline.
+Company Name: {name}
 
-Rules:
-- Maximum 12 words.
-- One sentence.
+Requirements:
+- Maximum 8 words.
+- Professional and memorable.
+- Reflect the company's industry and value proposition.
+- Make every response unique.
+- Never use generic slogans such as:
+  - Excellence in Everything
+  - Quality You Can Trust
+  - Your Trusted Partner
+  - We Deliver Excellence
+- Never invent products or services.
 - No quotation marks.
-- ATS friendly.
-- Mention profession naturally.
-- Make it impactful.
-- Do not invent information.
 - Return ONLY the tagline.
+
+Company Profile:
+
+{profile_text}
+"""
+        else:
+            prompt = f"""
+You are an expert LinkedIn branding strategist.
+
+Create ONE unique professional headline.
+
+Candidate Name: {name}
+
+Requirements:
+- Maximum 12 words.
+- One sentence only.
+- ATS-friendly.
+- Reflect the candidate's profession, expertise and industry.
+- Include seniority when available.
+- Make every response unique by varying wording and sentence structure.
+- Never repeat common phrases like "Results-driven", "Passionate professional", or "Experienced professional".
+- Never invent information.
+- No quotation marks.
+- Return ONLY the headline.
 
 Candidate Profile:
 
@@ -82,30 +127,54 @@ Candidate Profile:
 """
 
     elif content_type.lower() == "about":
+        if profile_type == "company":
+            prompt = f"""
+You are an expert business copywriter.
 
-        prompt = f"""
-You are an expert resume and LinkedIn writer.
+Write an About Us section.
 
-Write a professional About Me section.
+Company Name: {name}
 
-Rules:
-- Around 5 short sentences.
-- 80-120 words.
-- Professional and engaging.
-- ATS friendly.
-- Mention industry, department, role and strengths.
-- Highlight leadership, customer service and technical skills when available.
-- Never invent experience.
+Requirements:
+- 90-140 words.
+- Begin with the company name.
+- Explain what the company does.
+- Mention industry, products, services, expertise and customer focus only when provided.
+- Use professional business language.
+- Make every response unique.
+- Avoid clichés and exaggerated marketing claims.
+- Never invent information.
 - No bullet points.
-- Return ONLY the description.
+- Return ONLY the About Us section.
+
+Company Profile:
+
+{profile_text}
+"""
+        else:
+            prompt = f"""
+You are an expert LinkedIn profile writer.
+
+Write a professional About section.
+
+Candidate Name: {name}
+
+Requirements:
+- 90-130 words.
+- Begin naturally by mentioning the candidate's name.
+- Highlight industry, role, expertise and strengths.
+- Mention leadership, communication, technical or customer-facing skills only when provided.
+- Keep it ATS-friendly.
+- Make each response unique in wording and structure.
+- Never invent achievements or experience.
+- No bullet points.
+- Return ONLY the About section.
 
 Candidate Profile:
 
 {profile_text}
 """
 
-    else:
-        raise ValueError("content_type must be 'tagline' or 'about'")
 
     return await _generate(prompt)
 
@@ -118,6 +187,9 @@ async def generate_profile(data: dict):
             profile=data.get("profile", {}),
             content_type=data.get("content_type", ""),
         )
+        
+        logger.info("Incoming request: %s", data)
+        
 
         return {
             "success": True,
