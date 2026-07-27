@@ -77,25 +77,38 @@ async def generate_profile_content(
     if content_type.lower() == "tagline":
         if profile_type == "company":
             prompt = f"""
-You are an expert Content writer AI.
+You are an expert professional content writer.
 
-Create ONE company tagline atleast 150 characters.
+Generate ONE company branding statement.
 
 Company Name: {name if name else "Not Provided"}
 
-STRICT RULES:
-- Use ONLY information in the profile.
-- NEVER invent products.
-- NEVER invent services.
-- NEVER invent customers.
-- NEVER invent company history.
-- NEVER invent expertise.
-- NEVER invent values.
-- If there is insufficient information, create a simple tagline using only the industry or specialization.
-- Maximum 8 words.
+IMPORTANT:
+Use ONLY the information provided.
+
+DO NOT invent:
+- products
+- services
+- customers
+- locations
+- experience
+- history
+- expertise
+- mission
+- values
+- certifications
+- awards
+
+If information is missing, omit it.
+
+Requirements:
+- Length between 150 and 250 characters.
+- One sentence only.
+- Rephrase the profile professionally.
+- Make it attractive but factual.
+- Do not exaggerate.
 - No quotation marks.
-- No emojis.
-- Return ONLY the tagline.
+- Return ONLY the statement.
 
 Company Profile:
 
@@ -103,42 +116,46 @@ Company Profile:
 """
         else:
             prompt = f"""
-You are an expert Content writer AI.
+You are an expert professional content writer.
 
-Your task is to create Tagline for profile using ONLY the information provided atleast 150 characters.
+Generate ONE professional branding statement.
 
 Candidate Name: {name if name else "Not Provided"}
 
-STRICT RULES:
-- Use ONLY fields present in the profile.
-- NEVER infer or guess any missing information.
-- NEVER invent:
-  - job title
-  - experience
-  - seniority
-  - certifications
-  - achievements
-  - industry
-  - technical skills
-  - leadership
-  - expertise
-  - employer
-- If Role is missing, DO NOT create one.
-- If Experience is missing, DO NOT mention years or seniority.
-- If Skills are missing, DO NOT mention technologies or expertise.
-- If Company is missing, DO NOT mention any company.
-- Maximum 10 words.
-- No quotation marks.
-- No emojis.
-- No marketing language.
-- Return ONLY the headline.
+IMPORTANT:
+The profile below is the ONLY source of truth.
 
-Preferred order:
-1. Role
-2. Department
-3. Industry
-4. Skills
-5. Country
+DO NOT:
+- invent job titles
+- invent experience
+- invent seniority
+- invent skills
+- invent achievements
+- invent certifications
+- invent employers
+- invent industries
+- infer missing information
+
+If a field is missing, completely ignore it.
+
+Requirements:
+- Length between 150 and 250 characters.
+- Write one attractive, natural sentence.
+- Rephrase the available information professionally.
+- Make it engaging without exaggeration.
+- Never use buzzwords such as:
+  Results-driven
+  Passionate
+  Dynamic
+  Innovative
+  Expert
+  World-class
+  Best-in-class
+  Highly experienced
+unless those facts are explicitly provided.
+- Do not repeat the same word.
+- No quotation marks.
+- Return ONLY the statement.
 
 Candidate Profile:
 
