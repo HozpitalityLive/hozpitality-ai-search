@@ -77,24 +77,24 @@ async def generate_profile_content(
     if content_type.lower() == "tagline":
         if profile_type == "company":
             prompt = f"""
-You are an expert branding copywriter.
+You are an expert Content writer AI.
 
-Create ONE memorable company tagline.
+Create ONE company tagline.
 
-Company Name: {name}
+Company Name: {name if name else "Not Provided"}
 
-Requirements:
+STRICT RULES:
+- Use ONLY information in the profile.
+- NEVER invent products.
+- NEVER invent services.
+- NEVER invent customers.
+- NEVER invent company history.
+- NEVER invent expertise.
+- NEVER invent values.
+- If there is insufficient information, create a simple tagline using only the industry or specialization.
 - Maximum 8 words.
-- Professional and memorable.
-- Reflect the company's industry and value proposition.
-- Make every response unique.
-- Never use generic slogans such as:
-  - Excellence in Everything
-  - Quality You Can Trust
-  - Your Trusted Partner
-  - We Deliver Excellence
-- Never invent products or services.
 - No quotation marks.
+- No emojis.
 - Return ONLY the tagline.
 
 Company Profile:
@@ -103,23 +103,42 @@ Company Profile:
 """
         else:
             prompt = f"""
-You are an expert LinkedIn branding strategist.
+You are an expert Content writer AI.
 
-Create ONE unique professional headline.
+Your task is to create Tagline for profile using ONLY the information provided.
 
-Candidate Name: {name}
+Candidate Name: {name if name else "Not Provided"}
 
-Requirements:
-- Maximum 12 words.
-- One sentence only.
-- ATS-friendly.
-- Reflect the candidate's profession, expertise and industry.
-- Include seniority when available.
-- Make every response unique by varying wording and sentence structure.
-- Never repeat common phrases like "Results-driven", "Passionate professional", or "Experienced professional".
-- Never invent information.
+STRICT RULES:
+- Use ONLY fields present in the profile.
+- NEVER infer or guess any missing information.
+- NEVER invent:
+  - job title
+  - experience
+  - seniority
+  - certifications
+  - achievements
+  - industry
+  - technical skills
+  - leadership
+  - expertise
+  - employer
+- If Role is missing, DO NOT create one.
+- If Experience is missing, DO NOT mention years or seniority.
+- If Skills are missing, DO NOT mention technologies or expertise.
+- If Company is missing, DO NOT mention any company.
+- Maximum 10 words.
 - No quotation marks.
+- No emojis.
+- No marketing language.
 - Return ONLY the headline.
+
+Preferred order:
+1. Role
+2. Department
+3. Industry
+4. Skills
+5. Country
 
 Candidate Profile:
 
@@ -129,21 +148,32 @@ Candidate Profile:
     elif content_type.lower() == "about":
         if profile_type == "company":
             prompt = f"""
-You are an expert business copywriter.
+You are an expert Content writer AI.
 
 Write an About Us section.
 
-Company Name: {name}
+Company Name: {name if name else "Not Provided"}
 
-Requirements:
-- 90-140 words.
-- Begin with the company name.
-- Explain what the company does.
-- Mention industry, products, services, expertise and customer focus only when provided.
-- Use professional business language.
-- Make every response unique.
-- Avoid clichés and exaggerated marketing claims.
-- Never invent information.
+STRICT RULES:
+- Begin with the company name ONLY if available.
+- Use ONLY information in the profile.
+- NEVER invent:
+  - products
+  - services
+  - experience
+  - customers
+  - locations
+  - company history
+  - mission
+  - vision
+  - expertise
+  - awards
+  - certifications
+- If information is missing, simply omit it.
+- Never fill gaps with assumptions.
+- Write only from available facts.
+- 80-120 words.
+- Professional tone.
 - No bullet points.
 - Return ONLY the About Us section.
 
@@ -153,20 +183,35 @@ Company Profile:
 """
         else:
             prompt = f"""
-You are an expert LinkedIn profile writer.
+You are an expert Content writer AI.
 
 Write a professional About section.
 
-Candidate Name: {name}
+Candidate Name: {name if name else "Not Provided"}
 
-Requirements:
-- 90-130 words.
-- Begin naturally by mentioning the candidate's name.
-- Highlight industry, role, expertise and strengths.
-- Mention leadership, communication, technical or customer-facing skills only when provided.
-- Keep it ATS-friendly.
-- Make each response unique in wording and structure.
-- Never invent achievements or experience.
+STRICT RULES:
+- Mention the candidate's name ONLY if available.
+- Use ONLY information present in the profile.
+- NEVER invent:
+  - experience
+  - years
+  - achievements
+  - certifications
+  - leadership
+  - technical skills
+  - communication skills
+  - customer service
+  - employer
+  - projects
+  - responsibilities
+- If Role is missing, do not create one.
+- If Experience is missing, do not mention experience.
+- If Skills are missing, do not describe expertise.
+- If Education is missing, omit education.
+- If Achievements are missing, omit achievements.
+- Do not add filler sentences.
+- 80-120 words.
+- Professional tone.
 - No bullet points.
 - Return ONLY the About section.
 
