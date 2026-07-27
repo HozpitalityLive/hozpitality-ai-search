@@ -20,11 +20,15 @@ async def _generate(prompt: str) -> str:
                 "model": MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "keep_alive": 0,
                 "options": {
-                    "temperature": 0.6,
+                    "temperature": 0.2,
+                    "top_p": 0.8,
+                    "repeat_penalty": 1.2,
                     "num_predict": 220,
+                    "num_ctx": 4096,
                 },
-            },
+            }
         )
 
         response.raise_for_status()
