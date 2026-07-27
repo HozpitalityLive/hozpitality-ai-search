@@ -217,112 +217,168 @@ Candidate Profile:
     elif content_type.lower() == "about":
         if profile_type == "company":
             prompt = f"""
-You are an expert Content writer AI.
+You are an expert business content writer.
 
-Write an About Us section.
+Your task is to write an "About Us" section for a company.
 
-Company Name: {name if name else "Not Provided"}
+Company Name:
+{name if name else "Not Provided"}
 
-STRICT RULES:
-- Begin with the company name ONLY if available.
-- Use ONLY information in the profile.
-- NEVER invent:
-  - products
-  - services
-  - experience
-  - customers
-  - locations
-  - company history
-  - mission
-  - vision
-  - expertise
-  - awards
-  - certifications
-- If information is missing, simply omit it.
-- Never fill gaps with assumptions.
-- Write only from available facts.
-- 400-450 characters.
-- Professional tone.
+COMPANY PROFILE
+
+{profile_text}
+
+CRITICAL INSTRUCTIONS
+
+The company profile above is the ONLY source of truth.
+
+Every statement must be supported by the supplied information.
+
+Never use information from:
+- previous conversations
+- training data
+- memory
+- assumptions
+- common industry knowledge
+
+DO NOT invent or guess:
+- products
+- services
+- customers
+- experience
+- years in business
+- history
+- company size
+- offices
+- branches
+- locations
+- certifications
+- awards
+- partnerships
+- expertise
+- mission
+- vision
+- values
+- technologies
+
+If information is missing, omit it completely.
+
+You MAY:
+- professionally rewrite the provided information
+- expand the wording without changing the meaning
+- combine available facts into natural sentences
+- improve readability
+- use professional business language
+
+Requirements
+
+- 400–450 characters.
+- 3–5 sentences.
+- Begin with the company name only if it exists.
+- If no company name exists, do not use placeholders.
+- Professional and trustworthy tone.
 - No bullet points.
-- Return ONLY the About Us section.
+- No headings.
+- No quotation marks.
+- No markdown.
+- No emojis.
 
-OUTPUT FORMAT (MANDATORY)
+OUTPUT FORMAT
 
-Your response MUST contain ONLY the final text.
+Return ONLY the About Us section.
 
-DO NOT include:
-- introductions
+Do not include:
+- Here is...
+- About Us:
+- Certainly
+- Let me know...
 - explanations
 - notes
 - markdown
-- quotation marks
-- labels
-- "Here is..."
-- "Certainly"
-- "Let me know..."
-- any text before or after the statement
-
-If you output anything except the statement, your answer is incorrect.
-
-Company Profile:
-
-{profile_text}
+- any text before or after the response.
 """
         else:
             prompt = f"""
-You are an expert Content writer AI.
+You are an expert professional profile content writer.
 
-Write a professional About section.
+Your task is to write a professional "About" section for a person's profile.
 
-Candidate Name: {name if name else "Not Provided"}
+Candidate Name:
+{name if name else "Not Provided"}
 
-STRICT RULES:
-- Mention the candidate's name ONLY if available.
-- Use ONLY information present in the profile.
-- NEVER invent:
-  - experience
-  - years
-  - achievements
-  - certifications
-  - leadership
-  - technical skills
-  - communication skills
-  - customer service
-  - employer
-  - projects
-  - responsibilities
-- If Role is missing, do not create one.
-- If Experience is missing, do not mention experience.
-- If Skills are missing, do not describe expertise.
-- If Education is missing, omit education.
-- If Achievements are missing, omit achievements.
-- Do not add filler sentences.
-- 400-450 characters.
-- Professional tone.
+PROFILE DATA
+
+{profile_text}
+
+CRITICAL INSTRUCTIONS
+
+The profile data above is the ONLY source of truth.
+
+Every statement in your response must be directly supported by the profile.
+
+Never use information from:
+- previous conversations
+- training examples
+- memory
+- assumptions
+- common industry knowledge
+
+DO NOT invent or guess:
+- names
+- employers
+- companies
+- job titles
+- years of experience
+- seniority
+- achievements
+- awards
+- certifications
+- projects
+- responsibilities
+- technical skills
+- leadership
+- customer service experience
+- communication skills
+- expertise
+- specializations
+- locations other than those provided
+
+If any information is missing, completely omit it.
+
+You MAY:
+- professionally rewrite the provided information
+- expand the wording without changing the meaning
+- connect available facts into natural sentences
+- improve readability
+- use professional language
+
+Requirements
+
+- 400–450 characters.
+- 3–5 sentences.
+- Mention the candidate's name only if it exists.
+- If no name exists, do not use placeholders.
+- Professional, natural and engaging tone.
+- No first-person language.
 - No bullet points.
-- Return ONLY the About section.
+- No headings.
+- No quotation marks.
+- No markdown.
+- No emojis.
 
-OUTPUT FORMAT (MANDATORY)
+OUTPUT FORMAT
 
-Your response MUST contain ONLY the final text.
+Return ONLY the About section.
 
-DO NOT include:
-- introductions
+Do not include:
+- Here is...
+- About:
+- Certainly
+- Let me know...
 - explanations
 - notes
 - markdown
-- quotation marks
-- labels
-- "Here is..."
-- "Certainly"
-- "Let me know..."
-- any text before or after the statement
-
-If you output anything except the statement, your answer is incorrect.
-
-Candidate Profile:
-
-{profile_text}
+- any extra text before or after the response.
 """
 
 
