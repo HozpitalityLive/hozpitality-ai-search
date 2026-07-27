@@ -79,7 +79,7 @@ async def generate_profile_content(
             prompt = f"""
 You are an expert Content writer AI.
 
-Create ONE company tagline.
+Create ONE company tagline atleast 150 characters.
 
 Company Name: {name if name else "Not Provided"}
 
@@ -105,7 +105,7 @@ Company Profile:
             prompt = f"""
 You are an expert Content writer AI.
 
-Your task is to create Tagline for profile using ONLY the information provided.
+Your task is to create Tagline for profile using ONLY the information provided atleast 150 characters.
 
 Candidate Name: {name if name else "Not Provided"}
 
