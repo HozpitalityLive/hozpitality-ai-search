@@ -225,10 +225,28 @@ STRICT RULES:
 - If information is missing, simply omit it.
 - Never fill gaps with assumptions.
 - Write only from available facts.
-- 80-120 words.
+- 400-450 characters.
 - Professional tone.
 - No bullet points.
 - Return ONLY the About Us section.
+
+OUTPUT FORMAT (MANDATORY)
+
+Your response MUST contain ONLY the final text.
+
+DO NOT include:
+- introductions
+- explanations
+- notes
+- markdown
+- quotation marks
+- labels
+- "Here is..."
+- "Certainly"
+- "Let me know..."
+- any text before or after the statement
+
+If you output anything except the statement, your answer is incorrect.
 
 Company Profile:
 
@@ -263,10 +281,28 @@ STRICT RULES:
 - If Education is missing, omit education.
 - If Achievements are missing, omit achievements.
 - Do not add filler sentences.
-- 80-120 words.
+- 400-450 characters.
 - Professional tone.
 - No bullet points.
 - Return ONLY the About section.
+
+OUTPUT FORMAT (MANDATORY)
+
+Your response MUST contain ONLY the final text.
+
+DO NOT include:
+- introductions
+- explanations
+- notes
+- markdown
+- quotation marks
+- labels
+- "Here is..."
+- "Certainly"
+- "Let me know..."
+- any text before or after the statement
+
+If you output anything except the statement, your answer is incorrect.
 
 Candidate Profile:
 
