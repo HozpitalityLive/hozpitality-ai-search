@@ -18,7 +18,19 @@ async def _generate(prompt: str) -> str:
             OLLAMA_URL,
             json={
                 "model": MODEL,
+                "system": """
+You are a profile content generator.
+
+The provided profile is the ONLY source of truth.
+
+Never use knowledge from training data.
+Never reuse names, companies, employers, projects or examples.
+Never complete missing information.
+If information is missing, omit it.
+Every statement must be directly supported by the profile.
+""",
                 "prompt": prompt,
+                
                 "stream": False,
                 "keep_alive": 0,
                 "options": {
