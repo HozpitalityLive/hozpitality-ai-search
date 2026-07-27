@@ -102,13 +102,31 @@ DO NOT invent:
 If information is missing, omit it.
 
 Requirements:
-- Length between 150 and 250 characters.
+- Length between 100 and 200 characters.
 - One sentence only.
 - Rephrase the profile professionally.
 - Make it attractive but factual.
 - Do not exaggerate.
 - No quotation marks.
-- Return ONLY the statement.
+
+OUTPUT FORMAT (MANDATORY)
+
+Your response MUST contain ONLY the final text.
+
+DO NOT include:
+- introductions
+- explanations
+- notes
+- markdown
+- quotation marks
+- labels
+- "Here is..."
+- "Certainly"
+- "Let me know..."
+- "Professional Branding Statement:"
+- any text before or after the statement
+
+If you output anything except the statement, your answer is incorrect.
 
 Company Profile:
 
@@ -139,7 +157,7 @@ DO NOT:
 If a field is missing, completely ignore it.
 
 Requirements:
-- Length between 150 and 250 characters.
+- Length between 100 and 200 characters.
 - Write one attractive, natural sentence.
 - Rephrase the available information professionally.
 - Make it engaging without exaggeration.
@@ -155,7 +173,25 @@ Requirements:
 unless those facts are explicitly provided.
 - Do not repeat the same word.
 - No quotation marks.
-- Return ONLY the statement.
+
+OUTPUT FORMAT (MANDATORY)
+
+Your response MUST contain ONLY the final text.
+
+DO NOT include:
+- introductions
+- explanations
+- notes
+- markdown
+- quotation marks
+- labels
+- "Here is..."
+- "Certainly"
+- "Let me know..."
+- "Professional Branding Statement:"
+- any text before or after the statement
+
+If you output anything except the statement, your answer is incorrect.
 
 Candidate Profile:
 
