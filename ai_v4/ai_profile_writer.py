@@ -56,7 +56,6 @@ def build_profile(profile: dict) -> str:
             ("Business Name", profile.get("business_name")),
             ("Created By", profile.get("created_by")),
             ("Designation", profile.get("designation")),
-            ("Website Link", profile.get("website_url")),
             ("Industry", profile.get("industry")),
             ("Supplier Category", profile.get("supplier_category")),
             ("Country", profile.get("country")),
