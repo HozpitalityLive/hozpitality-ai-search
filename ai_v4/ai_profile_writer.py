@@ -124,128 +124,45 @@ async def generate_profile_content(
     if content_type.lower() == "tagline":
         if profile_type == "company":
             prompt = f"""
-You are an expert professional content writer.
+    Write ONE professional company tagline.
 
-Generate ONE company branding statement.
+    Use ONLY the information below.
 
-Company Name: {name if name else "Not Provided"}
+    Company Profile:
+    {profile_text}
 
-IMPORTANT:
-Use ONLY the information provided.
+    Rules:
+    - One sentence only.
+    - 80-150 characters when possible.
+    - Mention the company name.
+    - Mention the industry if available.
+    - Mention the country if available.
+    - Rewrite the available facts professionally.
+    - Do NOT invent products, services, customers, expertise, experience, mission, values, awards or certifications.
+    - If the available information is limited, return a shorter factual tagline.
+    - Return ONLY the tagline.
+    """
 
-DO NOT invent:
-- products
-- services
-- customers
-- locations
-- experience
-- history
-- expertise
-- mission
-- values
-- certifications
-- awards
-
-If information is missing, omit it.
-
-- Maximum 150 characters.
-- One sentence.
-- If the profile contains limited information, keep it concise.
-- Never invent missing details.
-- Rephrase the profile professionally.
-- Make it attractive but factual.
-- Do not exaggerate.
-- No quotation marks.
-
-OUTPUT FORMAT (MANDATORY)
-
-Your response MUST contain ONLY the final text.
-
-DO NOT include:
-- introductions
-- explanations
-- notes
-- markdown
-- quotation marks
-- labels
-- "Here is..."
-- "Certainly"
-- "Let me know..."
-- "Professional Branding Statement:"
-- any text before or after the statement
-
-If you output anything except the statement, your answer is incorrect.
-
-Company Profile:
-
-{profile_text}
-"""
         else:
             prompt = f"""
-You are an expert professional content writer.
+    Write ONE professional profile tagline.
 
-Generate ONE professional branding statement.
+    Use ONLY the information below.
 
-Candidate Name: {name if name else "Not Provided"}
+    Professional Profile:
+    {profile_text}
 
-IMPORTANT:
-The profile below is the ONLY source of truth.
-
-DO NOT:
-- invent job titles
-- invent experience
-- invent seniority
-- invent skills
-- invent achievements
-- invent certifications
-- invent employers
-- invent industries
-- infer missing information
-
-If a field is missing, completely ignore it.
-
-Requirements:
-- Length between 100 and 200 characters.
-- Write one attractive, natural sentence.
-- Rephrase the available information professionally.
-- Make it engaging without exaggeration.
-- Never use buzzwords such as:
-  Results-driven
-  Passionate
-  Dynamic
-  Innovative
-  Expert
-  World-class
-  Best-in-class
-  Highly experienced
-unless those facts are explicitly provided.
-- Do not repeat the same word.
-- No quotation marks.
-
-OUTPUT FORMAT (MANDATORY)
-
-Your response MUST contain ONLY the final text.
-
-DO NOT include:
-- introductions
-- explanations
-- notes
-- markdown
-- quotation marks
-- labels
-- "Here is..."
-- "Certainly"
-- "Let me know..."
-- "Professional Branding Statement:"
-- any text before or after the statement
-
-If you output anything except the statement, your answer is incorrect.
-
-Candidate Profile:
-
-{profile_text}
-"""
-
+    Rules:
+    - One sentence only.
+    - 80-150 characters when possible.
+    - Mention the person's name if available.
+    - Naturally include available role, industry, department, company or skills.
+    - Rewrite the available facts professionally.
+    - Do NOT invent employers, experience, achievements, certifications, projects, responsibilities or expertise.
+    - If the available information is limited, return a shorter factual tagline.
+    - Return ONLY the tagline.
+    """
+            
     elif content_type.lower() == "about":
         if profile_type == "company":
             prompt = f"""
