@@ -149,9 +149,10 @@ DO NOT invent:
 
 If information is missing, omit it.
 
-Requirements:
-- Length between 100 and 200 characters.
-- One sentence only.
+- Maximum 150 characters.
+- One sentence.
+- If the profile contains limited information, keep it concise.
+- Never invent missing details.
 - Rephrase the profile professionally.
 - Make it attractive but factual.
 - Do not exaggerate.
@@ -304,8 +305,9 @@ You MAY:
 
 Requirements
 
-- 400–450 characters.
-- 3–5 sentences.
+- Around 150–350 characters.
+- 4–5 sentences.
+- If the supplied profile contains limited information, produce a shorter response rather than inventing facts.
 - Begin with the company name only if it exists.
 - If no company name exists, do not use placeholders.
 - Professional and trustworthy tone.
