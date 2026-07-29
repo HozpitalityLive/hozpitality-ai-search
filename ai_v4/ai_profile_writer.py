@@ -49,25 +49,49 @@ Every statement must be directly supported by the profile.
 
 
 def build_profile(profile: dict) -> str:
-    fields = [
-        ("Industry", profile.get("industry")),
-        ("Department", profile.get("department")),
-        ("Role", profile.get("role")),
-        ("Job Level", profile.get("job_level")),
-        ("Current Company", profile.get("company")),
-        ("Experience", profile.get("experience")),
-        ("Skills", profile.get("skills")),
-        ("Languages", profile.get("languages")),
-        ("Country", profile.get("country")),
-        ("Education", profile.get("education")),
-        ("Achievements", profile.get("achievements")),
-        ("Certifications", profile.get("certifications")),
-    ]
+    profile_type = (profile.get("profile_type") or "professional").lower()
+
+    if profile_type == "company":
+        fields = [
+            ("Business Name", profile.get("business_name")),
+            ("Created By", profile.get("created_by")),
+            ("Designation", profile.get("designation")),
+            ("Website Link", profile.get("website_url")),
+            ("Industry", profile.get("industry")),
+            ("Supplier Category", profile.get("supplier_category")),
+            ("Country", profile.get("country")),
+        ]
+    else:
+        full_name = " ".join(
+            filter(
+                None,
+                [
+                    profile.get("firstname"),
+                    profile.get("lastname"),
+                ],
+            )
+        )
+
+        fields = [
+            ("Hi, I am professional My Name", full_name),
+            ("Industry", profile.get("industry")),
+            ("Department", profile.get("department")),
+            ("Role", profile.get("role")),
+            ("Job Level", profile.get("job_level")),
+            ("Currently Working in Company", profile.get("working_in_company")),
+            ("Languages", profile.get("languages")),
+            ("Country", profile.get("country")),
+            ("Experience", profile.get("experience")),
+            ("Skills", profile.get("skills")),
+            ("Education", profile.get("education")),
+            ("Achievements", profile.get("achievements")),
+            ("Certifications", profile.get("certifications")),
+        ]
 
     return "\n".join(
         f"{label}: {value}"
         for label, value in fields
-        if value
+        if value not in (None, "", [])
     )
 
 
@@ -80,13 +104,21 @@ async def generate_profile_content(
 
     logger.info("Profile: %s", profile)
 
-    name = (
-        profile.get("name")
-        or profile.get("full_name")
-        or profile.get("company_name")
-        or profile.get("company")
-        or ""
-    )
+    
+    profile_type = (profile.get("profile_type") or "professional").lower()
+
+    if profile_type == "company":
+        name = profile.get("business_name", "")
+    else:
+        name = " ".join(
+            filter(
+                None,
+                [
+                    profile.get("firstname"),
+                    profile.get("lastname"),
+                ],
+            )
+        )
 
     profile_type = profile.get("profile_type", "professional").lower()
 
