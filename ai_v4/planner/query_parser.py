@@ -10,7 +10,8 @@ from ai_v4.planner.parsers import (
     SalaryParser,
     ExperienceParser,
     DateParser,
-    SortParser
+    SortParser,
+    CategoryParser
 )
 from ai_v4.planner.utils import deep_merge
 
@@ -30,6 +31,7 @@ class QueryParser:
             ExperienceParser(),
             DateParser(),
             SortParser(),
+            CategoryParser(),
         ]
 
     async def parse(

@@ -8,3 +8,4 @@ from .salary_parser import SalaryParser
 from .experience_parser import ExperienceParser
 from .date_parser import DateParser
 from .sort_parser import SortParser
+from .category_parser import CategoryParser

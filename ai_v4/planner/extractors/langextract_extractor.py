@@ -1,0 +1,204 @@
+from ai_v4.config.settings import settings
+import langextract as lx
+
+from ai_v4.config.logger import logger
+from ai_v4.planner.extractors.base import BaseExtractor
+from ai_v4.planner.extractors.examples import EXAMPLES
+from ai_v4.planner.extractors.schema import SEARCH_SCHEMA
+
+
+class LangExtractExtractor(BaseExtractor):
+
+    def __init__(self):
+
+        logger.info("=" * 80)
+        logger.info("Initializing LangExtract...")
+        logger.info("=" * 80)
+        self.base_url = settings.OLLAMA_URL
+        self.model = "llama3-hoz"
+        self.inference_engine = lx.inference.OllamaLanguageModel(
+            model_id=self.model,
+            model_url=self.base_url,
+        )
+
+        self.prompt = """
+You are an information extraction engine.
+
+Extract every searchable entity from the user query.
+
+Only extract information explicitly mentioned.
+
+Never infer.
+
+Return structured extractions only.
+"""
+
+    async def extract(
+        self,
+        query: str,
+    ) -> dict:
+
+        logger.info("=" * 80)
+        logger.info("LANGEXTRACT QUERY")
+        logger.info(query)
+        logger.info("=" * 80)
+
+        try:
+
+            result = lx.extract(
+                text_or_documents=query,
+                prompt_description=self.prompt,
+                examples=EXAMPLES,
+                inference_engine=self.inference_engine,
+                fence_output=False,
+                use_schema_constraints=False,
+            )
+
+            logger.info("=" * 80)
+            logger.info("RAW LANGEXTRACT RESULT")
+            logger.info(result)
+            logger.info("=" * 80)
+
+            return self.normalize(
+                query=query,
+                result=result,
+            )
+
+        except Exception:
+
+            logger.exception("LangExtract Failed")
+
+            return self.empty(query)
+
+    def normalize(
+        self,
+        query,
+        result,
+    ):
+
+        entities = self.empty(query)
+
+        raw = []
+
+        try:
+
+            extractions = getattr(result, "extractions", [])
+
+            for extraction in extractions:
+                label = extraction.extraction_class.lower().strip()
+                value = extraction.extraction_text.strip()
+
+                raw.append({
+                    "label": label,
+                    "text": value,
+                    "confidence": getattr(
+                        extraction,
+                        "confidence",
+                        None,
+                    )
+                })
+
+                if label == "person_name":
+                    entities["person_names"].append(value)
+
+                elif label == "company":
+                    entities["companies"].append(value)
+
+                elif label == "location":
+                    entities["locations"].append(value)
+
+                elif label == "job_title":
+                    entities["job_titles"].append(value)
+
+                elif label == "department":
+                    entities["departments"].append(value)
+
+                elif label == "skill":
+                    entities["skills"].append(value)
+
+                elif label == "technology":
+                    entities["technologies"].append(value)
+
+                elif label == "salary":
+                    entities["salary"].append(value)
+
+                elif label == "experience":
+                    entities["experience"].append(value)
+
+                elif label == "award":
+                    entities["awards"].append(value)
+
+                elif label == "event":
+                    entities["events"].append(value)
+
+                elif label == "article":
+                    entities["articles"].append(value)
+
+                elif label == "language":
+                    entities.setdefault(
+                        "languages",
+                        []
+                    ).append(value)
+
+                elif label == "nationality":
+                    entities.setdefault(
+                        "nationalities",
+                        []
+                    ).append(value)
+
+                elif label == "employment_type":
+                    entities.setdefault(
+                        "employment_types",
+                        []
+                    ).append(value)
+
+                elif label == "visa":
+                    entities.setdefault(
+                        "visas",
+                        []
+                    ).append(value)
+
+            entities["raw_entities"] = raw
+
+            logger.info("=" * 80)
+            logger.info("NORMALIZED ENTITIES")
+            logger.info(entities)
+            logger.info("=" * 80)
+
+            return entities
+
+        except Exception:
+
+            logger.exception("Normalization Failed")
+
+            return entities
+
+    def empty(
+        self,
+        query,
+    ):
+
+        return {
+
+            "query": query,
+
+            "person_names": [],
+            "companies": [],
+            "locations": [],
+            "skills": [],
+            "technologies": [],
+            "job_titles": [],
+            "departments": [],
+            "experience": [],
+            "salary": [],
+            "awards": [],
+            "events": [],
+            "articles": [],
+            "languages": [],
+            "nationalities": [],
+            "employment_types": [],
+            "visas": [],
+
+            "raw_entities": []
+
+        }

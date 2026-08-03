@@ -1,5 +1,5 @@
 from ai_v4.planner.intent import IntentDetector
-from ai_v4.planner.entities import EntityExtractor
+from ai_v4.planner.extractors.semantic_extractor import SemanticExtractor
 from ai_v4.planner.query_parser import QueryParser
 from ai_v4.planner.search_planner import SearchPlanner
 from ai_v4.planner.router import PlannerRouter
@@ -12,7 +12,7 @@ class Planner:
 
     def __init__(self):
         self.intent = IntentDetector()
-        self.entities = EntityExtractor()
+        self.semantic = SemanticExtractor()
         self.router = PlannerRouter()
         self.clarification = ClarificationDetector()
         self.parser = QueryParser()
@@ -26,7 +26,8 @@ class Planner:
         logger.info("[1/4] Creating execution plan...")
 
         intent = await self.intent.detect(query)
-        entities = await self.entities.extract(query)
+        # entities = await self.entities.extract(query)
+        entities = await self.semantic.extract(query)
         logger.info("="*60)
         logger.info("ENTITIES")
         logger.info(entities)
