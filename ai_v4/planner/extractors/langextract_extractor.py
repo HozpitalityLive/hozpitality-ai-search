@@ -5,6 +5,8 @@ from ai_v4.config.logger import logger
 from ai_v4.planner.extractors.base import BaseExtractor
 from ai_v4.planner.extractors.examples import EXAMPLES
 from ai_v4.planner.extractors.schema import SEARCH_SCHEMA
+from langextract.factory import ModelConfig
+from langextract.factory import create_model
 
 
 class LangExtractExtractor(BaseExtractor):
@@ -15,20 +17,25 @@ class LangExtractExtractor(BaseExtractor):
         logger.info("Initializing LangExtract...")
         logger.info("=" * 80)
         self.base_url = settings.OLLAMA_URL
-        self.model = "llama3-hoz"
-        self.inference_engine = lx.inference.OllamaLanguageModel(
-            model_id=self.model,
-            model_url=self.base_url,
+        self.model = create_model(
+            ModelConfig(
+                model_id="llama3-hoz",
+                provider="ollama",
+                model_url=settings.OLLAMA_URL,
+            ),
+            examples=EXAMPLES,
         )
 
         self.prompt = """
-You are an information extraction engine.
+You are Hozpitality AI's semantic extraction engine.
 
-Extract every searchable entity from the user query.
+Extract ONLY entities explicitly mentioned by the user.
 
-Only extract information explicitly mentioned.
+Do not infer missing information.
 
-Never infer.
+Use only the provided schema.
+
+If an entity is absent, do not create one.
 
 Return structured extractions only.
 """
@@ -45,11 +52,14 @@ Return structured extractions only.
 
         try:
 
+            
+
             result = lx.extract(
                 text_or_documents=query,
                 prompt_description=self.prompt,
                 examples=EXAMPLES,
-                inference_engine=self.inference_engine,
+                attributes=SEARCH_SCHEMA,
+                model=self.model,
                 fence_output=False,
                 use_schema_constraints=False,
             )
@@ -85,8 +95,20 @@ Return structured extractions only.
             extractions = getattr(result, "extractions", [])
 
             for extraction in extractions:
-                label = extraction.extraction_class.lower().strip()
-                value = extraction.extraction_text.strip()
+                label = getattr(
+                    extraction,
+                    "extraction_class",
+                    ""
+                ).lower().strip()
+
+                value = getattr(
+                    extraction,
+                    "extraction_text",
+                    ""
+                ).strip()
+
+                if not label or not value:
+                    continue
 
                 raw.append({
                     "label": label,
