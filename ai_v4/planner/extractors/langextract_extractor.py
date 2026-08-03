@@ -21,9 +21,12 @@ class LangExtractExtractor(BaseExtractor):
             ModelConfig(
                 model_id="llama3-hoz",
                 provider="ollama",
-                model_url=settings.OLLAMA_URL,
+                provider_kwargs={
+                    "model_url": settings.OLLAMA_URL,
+                },
             ),
             examples=EXAMPLES,
+            use_schema_constraints=False,
         )
 
         self.prompt = """
