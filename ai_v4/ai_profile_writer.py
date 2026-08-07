@@ -53,9 +53,9 @@ def build_profile(profile: dict) -> str:
 
     if profile_type == "company":
         fields = [
-            ("Business Name", profile.get("business_name")),
-            ("Created By", profile.get("created_by")),
-            ("Designation", profile.get("designation")),
+            ("Business Name", profile.get("companyname")),
+            ("Created By", profile.get("createdBy")),
+            ("Designation", profile.get("currentDesignation")),
             ("Industry", profile.get("industry")),
             ("Supplier Category", profile.get("supplier_category")),
             ("Country", profile.get("country")),
@@ -107,7 +107,7 @@ async def generate_profile_content(
     profile_type = (profile.get("profile_type") or "professional").lower()
 
     if profile_type == "company":
-        name = profile.get("business_name", "")
+        name = profile.get("companyname", "")
     else:
         name = " ".join(
             filter(
@@ -124,128 +124,97 @@ async def generate_profile_content(
     if content_type.lower() == "tagline":
         if profile_type == "company":
             prompt = f"""
-    Write ONE professional company tagline.
+        You write factual company taglines.
 
-    Use ONLY the information below.
+        Company Profile
 
-    Company Profile:
-    {profile_text}
+        {profile_text}
 
-    Rules:
-    - One sentence only.
-    - 80-150 characters when possible.
-    - Mention the company name.
-    - Mention the industry if available.
-    - Mention the country if available.
-    - Rewrite the available facts professionally.
-    - Do NOT invent products, services, customers, expertise, experience, mission, values, awards or certifications.
-    - If the available information is limited, return a shorter factual tagline.
-    - Return ONLY the tagline.
-    """
+        Rules
 
-        else:
-            prompt = f"""
-    Write ONE professional profile tagline.
+        Use ONLY the profile information.
 
-    Use ONLY the information below.
+        Do NOT invent:
 
-    Professional Profile:
-    {profile_text}
+        - services
+        - products
+        - expertise
+        - customers
+        - mission
+        - vision
+        - quality
+        - innovation
+        - solutions
+        - experience
+        - leadership
 
-    Rules:
-    - One sentence only.
-    - 80-150 characters when possible.
-    - Mention the person's name if available.
-    - Naturally include available role, industry, department, company or skills.
-    - Rewrite the available facts professionally.
-    - Do NOT invent employers, experience, achievements, certifications, projects, responsibilities or expertise.
-    - If the available information is limited, return a shorter factual tagline.
-    - Return ONLY the tagline.
-    """
+        If Company Name exists,
+        start with it.
+
+        Mention Industry only if available.
+
+        Mention Country only if available.
+
+        One sentence.
+
+        Maximum 150 characters.
+
+        Return ONLY the tagline.
+        """
             
     elif content_type.lower() == "about":
         if profile_type == "company":
             prompt = f"""
-You are an expert business content writer.
+You are writing an About Us section.
 
-Your task is to write an "About Us" section for a company.
+The profile below is the ONLY source of truth.
 
-Company Name:
-{name if name else "Not Provided"}
-
-COMPANY PROFILE
+Company Profile
 
 {profile_text}
 
-CRITICAL INSTRUCTIONS
+Rules
 
-The company profile above is the ONLY source of truth.
+Every sentence MUST be supported by the profile.
 
-Every statement must be supported by the supplied information.
+Never invent:
 
-Never use information from:
-- previous conversations
-- training data
-- memory
-- assumptions
-- common industry knowledge
-
-DO NOT invent or guess:
-- products
 - services
-- customers
-- experience
-- years in business
-- history
-- company size
-- offices
-- branches
-- locations
-- certifications
-- awards
-- partnerships
+- products
 - expertise
+- experience
+- customers
+- technologies
+- solutions
 - mission
 - vision
 - values
-- technologies
+- offices
+- history
+- achievements
+- awards
+- certifications
 
-If information is missing, omit it completely.
+If information is missing,
+leave it out.
 
-You MAY:
-- professionally rewrite the provided information
-- expand the wording without changing the meaning
-- combine available facts into natural sentences
-- improve readability
-- use professional business language
+Write naturally.
 
-Requirements
+2-4 short sentences.
 
-- Around 150–350 characters.
-- 4–5 sentences.
-- If the supplied profile contains limited information, produce a shorter response rather than inventing facts.
-- Begin with the company name only if it exists.
-- If no company name exists, do not use placeholders.
-- Professional and trustworthy tone.
-- No bullet points.
-- No headings.
-- No quotation marks.
-- No markdown.
-- No emojis.
+Maximum 450 characters.
 
-OUTPUT FORMAT
+Begin with the company name if available.
 
-Return ONLY the About Us section.
+Return ONLY the About Us text.
 
-Do not include:
-- Here is...
-- About Us:
-- Certainly
-- Let me know...
-- explanations
-- notes
-- markdown
-- any text before or after the response.
+No headings.
+
+No markdown.
+
+No quotes.
+
+No explanations.
 """
         else:
             prompt = f"""
