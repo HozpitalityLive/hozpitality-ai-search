@@ -54,8 +54,8 @@ def build_profile(profile: dict) -> str:
     if profile_type == "company":
         fields = [
             ("Business Name", profile.get("companyname")),
-            ("Created By", profile.get("createdBy")),
-            ("Designation", profile.get("currentDesignation")),
+            # ("Created By", profile.get("createdBy")),
+            # ("Designation", profile.get("currentDesignation")),
             ("Industry", profile.get("industry")),
             ("Supplier Category", profile.get("supplier_category")),
             ("Country", profile.get("country")),
