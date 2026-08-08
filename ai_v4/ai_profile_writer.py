@@ -73,7 +73,7 @@ def build_profile(profile: dict) -> str:
         )
 
         fields = [
-            ("Hi, I am professional My Name", full_name),
+            ("Name", full_name),
             ("Industry", profile.get("industry")),
             ("Department", profile.get("department")),
             ("Role", profile.get("role")),
@@ -170,23 +170,61 @@ Write ONE factual professional tagline using ONLY the Professional Profile below
 PROFESSIONAL PROFILE:
 {profile_text}
 
+TAGLINE FORMAT:
+
+Hi, I am a [Industry] professional working as [Role] based in [Location].
+
 STRICT RULES:
-- Use only facts explicitly present in the profile.
-- Do not invent or infer anything.
+
+- The tagline MUST start with "Hi, I am a".
+- Do NOT mention the person's name.
+- Use the Industry field when available.
+- Use the Role field when available.
+- Use City and Country as the location when available.
+- If both City and Country are available, format the location as "City, Country".
+- If only City is available, use only the City.
+- If only Country is available, use only the Country.
+- Do not invent or infer any information.
 - Do not use information from training data, memory, previous conversations, or general knowledge.
 - Do not invent employers, companies, job titles, responsibilities, expertise, achievements, certifications, projects, skills, experience, or locations.
-- Mention the person's name if available.
-- Mention role, industry, department, company, skills, experience, or location only when explicitly provided.
-- Professionally rewrite the available facts without changing their meaning.
+- Only use information explicitly provided in the profile.
+- Do not mention the person's name even if it is available.
+- Do not mention department, company, skills, experience, education, achievements, or certifications unless they are required to complete the format.
+- Keep the wording natural and professional.
 - One sentence only.
 - Maximum 150 characters.
-- Prefer 80-150 characters when enough factual information exists.
-- If information is limited, produce a shorter factual tagline.
+
+MISSING INFORMATION:
+
+- If Industry is missing, say "Hi, I am a professional".
+- If Role is missing, omit "working as [Role]".
+- If Location is missing, omit "based in [Location]".
+- Never create placeholder text.
+- Never guess missing information.
+
+EXAMPLES:
+
+If Industry, Role, City and Country are available:
+Hi, I am a Facility Management professional working as Facility Manager based in Vasai-Virar, India.
+
+If Industry, Role and City are available:
+Hi, I am a Facility Management professional working as Facility Manager based in Vasai-Virar.
+
+If Industry and Location are available:
+Hi, I am a Facility Management professional based in Vasai-Virar, India.
+
+If Industry and Role are available:
+Hi, I am a Facility Management professional working as Facility Manager.
+
+If only Industry is available:
+Hi, I am a Facility Management professional.
 
 OUTPUT RULE:
+
 Return ONLY the tagline text.
 
 DO NOT return:
+
 - "Here's your professional tagline:"
 - "Here is your professional tagline:"
 - "Here's your tagline:"
@@ -200,10 +238,10 @@ DO NOT return:
 - quotes
 - markdown
 - bullet points
-- any introductory or closing text
+- introductory text
+- closing text
 
-The first character of your response must be the first character of the tagline.
-The last character must be the last character of the tagline.
+The first character of your response must be "H".
 """
 
             
