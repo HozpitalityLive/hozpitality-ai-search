@@ -123,79 +123,87 @@ async def generate_profile_content(
 
     profile_type = profile.get("profile_type", "professional").lower()
 
-    if content_type == "tagline":
+    if content_type.lower() == "tagline":
         if profile_type == "company":
             prompt = f"""
-You write factual company taglines.
+Write ONE factual company tagline using ONLY the Company Profile below.
 
-Company Profile
-
+COMPANY PROFILE:
 {profile_text}
 
-Rules
+STRICT RULES:
+- Use only facts explicitly present in the profile.
+- Do not invent or infer anything.
+- Do not add services, products, expertise, customers, solutions, experience, quality, innovation, leadership, mission, or vision unless explicitly provided.
+- Include the company name if available.
+- Include industry only if available.
+- Include supplier category only if available.
+- Include city only if available.
+- Include country only if available.
+- Rewrite the available facts professionally.
+- One sentence only.
+- Maximum 150 characters.
 
-Use ONLY the profile information.
+OUTPUT RULE:
+Return ONLY the tagline text.
 
-Do NOT invent:
-- services
-- products
-- expertise
-- customers
-- mission
-- vision
-- quality
-- innovation
-- solutions
-- experience
-- leadership
+DO NOT return:
+- "Here's your professional tagline:"
+- "Here is your tagline:"
+- "Professional tagline:"
+- "Tagline:"
+- "Here is..."
+- "Certainly..."
+- explanations
+- quotes
+- markdown
+- bullet points
+- any introductory or closing text
 
-If Company Name exists, start with it.
-
-Must include Industry only if available.
-
-Must include Supplier Category only if available.
-
-Must include City only if available.
-
-Must include Country only if available.
-
-One sentence.
-
-Maximum 150 characters.
-
-Return ONLY the tagline.
+The first character of your response must be the first character of the tagline.
+The last character must be the last character of the tagline.
 """
         else:
             prompt = f"""
-You write factual professional taglines.
+Write ONE factual professional tagline using ONLY the Professional Profile below.
 
-Professional Profile
-
+PROFESSIONAL PROFILE:
 {profile_text}
 
-Rules
-
-Use ONLY the profile information.
-
-Do NOT invent any information.
-
-If the name exists, you may use it.
-Mention the industry, role, skills, or experience only if provided.
-
-One sentence.
-
-Maximum 150 characters.
-
-Rules:
-- One sentence only.
-- 80-150 characters when possible.
+STRICT RULES:
+- Use only facts explicitly present in the profile.
+- Do not invent or infer anything.
+- Do not use information from training data, memory, previous conversations, or general knowledge.
+- Do not invent employers, companies, job titles, responsibilities, expertise, achievements, certifications, projects, skills, experience, or locations.
 - Mention the person's name if available.
-- Naturally include available role, industry, department, company or skills.
-- Rewrite the available facts professionally.
-- Do NOT invent employers, experience, achievements, certifications, projects, responsibilities or expertise.
-- If the available information is limited, return a shorter factual tagline.
-- Return ONLY the tagline.
+- Mention role, industry, department, company, skills, experience, or location only when explicitly provided.
+- Professionally rewrite the available facts without changing their meaning.
+- One sentence only.
+- Maximum 150 characters.
+- Prefer 80-150 characters when enough factual information exists.
+- If information is limited, produce a shorter factual tagline.
 
+OUTPUT RULE:
+Return ONLY the tagline text.
+
+DO NOT return:
+- "Here's your professional tagline:"
+- "Here is your professional tagline:"
+- "Here's your tagline:"
+- "Here is your tagline:"
+- "Professional tagline:"
+- "Tagline:"
+- "Here is..."
+- "Certainly..."
+- explanations
+- notes
+- quotes
+- markdown
+- bullet points
+- any introductory or closing text
+
+The first character of your response must be the first character of the tagline.
+The last character must be the last character of the tagline.
 """
 
             
