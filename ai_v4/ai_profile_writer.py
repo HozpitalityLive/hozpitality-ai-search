@@ -59,6 +59,7 @@ def build_profile(profile: dict) -> str:
             ("Industry", profile.get("industry")),
             ("Supplier Category", profile.get("supplier_category")),
             ("Country", profile.get("country")),
+            ("City", profile.get("city")),
         ]
     else:
         full_name = " ".join(
@@ -76,6 +77,7 @@ def build_profile(profile: dict) -> str:
             ("Industry", profile.get("industry")),
             ("Department", profile.get("department")),
             ("Role", profile.get("role")),
+            ("City", profile.get("city")),
             ("Job Level", profile.get("job_level")),
             ("Currently Working in Company", profile.get("working_in_company")),
             ("Languages", profile.get("languages")),
