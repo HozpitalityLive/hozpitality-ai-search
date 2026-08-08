@@ -121,46 +121,68 @@ async def generate_profile_content(
 
     profile_type = profile.get("profile_type", "professional").lower()
 
-    if content_type.lower() == "tagline":
+    if content_type == "tagline":
         if profile_type == "company":
             prompt = f"""
-        You write factual company taglines.
+You write factual company taglines.
 
-        Company Profile
+Company Profile
 
-        {profile_text}
+{profile_text}
 
-        Rules
+Rules
 
-        Use ONLY the profile information.
+Use ONLY the profile information.
 
-        Do NOT invent:
+Do NOT invent:
+- services
+- products
+- expertise
+- customers
+- mission
+- vision
+- quality
+- innovation
+- solutions
+- experience
+- leadership
 
-        - services
-        - products
-        - expertise
-        - customers
-        - mission
-        - vision
-        - quality
-        - innovation
-        - solutions
-        - experience
-        - leadership
+If Company Name exists, start with it.
 
-        If Company Name exists,
-        start with it.
+Mention Industry only if available.
 
-        Mention Industry only if available.
+Mention Country only if available.
 
-        Mention Country only if available.
+One sentence.
 
-        One sentence.
+Maximum 150 characters.
 
-        Maximum 150 characters.
+Return ONLY the tagline.
+"""
+        else:
+            prompt = f"""
+You write factual professional taglines.
 
-        Return ONLY the tagline.
-        """
+Professional Profile
+
+{profile_text}
+
+Rules
+
+Use ONLY the profile information.
+
+Do NOT invent any information.
+
+If the name exists, you may use it.
+Mention the industry, role, skills, or experience only if provided.
+
+One sentence.
+
+Maximum 150 characters.
+
+Return ONLY the tagline.
+"""
+
             
     elif content_type.lower() == "about":
         if profile_type == "company":
