@@ -151,9 +151,13 @@ Do NOT invent:
 
 If Company Name exists, start with it.
 
-Mention Industry only if available.
+Must include Industry only if available.
 
-Mention Country only if available.
+Must include Supplier Category only if available.
+
+Must include City only if available.
+
+Must include Country only if available.
 
 One sentence.
 
