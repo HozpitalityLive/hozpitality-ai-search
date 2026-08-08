@@ -180,7 +180,16 @@ One sentence.
 
 Maximum 150 characters.
 
-Return ONLY the tagline.
+Rules:
+- One sentence only.
+- 80-150 characters when possible.
+- Mention the person's name if available.
+- Naturally include available role, industry, department, company or skills.
+- Rewrite the available facts professionally.
+- Do NOT invent employers, experience, achievements, certifications, projects, responsibilities or expertise.
+- If the available information is limited, return a shorter factual tagline.
+- Return ONLY the tagline.
+
 """
 
             
