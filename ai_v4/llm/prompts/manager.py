@@ -7,39 +7,9 @@ from ai_v4.llm.prompts.marketplace_prompt import MarketplacePrompt
 from ai_v4.llm.prompts.awards_prompt import AwardsPrompt
 from ai_v4.llm.prompts.event_prompt import EventPrompt
 from ai_v4.llm.prompts.faq_prompt import FAQPrompt
-
-
 class PromptManager:
-
     def __init__(self):
-
-        self.prompts = {
-            "chat": ChatPrompt(),
-            "job": JobPrompt(),
-            "company": CompanyPrompt(),
-            "professional": ProfessionalPrompt(),
-            "article": ArticlePrompt(),
-            "marketplace": MarketplacePrompt(),
-            "award": AwardsPrompt(),
-            "event": EventPrompt(),
-            "faq": FAQPrompt(),
-        }
-
-    def build(
-        self,
-        agent,
-        query,
-        context,
-        memory
-    ):
-
-        prompt = self.prompts.get(agent)
-
-        if prompt is None:
-            raise ValueError(f"No prompt registered for '{agent}'")
-
-        return prompt.build(
-            query=query,
-            context=context,
-            memory=memory
-        )
+        self.prompts={"job":JobPrompt(),"company":CompanyPrompt(),"professional":ProfessionalPrompt(),"article":ArticlePrompt(),"marketplace":MarketplacePrompt(),"product":MarketplacePrompt(),"award":AwardsPrompt(),"awards":AwardsPrompt(),"event":EventPrompt(),"faq":FAQPrompt(),"chat":ChatPrompt()}
+    def build(self,agent,query,context,memory=None):
+        p=self.prompts.get(agent,self.prompts["chat"])
+        return p.build(query,context,memory)

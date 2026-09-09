@@ -1,85 +1,10 @@
 from ai_v4.planner.intent import Intent
-
-
 class PlannerRouter:
-
-    ROUTES = {
-
-        Intent.GREETING: {
-            "agents": [],
-            "need_search": False,
-        },
-
-        Intent.CHAT: {
-            "agents": [],
-            "need_search": False,
-        },
-
-        Intent.JOB_SEARCH: {
-            "agents": ["job"],
-            "need_search": True,
-        },
-
-        Intent.COMPANY_SEARCH: {
-            "agents": ["company"],
-            "need_search": True,
-        },
-
-        Intent.PROFESSIONAL_SEARCH: {
-            "agents": ["professional"],
-            "need_search": True,
-        },
-
-        Intent.ARTICLE_SEARCH: {
-            "agents": ["article"],
-            "need_search": True,
-        },
-
-        Intent.EVENT_SEARCH: {
-            "agents": ["event"],
-            "need_search": True,
-        },
-
-        Intent.AWARD_SEARCH: {
-            "agents": ["award"],
-            "need_search": True,
-        },
-
-        Intent.PRODUCT_SEARCH: {
-            "agents": ["product"],
-            "need_search": True,
-        },
-
-        Intent.FAQ: {
-            "agents": ["faq"],
-            "need_search": True,
-        }
-
+    ROUTES={
+      Intent.JOB_SEARCH:["job"],Intent.JOB_ANALYTICS:["job"],Intent.COMPANY_SEARCH:["company"],
+      Intent.PROFESSIONAL_SEARCH:["professional"],Intent.ARTICLE_SEARCH:["article"],
+      Intent.EVENT_SEARCH:["event"],Intent.PRODUCT_SEARCH:["product"],Intent.AWARD_SEARCH:["awards"],Intent.FAQ:["faq"]
     }
-
-    async def route(
-        self,
-        intent,
-        entities
-    ):
-
-        route = self.ROUTES.get(intent)
-
-        if not route:
-
-            return {
-                "mode": "single",
-                "agents": [],
-                "parallel": False,
-                "need_search": False,
-                "need_memory": True,
-                "need_llm": True
-            }
-
-        return {
-            "mode": "parallel" if len(route["agents"]) > 1 else "single",
-            "parallel": len(route["agents"]) > 1,
-            "need_memory": True,
-            "need_llm": True,
-            **route
-        }
+    async def route(self,intent,entities):
+        a=self.ROUTES.get(intent,[])
+        return {"mode":"parallel" if len(a)>1 else "single","agents":a,"parallel":len(a)>1,"need_memory":True,"need_llm":True,"need_search":bool(a)}

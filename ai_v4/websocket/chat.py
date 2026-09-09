@@ -1,64 +1,26 @@
-# ai_v4/websocket/chat.py
-
-from fastapi import APIRouter
-from fastapi import WebSocket
-from fastapi import WebSocketDisconnect
-
+from fastapi import APIRouter,WebSocket,WebSocketDisconnect
 import json
-
 from ai_v4.websocket.manager import manager
 from ai_v4.services.chat_service import ChatService
-from ai_v4.config.logger import logger
+from ai_v4.config.settings import settings
 
-router = APIRouter()
-
-chat_service = ChatService()
+router=APIRouter(); chat_service=ChatService()
 
 @router.websocket("/ws/chat")
-async def ai_search(websocket: WebSocket):
-
-    user_id = 0
-
+async def ai_search(websocket:WebSocket):
+    user_id=0
     await websocket.accept()
-
     try:
-
-        first_message = await websocket.receive_text()
-        payload = json.loads(first_message)
-
-        user_id = int(payload.get("user_id", 0))
-
-        await manager.connect(
-            websocket,
-            user_id
-        )
-
-        logger.info(
-            f"Connected User : {user_id}"
-        )
-
-        await chat_service.handle_message(
-            user_id,
-            websocket,
-            payload
-        )
-
+        first=json.loads(await websocket.receive_text())
+        user_id=int(first.get("user_id",0))
+        if settings.API_KEY and first.get("api_key")!=settings.API_KEY:
+            await websocket.send_json({"type":"error","message":"Unauthorized"});await websocket.close(code=1008);return
+        await manager.connect(websocket,user_id)
+        await chat_service.handle_message(user_id,websocket,first)
         while True:
-            message = await websocket.receive_text()
-            payload = json.loads(message)
-
-            await chat_service.handle_message(
-                user_id,
-                websocket,
-                payload
-            )
-
+            payload=json.loads(await websocket.receive_text())
+            await chat_service.handle_message(user_id,websocket,payload)
     except WebSocketDisconnect:
-        logger.info(
-            f"User Disconnected : {user_id}"
-        )
         await manager.disconnect(user_id)
-
-    except Exception as e:
-        logger.exception(e)
+    except Exception:
         await manager.disconnect(user_id)

@@ -1,133 +1,21 @@
-from ai_v4.config.logger import logger
-
-from ai_v4.planner.parsers import (
-    KeywordParser,
-    PersonParser,
-    CompanyParser,
-    LocationParser,
-    JobParser,
-    SkillParser,
-    SalaryParser,
-    ExperienceParser,
-    DateParser,
-    SortParser,
-    # CategoryParser
-)
-from ai_v4.planner.utils import deep_merge
-
-
 class QueryParser:
-
-    def __init__(self):
-
-        self.parsers = [
-            KeywordParser(),
-            PersonParser(),
-            CompanyParser(),
-            LocationParser(),
-            JobParser(),
-            SkillParser(),
-            SalaryParser(),
-            ExperienceParser(),
-            DateParser(),
-            SortParser(),
-            # CategoryParser(),
-        ]
-
-    async def parse(
-        self,
-        query: str,
-        intent,
-        entities: dict,
-    ) -> dict:
-
-        logger.info("[2/4] Parsing Query...")
-
-        filters = {
-            "keyword": "",
-
-            "person": {
-                "name": None
-            },
-
-            "company": {
-                "name": None
-            },
-
-            "location": {
-                "city": None,
-                "country": None
-            },
-
-            "job": {
-                "title": None,
-                "department": None
-            },
-
-            "salary": {
-                "min": None,
-                "max": None,
-                "currency": None
-            },
-
-            "experience": {
-                "min": None,
-                "max": None,
-                "unit": "years"
-            },
-
-            "date": {
-                "from": None,
-                "to": None,
-            },
-
-            "time_scope": None,
-
-            "sort": {
-                "field": None,
-                "order": None
-            },
-
-            "category": None,
-
-            "employment": {
-                "type": None
-            },
-
-            "education": [],
-
-            "certifications": [],
-
-            "languages": [],
-
-            "nationalities": [],
-
-            "visa": {
-                "type": None
-            },
-
-            "skills": [],
-
-            "technologies": []
+    async def parse(self,query,intent,entities):
+        e=entities or {}
+        return {
+            "keyword": " ".join(dict.fromkeys(e.get("skills",[])+e.get("job_titles",[])+e.get("articles",[])+e.get("events",[]))) or query,
+            "locations": e.get("locations",[]),
+            "roles": e.get("job_titles",[]),
+            "skills": e.get("skills",[]),
+            "salary": e.get("salary",[]),
+            "experience": e.get("experience",[]),
+            "date": e.get("date",{}),
+            "job_level": e.get("job_level",[]),
+            "employment_types": e.get("employment_types",[]),
+            "exclude_terms": e.get("exclude_terms",[]),
+            "company": e.get("companies",[]),
+            "category": {
+                "job_search":"job","job_analytics":"job","company_search":"company",
+                "professional_search":"professional","article_search":"article",
+                "event_search":"event","product_search":"product","award_search":"awards","faq":"faq"
+            }.get(intent.value)
         }
-
-        for parser in self.parsers:
-
-            result = await parser.parse(
-                query=query,
-                entities=entities,
-                filters=filters,
-            )
-
-            if result:
-                filters = deep_merge(
-                    filters,
-                    result
-                )
-
-        logger.info("=" * 80)
-        logger.info("FILTERS")
-        logger.info(filters)
-        logger.info("=" * 80)
-
-        return filters

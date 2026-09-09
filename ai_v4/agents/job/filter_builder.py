@@ -1,29 +1,6 @@
 class JobFilterBuilder:
-
-    def build(
-        self,
-        plan: dict
-    ):
-
-        entities = plan.get(
-            "entities",
-            {}
-        )
-
-        filters = {
-            "category": "job"
-        }
-
-        if entities.get("locations"):
-            filters["location"] = entities["locations"][0]
-
-        if entities.get("skills"):
-            filters["skills"] = entities["skills"]
-
-        if entities.get("roles"):
-            filters["role"] = entities["roles"][0]
-
-        if entities.get("experience"):
-            filters["experience"] = entities["experience"]
-
-        return filters
+    def build(self,plan):
+        e=plan.get("entities",{}); f={"category":"job"}
+        for src,dst in [("locations","locations"),("skills","skills"),("job_titles","roles"),("exclude_terms","exclude_terms"),("employment_types","employment_types"),("experience","experience"),("salary","salary"),("date","date"),("job_level","job_level")]:
+            if e.get(src): f[dst]=e[src]
+        return f
