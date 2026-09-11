@@ -3,3 +3,31 @@ __pycache__/
 *.pyc
 .env
 app.log
+
+
+.env
+.env.*
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# ChromaDB
+chroma_data/
+
+# Runtime
+*.log
+logs/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary
+tmp/
+temp/
