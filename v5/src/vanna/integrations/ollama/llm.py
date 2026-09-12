@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from vanna.core.llm import (
@@ -276,34 +277,90 @@ class OllamaLlmService(LlmService):
 
             text = text.strip()
 
+        # 1) Qwen-style JSON tool call:
+        #    {"name":"run_sql","arguments":{"sql":"SELECT ..."}}
         try:
             data = json.loads(text)
         except Exception:
-            return []
+            data = None
 
-        if not isinstance(data, dict):
-            return []
+        if isinstance(data, dict):
+            name = data.get("name")
+            if name:
+                arguments = data.get("arguments", {})
 
-        name = data.get("name")
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except Exception:
+                        arguments = {"_raw": arguments}
 
-        if not name:
-            return []
+                if not isinstance(arguments, dict):
+                    arguments = {"args": arguments}
 
-        arguments = data.get("arguments", {})
+                return [
+                    ToolCall(
+                        id="content_tool_call_0",
+                        name=name,
+                        arguments=arguments,
+                    )
+                ]
 
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except Exception:
-                arguments = {"_raw": arguments}
+        # 2) Some Qwen/Ollama combinations return the SQL as ordinary text
+        # instead of a native tool call. Convert a read-only SELECT/WITH query
+        # into an implicit run_sql call so SQL is never exposed to the user and
+        # the assistant never asks for permission to execute it.
+        sql = self._extract_readonly_sql(text)
+        if sql:
+            return [
+                ToolCall(
+                    id="implicit_sql_tool_call_0",
+                    name="run_sql",
+                    arguments={"sql": sql},
+                )
+            ]
 
-        if not isinstance(arguments, dict):
-            arguments = {"args": arguments}
+        return []
 
-        return [
-            ToolCall(
-                id="content_tool_call_0",
-                name=name,
-                arguments=arguments,
+    @staticmethod
+    def _extract_readonly_sql(text: str) -> Optional[str]:
+        """Extract a read-only SELECT/WITH query from model text."""
+        if not text:
+            return None
+
+        candidates = []
+
+        fenced = re.search(
+            r"```(?:sql|postgres(?:ql)?)?\s*(.*?)```",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if fenced:
+            candidates.append(fenced.group(1).strip())
+
+        match = re.search(r"(?is)\b(SELECT|WITH)\b.*", text)
+        if match:
+            candidates.append(match.group(0).strip())
+
+        for candidate in candidates:
+            candidate = candidate.strip().rstrip("`").strip()
+            if not re.match(r"^(SELECT|WITH)\b", candidate, re.IGNORECASE):
+                continue
+
+            # Reject multiple statements and non-read-only SQL.
+            if ";" in candidate[:-1]:
+                continue
+
+            forbidden = re.search(
+                r"(?i)\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|VACUUM|CALL|COPY)\b",
+                candidate,
             )
-        ]
+            if forbidden:
+                continue
+
+            if not candidate.endswith(";"):
+                candidate += ";"
+
+            return candidate
+
+        return None
