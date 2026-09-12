@@ -54,6 +54,39 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
     def get_args_schema(self) -> Type[RunSqlToolArgs]:
         return RunSqlToolArgs
 
+    @staticmethod
+    def _markdown_table(records: List[Dict[str, Any]], columns: List[str], max_rows: int = 10) -> str:
+        """Build a compact user-facing markdown table from query results."""
+        if not records or not columns:
+            return "No matching records found."
+
+        # Prefer useful columns and keep the chat readable.
+        preferred = [
+            "job_title", "job_city", "job_status", "job_start_date",
+            "job_end_date", "job_link", "slug"
+        ]
+        selected = [c for c in preferred if c in columns]
+        if not selected:
+            selected = columns[:6]
+        selected = selected[:6]
+
+        def cell(value: Any) -> str:
+            if value is None:
+                return "—"
+            text = str(value).replace("|", "\\|").replace("\\n", " ").replace("\\r", " ")
+            if len(text) > 90:
+                text = text[:87] + "..."
+            return text
+
+        lines = [
+            "| " + " | ".join(selected) + " |",
+            "| " + " | ".join(["---"] * len(selected)) + " |",
+        ]
+        for record in records[:max_rows]:
+            lines.append("| " + " | ".join(cell(record.get(c)) for c in selected) + " |")
+
+        return "\\n".join(lines)
+
     async def execute(self, context: ToolContext, args: RunSqlToolArgs) -> ToolResult:
         """Execute a SQL query using the injected SqlRunner."""
         try:
@@ -151,9 +184,15 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
                         description=f"SQL query returned {row_count} rows with {len(columns)} columns",
                     )
 
+                    user_table = self._markdown_table(results_data, columns, max_rows=10)
+                    user_text = (
+                        f"Found {row_count} result(s). Showing up to 10:\\n\\n"
+                        f"{user_table}"
+                    )
+
                     ui_component = UiComponent(
                         rich_component=dataframe_component,
-                        simple_component=SimpleTextComponent(text=result),
+                        simple_component=SimpleTextComponent(text=user_text),
                     )
 
                     metadata = {

@@ -76,7 +76,7 @@ class ChatHandler:
     def _get_fast_response(message: str) -> Optional[str]:
         """Return an immediate response for common conversational messages."""
         text = " ".join((message or "").strip().lower().split())
-        text = re.sub(r"[^\\w\\s]", "", text)
+        text = re.sub(r"[^\w\s]", "", text)
         if not text:
             return None
 
@@ -96,6 +96,12 @@ class ChatHandler:
             "who are you": "I'm Hozpitality AI. I can help you search and analyze Hozpitality data.",
             "what can you do": "I can help you find jobs and answer questions using Hozpitality's live data.",
             "help": "Try asking: “Find waiter jobs” or “How many available jobs are there?”",
+            "hi vanna": "Hi! 👋 How can I help you with Hozpitality?",
+            "hello vanna": "Hello! 👋 How can I help you today?",
+            "good day": "Hello! 👋 How can I help you today?",
+            "nice to meet you": "Nice to meet you too! 👋 What would you like to find?",
+            "what is hozpitality ai": "I'm Hozpitality AI. I can help you search jobs and analyze live Hozpitality data.",
+            "are you there": "Yes, I'm here! 👋 What would you like to find?",
         }
 
         return responses.get(text)

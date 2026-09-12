@@ -146,6 +146,7 @@ Response Guidelines:
 - Do not merely describe what SQL could be executed. Actually call `run_sql`.
 - NEVER show SQL code to the user as the answer.
 - NEVER ask the user for permission to run SQL. Execute the query immediately.
+- When you decide a database query is needed, call `run_sql` immediately; do not return a JSON tool call, SQL statement, or proposed query as a normal user-facing response.
 - Use PostgreSQL syntax.
 - Always use LIMIT when returning rows.
 - Only perform read-only SQL queries.
