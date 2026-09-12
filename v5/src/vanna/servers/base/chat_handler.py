@@ -56,6 +56,17 @@ class ChatHandler:
             )
             return
 
+        clarification = self._get_clarification_response(request.message)
+        if clarification:
+            component = UiComponent(
+                rich_component=RichTextComponent(content=clarification, markdown=True),
+                simple_component=SimpleTextComponent(text=clarification),
+            )
+            yield ChatStreamChunk.from_component(
+                component, conversation_id, request_id
+            )
+            return
+
         async for component in self.agent.send_message(
             request_context=request.request_context,
             message=request.message,
@@ -111,6 +122,43 @@ class ChatHandler:
         }
 
         return responses.get(text)
+
+    @staticmethod
+    def _get_clarification_response(message: str) -> Optional[str]:
+        """Fast QA gate for under-specified search requests.
+
+        This is deterministic and local so clarification never incurs an LLM
+        round-trip. Clear requests pass directly to Vanna.
+        """
+        text = " ".join((message or "").strip().lower().split())
+        if not text:
+            return "What would you like me to search for?"
+
+        generic_jobs = {
+            "job", "jobs", "find job", "find jobs", "search job",
+            "search jobs", "show jobs", "show me jobs", "find a job",
+            "find me a job", "looking for a job",
+        }
+        if text in generic_jobs:
+            return "What type of job would you like me to find? You can also include a location, for example: **waiter jobs in Dubai**."
+
+        generic_data = {"search", "find", "show me data", "show data", "find data", "search something", "find something"}
+        if text in generic_data:
+            return "What would you like me to search for? Please give me the type of record or topic you need."
+
+        job_words = ("job", "jobs", "vacancy", "vacancies", "opening", "openings", "career", "careers")
+        search_words = ("find", "search", "show", "looking", "look for", "get", "give me")
+        role_indicators = (
+            "waiter", "waitress", "chef", "cook", "housekeeping", "reception",
+            "front office", "manager", "supervisor", "bartender", "steward",
+            "engineer", "accountant", "sales", "hr", "human resources",
+            "security", "driver", "concierge", "bellman", "intern", "developer",
+            "marketing", "finance", "purchasing", "maintenance", "technician",
+        )
+        if any(w in text for w in job_words) and any(w in text for w in search_words) and not any(r in text for r in role_indicators):
+            return "What type of job should I search for? You can give me a role and, if needed, a location—for example: **chef jobs in Dubai**."
+
+        return None
 
     def _generate_conversation_id(self) -> str:
         """Generate new conversation ID."""

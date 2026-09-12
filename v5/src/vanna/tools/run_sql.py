@@ -167,32 +167,36 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
                         filename, csv_content, context, overwrite=True
                     )
 
-                    # Create result text for LLM with truncated results
-                    results_preview = csv_content
-                    if len(results_preview) > 1000:
-                        results_preview = (
-                            results_preview[:1000]
-                            + "\n(Results truncated to 1000 characters. FOR LARGE RESULTS YOU DO NOT NEED TO SUMMARIZE THESE RESULTS OR PROVIDE OBSERVATIONS. THE NEXT STEP SHOULD BE A VISUALIZE_DATA CALL)"
-                        )
+                    # Send compact, labeled records to the LLM. Never send CSV/table
+                    # presentation instructions as the user-facing result.
+                    def _display(v: Any, limit: int = 500) -> str:
+                        if v is None:
+                            return "—"
+                        text = str(v).replace("\n", " ").replace("\r", " ").strip()
+                        return text if len(text) <= limit else text[: limit - 1] + "…"
 
-                    result = f"{results_preview}\n\nResults saved to file: {filename}\n\n**IMPORTANT: FOR VISUALIZE_DATA USE FILENAME: {filename}**"
+                    result_lines = [
+                        f"DATABASE RESULTS: {row_count} row(s).",
+                        "USER PRESENTATION RULE: Return normal ChatGPT-style prose/list items. Do not output SQL, JSON, CSV, or Markdown tables unless the user explicitly asks for a table.",
+                    ]
+                    for idx, record in enumerate(results_data[:25], start=1):
+                        parts = []
+                        for col in columns:
+                            value = record.get(col)
+                            if value is None or value == "":
+                                continue
+                            parts.append(f"{col}={_display(value)}")
+                        result_lines.append(f"{idx}. " + "; ".join(parts))
+                    if row_count > 25:
+                        result_lines.append(f"Additional rows available: {row_count - 25}")
+                    result_lines.append(f"Results saved internally to file: {filename}")
+                    result = "\n".join(result_lines)
 
-                    # Create DataFrame component for UI
-                    dataframe_component = DataFrameComponent.from_records(
-                        records=cast(List[Dict[str, Any]], results_data),
-                        title="Query Results",
-                        description=f"SQL query returned {row_count} rows with {len(columns)} columns",
-                    )
-
-                    user_table = self._markdown_table(results_data, columns, max_rows=10)
-                    user_text = (
-                        f"Found {row_count} result(s). Showing up to 10:\\n\\n"
-                        f"{user_table}"
-                    )
-
+                    # Successful tool UI is intentionally not rendered by Agent in
+                    # normal chat. Keep a compatibility payload only.
                     ui_component = UiComponent(
-                        rich_component=dataframe_component,
-                        simple_component=SimpleTextComponent(text=user_text),
+                        rich_component=SimpleTextComponent(text=""),
+                        simple_component=SimpleTextComponent(text=""),
                     )
 
                     metadata = {

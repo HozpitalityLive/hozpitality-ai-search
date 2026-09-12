@@ -961,10 +961,15 @@ class Agent:
                                 )
 
                             if has_tool_error_access:
-                                yield result.ui_component
+                                # Tool errors are operational details; do not expose
+                                # rich tool UI to the normal chat experience. The
+                                # model receives the error through the tool message.
+                                pass
                         else:
-                            # Success results are always shown if they exist
-                            yield result.ui_component
+                            # Never render raw tool results (tables, CSV, tool
+                            # arguments, SQL, charts) in the normal chat. The user
+                            # should receive only the final natural-language answer.
+                            pass
 
                     # Collect tool result data
                     tool_results.append(
@@ -1011,15 +1016,19 @@ class Agent:
 
                 # Yield final text response
                 if response.content:
-                    # Add assistant response to conversation
+                    # Only the final natural-language response is user-facing.
+                    # Strip accidental tool/SQL protocol text and normalize tables
+                    # to readable chat lists unless the user explicitly asked for
+                    # a table.
+                    clean_content = self._sanitize_user_response(response.content)
                     conversation.add_message(
-                        Message(role="assistant", content=response.content)
+                        Message(role="assistant", content=clean_content)
                     )
                     yield UiComponent(
                         rich_component=RichTextComponent(
-                            content=response.content, markdown=True
+                            content=clean_content, markdown=True
                         ),
-                        simple_component=SimpleTextComponent(text=response.content),
+                        simple_component=SimpleTextComponent(text=clean_content),
                     )
                 break
 
@@ -1219,6 +1228,85 @@ You can:
             stream=self.config.stream_responses,
             system_prompt=system_prompt,
         )
+
+    @staticmethod
+    def _sanitize_user_response(content: str) -> str:
+        """Remove internal tool protocol and keep normal ChatGPT-style text.
+
+        This is a last-line safety layer. It does not replace tool execution;
+        it only prevents accidental protocol/UI leakage to the user.
+        """
+        import json
+        import re
+
+        text = (content or "").strip()
+        if not text:
+            return text
+
+        # Remove fenced JSON/tool-call blocks.
+        def remove_tool_json(match: re.Match) -> str:
+            block = match.group(1).strip()
+            try:
+                obj = json.loads(block)
+                if isinstance(obj, dict) and str(obj.get("name", "")).strip():
+                    return ""
+            except Exception:
+                pass
+            if '"run_sql"' in block or "run_sql" in block:
+                return ""
+            return match.group(0)
+
+        text = re.sub(
+            r"```(?:json)?\s*\n?(.*?)\n?```",
+            remove_tool_json,
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        # Remove inline JSON tool-call objects that survived fencing.
+        text = re.sub(
+            r'\{\s*"name"\s*:\s*"(?:run_sql|run_bigquery_sql|visualize_data)".*?\}\s*',
+            "",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        # Convert markdown tables to numbered/plain list format. This is a
+        # presentation rule for normal chat; explicit table requests are not
+        # available here, so the system prompt also tells the model when tables
+        # are appropriate.
+        lines = [ln.rstrip() for ln in text.splitlines()]
+        out=[]
+        i=0
+        while i < len(lines):
+            if (i+1 < len(lines)
+                and lines[i].strip().startswith("|")
+                and lines[i+1].strip().startswith("|")
+                and re.match(r"^\s*\|?\s*:?-{2,}", lines[i+1])):
+                header=[x.strip() for x in lines[i].strip().strip("|").split("|")]
+                i += 2
+                n=1
+                while i < len(lines) and lines[i].strip().startswith("|"):
+                    vals=[x.strip() for x in lines[i].strip().strip("|").split("|")]
+                    pairs=[]
+                    for j,v in enumerate(vals):
+                        if j < len(header) and v and v != "—":
+                            pairs.append(f"{header[j].replace('_',' ').title()}: {v}")
+                    if pairs:
+                        out.append(f"{n}. " + " · ".join(pairs))
+                        n += 1
+                    i += 1
+                continue
+            out.append(lines[i])
+            i += 1
+
+        text="\n".join(out)
+        # Remove leftover explanatory phrases that expose SQL generation.
+        text=re.sub(r"(?is)\bhere(?:'s| is) the sql(?: query)?[^\n]*\n?", "", text)
+        text=re.sub(r"(?is)\bthe sql (?:query|statement) (?:is|would be)[:\s]*.*", "", text)
+        text=re.sub(r"(?is)would you like me to (?:run|execute) (?:the )?(?:sql|query).*?\??", "", text)
+        text=re.sub(r"\n{3,}", "\n\n", text).strip()
+        return text
 
     async def _send_llm_request(self, request: LlmRequest) -> LlmResponse:
         """Send LLM request with middleware and observability."""
