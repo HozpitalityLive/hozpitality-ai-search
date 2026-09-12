@@ -16,17 +16,8 @@ async def lifespan(app):
     except Exception: pass
 
 app=FastAPI(title="Hozpitality AI Search V4",version="4.1.0",lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://in.localhost:3000",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in settings.CORS_ORIGINS.split(",") if x.strip()],
+                   allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 app.include_router(websocket_router,prefix="/v4")
 app.include_router(profile_writer_router,prefix="/v4/ai-profile-writer",tags=["AI Profile Writer"])
 
