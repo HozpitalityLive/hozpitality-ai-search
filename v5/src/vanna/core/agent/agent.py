@@ -660,9 +660,11 @@ class Agent:
 
                 # First, add the assistant message with tool_calls to the conversation
                 # This is required for OpenAI API - tool messages must follow assistant messages with tool_calls
+                # Tool-call text is internal model protocol data. Never
+                # persist or render it as assistant text.
                 assistant_message = Message(
                     role="assistant",
-                    content=response.content or "",  # Ensure content is not None
+                    content="",
                     tool_calls=response.tool_calls,
                 )
                 conversation.add_message(assistant_message)

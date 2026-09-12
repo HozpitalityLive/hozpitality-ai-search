@@ -84,6 +84,13 @@ class OllamaLlmService(LlmService):
         if not tool_calls:
             tool_calls = self._extract_tool_calls_from_content(content)
 
+        # Tool-call text is an internal protocol artifact. Qwen can return a
+        # tool call as normal text (sometimes wrapped in prose/Markdown JSON).
+        # Once we recognize it as a tool call, never pass that text to the
+        # Agent as assistant content; otherwise it can be rendered to users.
+        if tool_calls:
+            content = None
+
         # Extract usage information if available
         usage: Dict[str, int] = {}
         if "prompt_eval_count" in resp or "eval_count" in resp:
@@ -261,56 +268,83 @@ class OllamaLlmService(LlmService):
     def _extract_tool_calls_from_content(
         self, content: Optional[str]
     ) -> List[ToolCall]:
-        """Extract Qwen-style tool calls returned as JSON text."""
+        """Extract Qwen/Ollama tool calls returned inside normal text.
 
+        Qwen models may return:
+          1. native message.tool_calls
+          2. pure JSON
+          3. prose followed by fenced JSON
+          4. <tool_call>...</tool_call>
+          5. plain SQL
+
+        All recognized tool-call content is treated as internal and is never
+        returned as user-facing assistant text.
+        """
         if not content:
             return []
 
-        text = content.strip()
+        original = content.strip()
+        text = original
 
-        # Handle <tool_call>...</tool_call>
-        if "<tool_call>" in text:
-            text = text.split("<tool_call>", 1)[1]
+        # Prefer the contents of an explicit tool-call tag.
+        tag_match = re.search(
+            r"<tool_call>\s*(.*?)\s*</tool_call>",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if tag_match:
+            text = tag_match.group(1).strip()
 
-            if "</tool_call>" in text:
-                text = text.split("</tool_call>", 1)[0]
+        # Try to decode any JSON object embedded in the response. Using
+        # JSONDecoder.raw_decode lets us find JSON after prose such as
+        # "Sure, I'll search..." and inside Markdown code fences.
+        decoder = json.JSONDecoder()
+        json_candidates = []
 
-            text = text.strip()
+        for match in re.finditer(r"\{", text):
+            try:
+                obj, _ = decoder.raw_decode(text[match.start():])
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if isinstance(obj, dict) and obj.get("name"):
+                json_candidates.append(obj)
 
-        # 1) Qwen-style JSON tool call:
-        #    {"name":"run_sql","arguments":{"sql":"SELECT ..."}}
-        try:
-            data = json.loads(text)
-        except Exception:
-            data = None
+        # Also search the original text because a tool-call tag may not be
+        # the only wrapper around the JSON.
+        if text != original:
+            for match in re.finditer(r"\{", original):
+                try:
+                    obj, _ = decoder.raw_decode(original[match.start():])
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+                if isinstance(obj, dict) and obj.get("name"):
+                    json_candidates.append(obj)
 
-        if isinstance(data, dict):
-            name = data.get("name")
-            if name:
-                arguments = data.get("arguments", {})
+        if json_candidates:
+            data = json_candidates[0]
+            name = str(data.get("name")).strip()
+            arguments = data.get("arguments", {})
 
-                if isinstance(arguments, str):
-                    try:
-                        arguments = json.loads(arguments)
-                    except Exception:
-                        arguments = {"_raw": arguments}
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    arguments = {"_raw": arguments}
 
-                if not isinstance(arguments, dict):
-                    arguments = {"args": arguments}
+            if not isinstance(arguments, dict):
+                arguments = {"args": arguments}
 
-                return [
-                    ToolCall(
-                        id="content_tool_call_0",
-                        name=name,
-                        arguments=arguments,
-                    )
-                ]
+            return [
+                ToolCall(
+                    id="content_tool_call_0",
+                    name=name,
+                    arguments=arguments,
+                )
+            ]
 
-        # 2) Some Qwen/Ollama combinations return the SQL as ordinary text
-        # instead of a native tool call. Convert a read-only SELECT/WITH query
-        # into an implicit run_sql call so SQL is never exposed to the user and
-        # the assistant never asks for permission to execute it.
-        sql = self._extract_readonly_sql(text)
+        # Some Qwen/Ollama combinations emit the SQL itself rather than a
+        # structured tool call. Convert only read-only SQL to run_sql.
+        sql = self._extract_readonly_sql(original)
         if sql:
             return [
                 ToolCall(
