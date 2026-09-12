@@ -44,9 +44,15 @@ class ChatHandler:
         # LLM, database, Chroma memory, or tool loop.
         greeting = self._get_fast_response(request.message)
         if greeting:
-            yield UiComponent(
+            # Convert the component to the actual ChatStreamChunk expected by
+            # the FastAPI SSE/JSON routes. Yielding UiComponent directly here
+            # causes the frontend to receive no `rich`/`simple` payload.
+            component = UiComponent(
                 rich_component=RichTextComponent(content=greeting, markdown=True),
                 simple_component=SimpleTextComponent(text=greeting),
+            )
+            yield ChatStreamChunk.from_component(
+                component, conversation_id, request_id
             )
             return
 
@@ -76,7 +82,7 @@ class ChatHandler:
     def _get_fast_response(message: str) -> Optional[str]:
         """Return an immediate response for common conversational messages."""
         text = " ".join((message or "").strip().lower().split())
-        text = re.sub(r"[^\w\s]", "", text)
+        text = re.sub(r"[^\\w\\s]", "", text)
         if not text:
             return None
 
