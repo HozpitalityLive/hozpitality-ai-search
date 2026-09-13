@@ -194,8 +194,12 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
                     # Successful tool UI is intentionally not rendered by Agent in
                     # normal chat. Keep a compatibility payload only.
                     ui_component = UiComponent(
-                        rich_component=SimpleTextComponent(text=""),
-                        simple_component=SimpleTextComponent(text=""),
+                        rich_component=NotificationComponent(
+                            type=ComponentType.NOTIFICATION,
+                            level="success",
+                            message="SQL query executed successfully.",
+                        ),
+                        simple_component=SimpleTextComponent(text="Query executed successfully."),
                     )
 
                     metadata = {
