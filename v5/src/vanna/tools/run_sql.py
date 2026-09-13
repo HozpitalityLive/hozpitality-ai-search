@@ -189,7 +189,6 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
                         result_lines.append(f"{idx}. " + "; ".join(parts))
                     if row_count > 25:
                         result_lines.append(f"Additional rows available: {row_count - 25}")
-                    result_lines.append(f"Results saved internally to file: {filename}")
                     result = "\n".join(result_lines)
 
                     # Successful tool UI is intentionally not rendered by Agent in

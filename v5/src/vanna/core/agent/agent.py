@@ -683,6 +683,7 @@ class Agent:
 
                 # Collect all tool results first
                 tool_results = []
+                tool_result_metadata = []
                 for i, tool_call in enumerate(response.tool_calls or []):
                     # Add task for this tool execution
                     tool_task = Task(
@@ -982,6 +983,56 @@ class Agent:
                             ),
                         }
                     )
+                    tool_result_metadata.append(
+                        {
+                            "tool_call_id": tool_call.id,
+                            "tool_name": tool_call.name,
+                            "success": result.success,
+                            "metadata": result.metadata or {},
+                        }
+                    )
+
+                # For normal search/list queries, render database rows directly
+                # as clean ChatGPT-style text. This avoids a second LLM pass that can
+                # echo raw rows, SQL, JSON, or Markdown tables and makes result
+                # delivery much faster and more deterministic. Explicit table
+                # requests continue through the normal LLM response path.
+                if not self._user_explicitly_requested_table(message):
+                    select_meta = [
+                        item["metadata"]
+                        for item in tool_result_metadata
+                        if item["success"]
+                        and item.get("tool_name") == "run_sql"
+                        and item["metadata"].get("query_type") == "SELECT"
+                        and item["metadata"].get("results")
+                        and not self._is_schema_inspection(item["metadata"])
+                    ]
+                    if select_meta:
+                        rendered = self._format_database_results(select_meta)
+                        conversation.add_message(
+                            Message(role="assistant", content=rendered)
+                        )
+                        yield UiComponent(
+                            rich_component=StatusBarUpdateComponent(
+                                status="idle",
+                                message="Response complete",
+                                detail="Ready for next message",
+                            )
+                        )
+                        yield UiComponent(
+                            rich_component=ChatInputUpdateComponent(
+                                placeholder="Ask a follow-up question...", disabled=False
+                            )
+                        )
+                        yield UiComponent(
+                            rich_component=RichTextComponent(
+                                content=rendered, markdown=True
+                            ),
+                            simple_component=SimpleTextComponent(text=rendered),
+                        )
+                        if self.config.auto_save_conversations:
+                            await self.conversation_store.update_conversation(conversation)
+                        return
 
                 # Add tool responses to conversation
                 # For APIs that need all tool results in one message, this helps
@@ -1228,6 +1279,100 @@ You can:
             stream=self.config.stream_responses,
             system_prompt=system_prompt,
         )
+
+    @staticmethod
+    def _user_explicitly_requested_table(message: str) -> bool:
+        """Return True only when the user explicitly asks for tabular output."""
+        import re
+        text = (message or "").lower()
+        return bool(re.search(r"\b(table|tabular|spreadsheet|csv|columns)\b", text))
+
+    @staticmethod
+    def _is_schema_inspection(metadata: dict) -> bool:
+        """Do not short-circuit after internal information_schema inspection."""
+        columns = {str(c).lower() for c in (metadata.get("columns") or [])}
+        return bool(
+            {"table_schema", "table_name", "column_name"} & columns
+        )
+
+    @staticmethod
+    def _format_database_results(metadata_list) -> str:
+        """Format SELECT results as concise ChatGPT-style lists, never tables."""
+        import re
+
+        all_records = []
+        total_rows = 0
+        columns = []
+        for meta in metadata_list:
+            records = meta.get("results") or []
+            total_rows += int(meta.get("row_count") or len(records))
+            if records:
+                all_records.extend(records[:10])
+                if not columns:
+                    columns = meta.get("columns") or list(records[0].keys())
+
+        if not all_records:
+            return "I couldn't find any matching results."
+
+        # Detect the Hozpitality entity from its authoritative fields.
+        is_job = "job_title" in columns
+        title_key = next(
+            (k for k in ("title", "name", "question", "job_title") if k in columns),
+            None,
+        )
+        location_keys = [k for k in ("job_city", "city", "location_text", "current_location", "prime_city") if k in columns]
+        status_keys = [k for k in ("job_status", "status", "is_live") if k in columns]
+        link_keys = [k for k in ("job_link", "website", "website_link", "youtube_link") if k in columns]
+
+        if is_job:
+            intro = f"I found {total_rows} matching job{'s' if total_rows != 1 else ''}."
+        elif title_key:
+            intro = f"I found {total_rows} matching result{'s' if total_rows != 1 else ''}."
+        else:
+            intro = f"I found {total_rows} result{'s' if total_rows != 1 else ''}."
+
+        lines = [intro, ""]
+        for idx, record in enumerate(all_records[:10], 1):
+            title = str(record.get(title_key) or "Result") if title_key else "Result"
+            title = re.sub(r"\s+", " ", title).strip()
+            link = next((str(record.get(k)).strip() for k in link_keys if record.get(k)), None)
+            heading = f"**{idx}. [{title}]({link})**" if link else f"**{idx}. {title}**"
+            lines.append(heading)
+
+            if location_keys:
+                loc = next((str(record.get(k)).strip() for k in location_keys if record.get(k)), None)
+                if loc:
+                    lines.append(f"- Location: {loc}")
+
+            if "job_status" in record and record.get("job_status"):
+                lines.append(f"- Status: {record['job_status']}")
+            elif "status" in record and record.get("status"):
+                lines.append(f"- Status: {record['status']}")
+            elif "is_live" in record:
+                lines.append(f"- Status: {'Live' if record.get('is_live') else 'Not live'}")
+
+            for label, key in (
+                ("Start date", "job_start_date"),
+                ("Expiry date", "job_end_date"),
+                ("Created", "created_at"),
+                ("Price", "price"),
+            ):
+                if key in record and record.get(key) not in (None, ""):
+                    lines.append(f"- {label}: {record[key]}")
+
+            desc_key = "job_desc" if "job_desc" in record else ("description" if "description" in record else None)
+            if desc_key and record.get(desc_key):
+                desc = re.sub(r"\s+", " ", str(record[desc_key])).strip()
+                if len(desc) > 240:
+                    desc = desc[:237].rstrip() + "..."
+                lines.append(f"- {desc}")
+
+            lines.append("")
+
+        if total_rows > 10:
+            lines.append(f"Showing the first 10 of {total_rows} results. Ask for a specific location or more results to narrow the search.")
+
+        return "\n".join(lines).strip()
 
     @staticmethod
     def _sanitize_user_response(content: str) -> str:

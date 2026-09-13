@@ -6,6 +6,7 @@ Run with: python main.py
 """
 
 import os
+import re
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -18,6 +19,8 @@ from vanna.core.registry import ToolRegistry
 from vanna.core.user import User
 from vanna.core.user.resolver import UserResolver
 from vanna.core.user.request_context import RequestContext
+from vanna.core.workflow import WorkflowHandler, WorkflowResult
+from vanna.components import UiComponent, RichTextComponent, SimpleTextComponent
 from vanna.integrations.google.gemini import GeminiLlmService
 from vanna.integrations.ollama.llm import OllamaLlmService
 from vanna.integrations.chromadb.agent_memory import ChromaAgentMemory
@@ -43,6 +46,79 @@ class LocalUserResolver(UserResolver):
             group_memberships=["admin"],
         )
 
+
+class HozpitalityWorkflowHandler(WorkflowHandler):
+    """Fast, deterministic front-door QA layer for Hozpitality chat.
+
+    Handles greetings locally and asks for clarification only when a request
+    lacks a critical parameter. Clear database questions continue to Vanna.
+    """
+
+    GREETINGS = {
+        "hi": "Hi! 👋 How can I help you with Hozpitality?",
+        "hello": "Hello! 👋 What can I help you find on Hozpitality?",
+        "hey": "Hey! 👋 How can I help you today?",
+        "hi there": "Hi there! 👋 What would you like to find?",
+        "hello there": "Hello! 👋 What would you like to find?",
+        "good morning": "Good morning! 👋 How can I help you?",
+        "good afternoon": "Good afternoon! 👋 How can I help you?",
+        "good evening": "Good evening! 👋 How can I help you?",
+        "good day": "Good day! 👋 How can I help you?",
+        "how are you": "I'm doing well and ready to help with Hozpitality.",
+        "thanks": "You're welcome! 👋",
+        "thank you": "You're welcome! 👋",
+        "who are you": "I'm Hozpitality AI. I can search Hozpitality jobs, professionals, companies, marketplace products, events, articles and FAQs.",
+        "what can you do": "I can search Hozpitality data and help you find jobs, professionals, companies, products, events, articles and FAQs.",
+        "help": "I can search Hozpitality data for you. Try: “Find waiter jobs in Dubai” or “Find hospitality events in UAE”.",
+    }
+
+    async def try_handle(self, agent, user, conversation, message):
+        normalized = re.sub(r"\s+", " ", message.strip().lower()).strip(" .!?")
+        if normalized in self.GREETINGS:
+            text = self.GREETINGS[normalized]
+            component = UiComponent(
+                rich_component=RichTextComponent(content=text, markdown=True),
+                simple_component=SimpleTextComponent(text=text),
+            )
+            return WorkflowResult(should_skip_llm=True, components=[component])
+
+        # Critical ambiguity gates. Do not slow down clear questions.
+        clarification = self._clarification(normalized)
+        if clarification:
+            component = UiComponent(
+                rich_component=RichTextComponent(content=clarification, markdown=True),
+                simple_component=SimpleTextComponent(text=clarification),
+            )
+            return WorkflowResult(should_skip_llm=True, components=[component])
+
+        return WorkflowResult(should_skip_llm=False)
+
+    @staticmethod
+    def _clarification(message: str):
+        # A generic "find/search/show jobs" request does not identify a useful
+        # role or search term. Ask one question instead of making a broad query.
+        if re.search(r"\b(find|search|show|list|get)\b", message) and re.search(r"\bjobs?\b", message):
+            role_words = re.sub(r"\b(find|search|show|list|get|me|some|any|the|a|an|please|for|jobs?|job|vacancies?|openings?)\b", " ", message)
+            role_words = re.sub(r"\s+", " ", role_words).strip()
+            if not role_words:
+                return "What type of job would you like me to find? You can also include a location, for example: **waiter jobs in Dubai**."
+
+        if re.search(r"\b(find|search|show|list|get)\b", message) and re.search(r"\b(events?|event)\b", message):
+            detail = re.sub(r"\b(find|search|show|list|get|me|some|any|the|a|an|please|for|events?|event)\b", " ", message)
+            if not re.sub(r"\s+", "", detail):
+                return "What type of event or location should I search for? For example: **hospitality events in Dubai**."
+
+        if re.search(r"\b(find|search|show|list|get)\b", message) and re.search(r"\b(products?|marketplace)\b", message):
+            detail = re.sub(r"\b(find|search|show|list|get|me|some|any|the|a|an|please|for|products?|product|marketplace)\b", " ", message)
+            if not re.sub(r"\s+", "", detail):
+                return "What product or category are you looking for? You can also include a location."
+
+        if re.search(r"\b(find|search|show|list|get)\b", message) and re.search(r"\b(articles?|news)\b", message):
+            detail = re.sub(r"\b(find|search|show|list|get|me|some|any|the|a|an|please|for|articles?|article|news)\b", " ", message)
+            if not re.sub(r"\s+", "", detail):
+                return "What topic or category should I search for in the articles?"
+
+        return None
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Vanna Text-to-SQL")
@@ -159,6 +235,26 @@ Response Guidelines:
 - For job searches, prefer partial title matching with `job_title ILIKE '%term%'` rather than exact equality.
 - For job searches, return useful fields such as `job_title`, `job_city`, `job_desc`, `job_status`, `job_start_date`, `job_end_date`, `job_link`, and `slug`; avoid `SELECT *` unless specifically requested.
 
+Hozpitality Search Routing:
+- master_search_mastersearchindex is the cross-module discovery index and contains indexed content for jobs, professionals, companies, marketplace products, events, and articles.
+- Use master_search_mastersearchindex for broad Hozpitality searches where the content type is unclear or the user asks to search across the platform.
+- For a clearly identified content type, prefer its source table so the response contains the authoritative fields and links.
+- Jobs -> base_job
+- Users/accounts -> user_accounts
+- Professionals -> professionals
+- Articles -> base_article
+- Events -> base_event
+- Marketplace products -> marketplace_product
+- FAQs -> base_faq
+- Never invent table names.
+- If the user's wording is ambiguous enough that the correct content type or a critical search term cannot be determined, the QA layer will ask a clarification question before SQL is executed.
+- For a job search, use job_title/job_city terms from the user. Do not require an exact title.
+- For job availability, normally filter is_live = TRUE AND is_deleted = FALSE and exclude expired jobs when the user means currently available.
+- For job results, prefer returning job_title, job_city, job_status, job_start_date, job_end_date, job_link, slug, and a short job_desc excerpt.
+- When company information is requested for a job, LEFT JOIN user_accounts u ON u.id = j.company_id and use u.company_name or u.first_name/last_name only when those fields are appropriate.
+- For broad cross-platform searches, query master_search_mastersearchindex first; use its indexed title, location_text, category_text, ai_keywords and content to identify matching content.
+- For source-specific searches, use the source table and its authoritative fields rather than relying only on the search index.
+
 Hozpitality Table Mapping:
 - JOB / JOBS / JOB VACANCY / JOB VACANCIES / CAREER / OPENING queries MUST use `base_job`.
 - Do NOT use a table named `jobs`.
@@ -166,8 +262,19 @@ Hozpitality Table Mapping:
 - Before generating a complex job query, inspect the columns of `base_job` if the required column names are unknown.
 - For job title searches, use the appropriate job_title column from `base_job`.
 - For job location searches, use the appropriate job_city column from `base_job`.
-- For job status searches, use the appropriate job_start_date column from `base_job`.
-- For job expiry searches, use the appropriate job_end_date column from `base_job`.
+- For job status searches, use the `job_status` column from `base_job`.
+- For job start-date searches, use the `job_start_date` column from `base_job`.
+- For job expiry searches, use the `job_end_date` column from `base_job`.
+
+Source-table guidance:
+- base_job: authoritative job records and job links.
+- user_accounts: account/company/supplier/student/guest records. Use user_type to distinguish account types when needed.
+- professionals: professional-specific fields such as department, job_level, education_level, job_role, currently_working and current_company.
+- base_article: article title, content, category, status, slug and publication data.
+- base_event: event title, dates, city, country, type, status, website and details.
+- marketplace_product: product title, type, condition, price, location, description, website_link, status and slug.
+- base_faq: FAQ question and answer.
+- master_search_mastersearchindex: cross-module indexed title, slug, location_text, category_text, ai_keywords, content, content_type/object_id, live/expiry metadata.
 
 Job fields:
 - Job title → `job_title`
@@ -227,6 +334,7 @@ Never invent a generic table such as `jobs` when a Hozpitality-specific table ma
             ui_features=UiFeatures(feature_group_access={}),
         ),
         system_prompt_builder=system_prompt_builder,
+        workflow_handler=HozpitalityWorkflowHandler(),
     )
 
     # Schema explorer endpoint
