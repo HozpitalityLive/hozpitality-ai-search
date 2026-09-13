@@ -1,5 +1,5 @@
 """
-Hozpitality V6 schema intelligence.
+Hozpitality V5 schema intelligence.
 
 Runtime database metadata is authoritative. This module intentionally avoids
 hard-coding individual category names, content-type names, or country names.
@@ -22,7 +22,7 @@ class ResolvedValue:
 
 
 class HozpitalitySchemaIntelligence:
-    """Database-backed semantic resolver for Hozpitality V6."""
+    """Database-backed semantic resolver for Hozpitality V5."""
 
     CORE_TABLES = {
         "jobs": "base_job",
@@ -182,7 +182,7 @@ class HozpitalitySchemaIntelligence:
             "job": ("job", "jobs", "vacancy", "vacancies", "opening", "openings"),
             "event": ("event", "events"),
             "professional": ("professional", "professionals", "candidate", "candidates", "profile", "profiles"),
-            "company": ("company", "companies", "employer", "employers"),
+            "company": ("company", "companies", "hotel", "hotels", "employer", "employers"),
             "product": ("product", "products", "marketplace", "supplier", "suppliers"),
             "faq": ("faq", "faqs", "question", "questions"),
         }

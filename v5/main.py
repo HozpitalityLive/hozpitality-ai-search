@@ -1,5 +1,5 @@
 """
-Hozpitality AI Search V6 — hybrid global search + Vanna text-to-SQL.
+Self-hosted Vanna 2.0 server with Gemini LLM.
 
 Connects to PostgreSQL and BigQuery databases.
 Run with: python main.py
@@ -7,7 +7,6 @@ Run with: python main.py
 
 import os
 import re
-from pathlib import Path
 from typing import Optional
 
 import psycopg2
@@ -37,10 +36,8 @@ from vanna.core.system_prompt import DefaultSystemPromptBuilder
 from vanna.servers.base import ChatHandler
 from vanna.servers.fastapi.routes import register_chat_routes
 from vanna.hozpitality.schema_intelligence import HozpitalitySchemaIntelligence
-from vanna.hozpitality.global_search import GlobalSearchService
 
-BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
+load_dotenv()
 
 
 class LocalUserResolver(UserResolver):
@@ -87,7 +84,6 @@ class HozpitalityWorkflowHandler(WorkflowHandler):
     def __init__(self, pg_config: dict):
         self.pg_config = pg_config
         self.schema = HozpitalitySchemaIntelligence(self._connect)
-        self.global_search = GlobalSearchService(pg_config, self.schema)
 
     def _connect(self):
         return psycopg2.connect(**self.pg_config)
@@ -123,23 +119,11 @@ class HozpitalityWorkflowHandler(WorkflowHandler):
             text = self.GREETINGS["what can you do"] if "what can you do" in normalized else self.GREETINGS["what does this platform do"]
             return WorkflowResult(should_skip_llm=True, components=[self._component(text)])
 
-        # Fast global retrieval: search the master index first, resolve the
-        # content_type/object_id pair, then enrich from the authoritative source
-        # table. This handles natural-language searches across the entire site
-        # without requiring a hard-coded handler for every Django model.
+        # Common article searches are deterministic because the real Article
+        # schema does NOT contain is_live, is_deleted, or publication_date.
+        # Any value found in base_category is treated as an article category;
+        # no individual category name is hard-coded.
         dynamic_category = self.schema.resolve_category(normalized)
-        if self._is_bare_article_request(normalized) and self._is_article_request(normalized):
-            return WorkflowResult(
-                should_skip_llm=True,
-                components=[self._component("What topic or category should I search for in the articles? You can name any article topic or category and I’ll search it dynamically.")],
-            )
-
-        global_result = await self._global_search(normalized)
-        if global_result:
-            return WorkflowResult(should_skip_llm=True, components=[self._component(global_result)])
-
-        # Article source-table fallback remains available if the index is stale
-        # or an article-specific field is not represented in the index.
         if self._is_article_request(normalized) or dynamic_category is not None:
             if self._is_bare_article_request(normalized):
                 return WorkflowResult(
@@ -155,18 +139,6 @@ class HozpitalityWorkflowHandler(WorkflowHandler):
             return WorkflowResult(should_skip_llm=True, components=[self._component(clarification)])
 
         return WorkflowResult(should_skip_llm=False)
-
-    async def _global_search(self, message: str) -> Optional[str]:
-        """Search the global master index and enrich hits from source tables."""
-        try:
-            # Aggregations/analytics should remain with the SQL agent; global
-            # retrieval is intended for entity/document discovery.
-            if re.search(r"\b(how many|count|average|sum|total|maximum|minimum|compare|trend|percentage)\b", message):
-                return None
-            return self.global_search.search(message, limit=10)
-        except Exception as exc:
-            print(f"Global search workflow failed: {exc}")
-            return None
 
     @staticmethod
     def _is_article_request(message: str) -> bool:
@@ -384,7 +356,7 @@ class HozpitalityWorkflowHandler(WorkflowHandler):
         return None
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Hozpitality AI Search V6", version="6.0.0")
+    app = FastAPI(title="Vanna Text-to-SQL")
 
     app.add_middleware(
         CORSMiddleware,
@@ -402,8 +374,7 @@ def create_app() -> FastAPI:
     async def health():
         return {
             "status": "ok",
-            "service": "hozpitality-ai-v6",
-            "version": "6.0.0",
+            "service": "hozpitality-ai-v5",
         }
 
     # LLM
@@ -421,7 +392,7 @@ def create_app() -> FastAPI:
 
     # Agent memory (ChromaDB)
     memory = ChromaAgentMemory(
-        persist_directory=str(BASE_DIR / "chroma_data"),
+        persist_directory="./chroma_data",
         collection_name="vanna_memory",
     )
 
@@ -527,9 +498,7 @@ Hozpitality Search Routing:
 - For job availability, normally filter is_live = TRUE AND is_deleted = FALSE and exclude expired jobs when the user means currently available.
 - For job results, prefer returning job_title, job_city, job_status, job_start_date, job_end_date, job_link, slug, and a short job_desc excerpt.
 - When company information is requested for a job, LEFT JOIN user_accounts u ON u.id = j.company_id and use u.company_name or u.first_name/last_name only when those fields are appropriate.
-- For broad cross-platform searches, query master_search_mastersearchindex first; use title, location_text, category_text, ai_keywords, user_name, content and slug.
-- Treat master_search_mastersearchindex as retrieval/discovery, not the authoritative source when a source object can be resolved.
-- Search ranking should favor exact title/category/person matches, then location/keywords/content/full-text relevance, then recency.
+- For broad cross-platform searches, query master_search_mastersearchindex first; use its indexed title, location_text, category_text, ai_keywords and content to identify matching content.
 - Polymorphic tables use content_type_id + object_id. Resolve django_content_type.id before joining object_id to a source table; never assume object_id points to one fixed table.
 - Article categories are dynamic records from base_category.name joined through base_article.category_id. Never hard-code a category such as Editor's Choice.
 - Article locations are dynamic records from countries.name joined through base_article_location(article_id, country_id). Never hard-code country IDs.
@@ -604,14 +573,6 @@ Never invent a generic table such as `jobs` when a Hozpitality-specific table ma
     #     system_prompt_builder=system_prompt_builder,
     # )
 
-    workflow = HozpitalityWorkflowHandler({
-        "host": pg_host,
-        "port": int(os.getenv("POSTGRES_PORT", "5432")),
-        "dbname": os.getenv("POSTGRES_DATABASE"),
-        "user": os.getenv("POSTGRES_USER"),
-        "password": os.getenv("POSTGRES_PASSWORD"),
-    })
-
     agent = Agent(
         llm_service=llm,
         tool_registry=tools,
@@ -626,51 +587,14 @@ Never invent a generic table such as `jobs` when a Hozpitality-specific table ma
             ui_features=UiFeatures(feature_group_access={}),
         ),
         system_prompt_builder=system_prompt_builder,
-        workflow_handler=workflow,
+        workflow_handler=HozpitalityWorkflowHandler({
+            "host": pg_host,
+            "port": int(os.getenv("POSTGRES_PORT", "5432")),
+            "dbname": os.getenv("POSTGRES_DATABASE"),
+            "user": os.getenv("POSTGRES_USER"),
+            "password": os.getenv("POSTGRES_PASSWORD"),
+        }),
     )
-
-    # Fast global-search API for the frontend and smoke tests. Analytics are
-    # intentionally left to the Vanna SQL path.
-    @app.get("/api/search")
-    async def global_search_api(q: str, limit: int = 10):
-        if not q or len(q.strip()) < 2:
-            return {"query": q, "results": [], "count": 0}
-        results = workflow.global_search.search_hits(q, max(1, min(limit, 20)))
-        return {
-            "query": q,
-            "count": len(results),
-            "results": results,
-            "stats": workflow.global_search.last_stats,
-        }
-
-    @app.get("/api/search/health")
-    async def global_search_health():
-        # Read-only checks; no full-table scan.
-        try:
-            with workflow._connect() as conn, conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM public.master_search_mastersearchindex")
-                total = cur.fetchone()[0]
-                cur.execute("SELECT COUNT(*) FROM public.master_search_mastersearchindex WHERE search_vector_v6 IS NOT NULL")
-                fts_ready = cur.fetchone()[0]
-                cur.execute("SELECT COUNT(*) FROM public.master_search_mastersearchindex WHERE embedding IS NOT NULL")
-                vectors_ready = cur.fetchone()[0]
-                cur.execute("""SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='vector'),
-                                    EXISTS (SELECT 1 FROM pg_extension WHERE extname='pg_trgm'),
-                                    EXISTS (SELECT 1 FROM pg_extension WHERE extname='unaccent')""")
-                vector_ext, trgm_ext, unaccent_ext = cur.fetchone()
-                return {
-                    "status": "ok",
-                    "master_index_rows": total,
-                    "fts_ready_rows": fts_ready,
-                    "vector_rows": vectors_ready,
-                    "extensions": {"vector": vector_ext, "pg_trgm": trgm_ext, "unaccent": unaccent_ext},
-                }
-        except Exception as exc:
-            return {"status": "degraded", "error": str(exc)}
-
-    @app.get("/api/search/metrics")
-    async def global_search_metrics():
-        return {"stats": workflow.global_search.last_stats}
 
     # Schema explorer endpoint
     @app.get("/api/schema")
