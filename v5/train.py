@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from vanna.integrations.chromadb.agent_memory import ChromaAgentMemory
 from vanna.core.tool import ToolContext
 from vanna.core.user import User
+from vanna.hozpitality.schema_intelligence import HozpitalitySchemaIntelligence
 
 load_dotenv()
 
@@ -89,6 +90,69 @@ def get_postgres_ddl(connection_string: str) -> list[dict]:
     conn.close()
     return ddl_entries
 
+
+
+def get_postgres_semantic_map(connection_string: str) -> list[dict]:
+    """Build compact, database-backed semantic metadata for SQL generation."""
+    import psycopg2
+    import psycopg2.extras
+
+    def connect():
+        return psycopg2.connect(connection_string)
+
+    intelligence = HozpitalitySchemaIntelligence(connect)
+    entries = []
+
+    # All declared relationships, including composite/polymorphic supporting FKs.
+    rels = intelligence.relationships()
+    if rels:
+        text = "Verified PostgreSQL foreign-key relationships:\n" + "\n".join(
+            f"- {r['source_table']}.{r['source_column']} -> "
+            f"{r['target_table']}.{r['target_column']}"
+            for r in rels
+        )
+        entries.append({"content": text, "table": "__relationships__"})
+
+    # Django content types are essential for generic/polymorphic tables.
+    ctypes = intelligence.content_types()
+    if ctypes:
+        text = "Verified Django content types for polymorphic content_type_id joins:\n" + "\n".join(
+            f"- {x['id']}: {x['app_label']}.{x['model']}"
+            for x in ctypes
+        )
+        entries.append({"content": text, "table": "__content_types__"})
+
+    # Dynamic taxonomy values: categories and countries.
+    cats = intelligence.categories()
+    if cats:
+        text = "Current Hozpitality article categories from base_category:\n" + "\n".join(
+            f"- {x['id']}: {x['name']}" for x in cats
+        )
+        entries.append({"content": text, "table": "__article_categories__"})
+
+    countries = intelligence.countries()
+    if countries:
+        text = "Current Hozpitality countries from countries:\n" + "\n".join(
+            f"- {x['id']}: {x['name']} "
+            f"(country_code={x.get('country_code')}, code={x.get('code')}, ac_name={x.get('ac_name')})"
+            for x in countries
+        )
+        entries.append({"content": text, "table": "__countries__"})
+
+    # Explicit polymorphic patterns found in the schema.
+    entries.append({
+        "content": (
+            "Hozpitality polymorphic relationship rules: "
+            "master_search_mastersearchindex uses content_type_id + object_id; "
+            "base_bookmark uses content_type_id + object_id; "
+            "base_impression uses content_type_id + object_id; "
+            "base_interaction uses content_type_id + object_id. "
+            "Resolve django_content_type first and never assume object_id references a fixed table."
+        ),
+        "table": "__polymorphic_rules__",
+    })
+
+    return entries
 
 def get_bigquery_ddl(project_id: str, cred_file_path: str | None = None) -> list[dict]:
     """Extract table schemas from BigQuery via INFORMATION_SCHEMA."""
@@ -177,6 +241,12 @@ async def train(postgres_only: bool = False, bigquery_only: bool = False, fresh:
             print(f"  Saved: {entry['table']}")
         total += len(entries)
         print(f"  Loaded {len(entries)} PostgreSQL tables")
+
+        semantic_entries = get_postgres_semantic_map(pg_conn)
+        for entry in semantic_entries:
+            await memory.save_text_memory(content=entry["content"], context=ctx)
+        total += len(semantic_entries)
+        print(f"  Loaded {len(semantic_entries)} semantic relationship/taxonomy entries")
 
     # BigQuery
     bq_project = os.getenv("BIGQUERY_PROJECT_ID")

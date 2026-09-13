@@ -7,6 +7,10 @@ Run with: python main.py
 
 import os
 import re
+from typing import Optional
+
+import psycopg2
+import psycopg2.extras
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -31,6 +35,7 @@ from vanna.tools.visualize_data import VisualizeDataTool
 from vanna.core.system_prompt import DefaultSystemPromptBuilder
 from vanna.servers.base import ChatHandler
 from vanna.servers.fastapi.routes import register_chat_routes
+from vanna.hozpitality.schema_intelligence import HozpitalitySchemaIntelligence
 
 load_dotenv()
 
@@ -48,18 +53,19 @@ class LocalUserResolver(UserResolver):
 
 
 class HozpitalityWorkflowHandler(WorkflowHandler):
-    """Fast, deterministic front-door QA layer for Hozpitality chat.
+    """Deterministic front-door QA + fast searches for common Hozpitality intents.
 
-    Handles greetings locally and asks for clarification only when a request
-    lacks a critical parameter. Clear database questions continue to Vanna.
+    Common Hozpitality searches are executed directly against the authoritative
+    source tables. This prevents the small local model from inventing columns,
+    looping over failed SQL, or exposing SQL/tool protocol to the user.
     """
 
     GREETINGS = {
         "hi": "Hi! 👋 How can I help you with Hozpitality?",
         "hello": "Hello! 👋 What can I help you find on Hozpitality?",
-        "hey": "Hey! 👋 How can I help you today?",
+        "hey": "Hey! 👋 What can I help you find?",
         "hi there": "Hi there! 👋 What would you like to find?",
-        "hello there": "Hello! 👋 What would you like to find?",
+        "hello there": "Hello there! 👋 What would you like to find?",
         "good morning": "Good morning! 👋 How can I help you?",
         "good afternoon": "Good afternoon! 👋 How can I help you?",
         "good evening": "Good evening! 👋 How can I help you?",
@@ -67,40 +73,242 @@ class HozpitalityWorkflowHandler(WorkflowHandler):
         "how are you": "I'm doing well and ready to help with Hozpitality.",
         "thanks": "You're welcome! 👋",
         "thank you": "You're welcome! 👋",
-        "who are you": "I'm Hozpitality AI. I can search Hozpitality jobs, professionals, companies, marketplace products, events, articles and FAQs.",
-        "what can you do": "I can search Hozpitality data and help you find jobs, professionals, companies, products, events, articles and FAQs.",
-        "help": "I can search Hozpitality data for you. Try: “Find waiter jobs in Dubai” or “Find hospitality events in UAE”.",
+        "who are you": "I'm Hozpitality AI. I can help you find jobs, professionals, companies, products, events, articles and FAQs on Hozpitality.",
+        "what can you do": "I can search Hozpitality for jobs, professionals, companies, marketplace products, events, articles and FAQs. Tell me what you're looking for.",
+        "what does this platform do": "Hozpitality is a hospitality industry platform for jobs, professionals, companies, marketplace products, articles, events and more. I can help you search that information.",
+        "what is this platform": "Hozpitality is a hospitality industry platform for jobs, professionals, companies, marketplace products, articles and events. I can search its data for you.",
+        "what is hozpitality": "Hozpitality is a global hospitality industry platform connecting professionals, companies and hospitality businesses. I can search its jobs, articles, events, products and other data.",
+        "help": "Try a request such as **Find waiter jobs in Dubai**, **Find the latest hospitality news**, or **Find hospitality events in UAE**.",
     }
 
-    async def try_handle(self, agent, user, conversation, message):
-        normalized = re.sub(r"\s+", " ", message.strip().lower()).strip(" .!?")
-        if normalized in self.GREETINGS:
-            text = self.GREETINGS[normalized]
-            component = UiComponent(
-                rich_component=RichTextComponent(content=text, markdown=True),
-                simple_component=SimpleTextComponent(text=text),
-            )
-            return WorkflowResult(should_skip_llm=True, components=[component])
+    def __init__(self, pg_config: dict):
+        self.pg_config = pg_config
+        self.schema = HozpitalitySchemaIntelligence(self._connect)
 
-        # Critical ambiguity gates. Do not slow down clear questions.
+    def _connect(self):
+        return psycopg2.connect(**self.pg_config)
+
+    @staticmethod
+    def _component(text: str) -> UiComponent:
+        return UiComponent(
+            rich_component=RichTextComponent(content=text, markdown=True),
+            simple_component=SimpleTextComponent(text=text),
+        )
+
+    @staticmethod
+    def _clean_excerpt(value, limit=220):
+        if not value:
+            return ""
+        text = re.sub(r"\s+", " ", str(value)).strip()
+        return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+    @staticmethod
+    def _article_terms(message: str):
+        text = message.lower()
+        # Remove intent/category words while preserving the actual topic.
+        text = re.sub(r"\b(find|search|show|list|get|give|me|the|latest|recent|new|news|article|articles|story|stories|please|for|of|in|on|about|related|to)\b", " ", text)
+        return [w for w in re.findall(r"[a-z0-9][a-z0-9&'_-]*", text) if len(w) > 2]
+
+    async def try_handle(self, agent, user, conversation, message):
+        normalized = re.sub(r"\s+", " ", message.strip().lower()).strip(" .!?'")
+
+        if normalized in self.GREETINGS:
+            return WorkflowResult(should_skip_llm=True, components=[self._component(self.GREETINGS[normalized])])
+
+        if re.search(r"\bwhat can you do(?: for me)?\b", normalized) or re.search(r"\bwhat (?:does|is) (?:this )?(?:platform|hozpitality)\b", normalized):
+            text = self.GREETINGS["what can you do"] if "what can you do" in normalized else self.GREETINGS["what does this platform do"]
+            return WorkflowResult(should_skip_llm=True, components=[self._component(text)])
+
+        # Common article searches are deterministic because the real Article
+        # schema does NOT contain is_live, is_deleted, or publication_date.
+        # Any value found in base_category is treated as an article category;
+        # no individual category name is hard-coded.
+        dynamic_category = self.schema.resolve_category(normalized)
+        if self._is_article_request(normalized) or dynamic_category is not None:
+            if self._is_bare_article_request(normalized):
+                return WorkflowResult(
+                    should_skip_llm=True,
+                    components=[self._component("What topic or category should I search for in the articles? For example: **latest hospitality news**, **Editor's Choice**, or **hotel openings**.")],
+                )
+            result = await self._search_articles(normalized)
+            if result is not None:
+                return WorkflowResult(should_skip_llm=True, components=[self._component(result)])
+
         clarification = self._clarification(normalized)
         if clarification:
-            component = UiComponent(
-                rich_component=RichTextComponent(content=clarification, markdown=True),
-                simple_component=SimpleTextComponent(text=clarification),
-            )
-            return WorkflowResult(should_skip_llm=True, components=[component])
+            return WorkflowResult(should_skip_llm=True, components=[self._component(clarification)])
 
         return WorkflowResult(should_skip_llm=False)
 
     @staticmethod
+    def _is_article_request(message: str) -> bool:
+        # "news" and "blog" are article aliases; actual categories are resolved
+        # from base_category at runtime.
+        return bool(
+            re.search(
+                r"\b(article|articles|news|blog|blogs|story|stories)\b",
+                message,
+            )
+            or "article" in message
+        )
+
+    @classmethod
+    def _is_bare_article_request(cls, message: str) -> bool:
+        if re.search(r"\b(latest|recent|new)\s+(news|articles?|stories?)\b", message):
+            return False
+        return False if cls._article_terms(message) else True
+
+    @staticmethod
+    def _article_terms(message: str):
+        text = message.lower()
+        text = re.sub(
+            r"\b(find|search|show|list|get|give|me|the|latest|recent|new|news|"
+            r"article|articles|story|stories|please|for|of|in|on|about|related|to)\b",
+            " ",
+            text,
+        )
+        return [
+            w for w in re.findall(r"[a-z0-9][a-z0-9&'_-]*", text)
+            if len(w) > 2
+        ]
+
+    def _resolved_article_terms(self, message: str) -> list[str]:
+        """Remove dynamically resolved taxonomy values from topic terms."""
+        terms = self._article_terms(message)
+        category = self.schema.resolve_category(message)
+        country = self.schema.resolve_country(message)
+
+        remove = set()
+        for value in (category, country):
+            if value:
+                remove.update(
+                    re.findall(r"[a-z0-9][a-z0-9&'_-]*", str(value.name).lower())
+                )
+        return [term for term in terms if term not in remove]
+
+    async def _search_articles(self, message: str) -> Optional[str]:
+        """
+        Search articles using the real schema.
+
+        Category and country are resolved from database taxonomies. No individual
+        category name is hard-coded.
+        """
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    category = self.schema.resolve_category(message)
+                    country = self.schema.resolve_country(message)
+                    terms = self._resolved_article_terms(message)
+
+                    filters = ["a.status = 'publish'"]
+                    params = []
+
+                    if category:
+                        filters.append("a.category_id = %s")
+                        params.append(category.id)
+
+                    if country:
+                        filters.append(
+                            """
+                            EXISTS (
+                                SELECT 1
+                                FROM base_article_location al
+                                WHERE al.article_id = a.id
+                                  AND al.country_id = %s
+                            )
+                            """
+                        )
+                        params.append(country.id)
+
+                    if terms:
+                        term_clauses = []
+                        for term in terms[:5]:
+                            term_clauses.append(
+                                "(a.title ILIKE %s OR a.sub_title ILIKE %s OR a.content ILIKE %s)"
+                            )
+                            params.extend([
+                                f"%{term}%",
+                                f"%{term}%",
+                                f"%{term}%",
+                            ])
+                        filters.append("(" + " OR ".join(term_clauses) + ")")
+
+                    cur.execute(
+                        f"""
+                        SELECT
+                            a.title,
+                            a.sub_title,
+                            a.content,
+                            a.slug,
+                            a.created_at,
+                            c.name AS category_name,
+                            co.name AS country_name
+                        FROM base_article a
+                        LEFT JOIN base_category c
+                          ON c.id = a.category_id
+                        LEFT JOIN LATERAL (
+                            SELECT co.name
+                            FROM base_article_location al
+                            JOIN countries co ON co.id = al.country_id
+                            WHERE al.article_id = a.id
+                            ORDER BY co.name
+                            LIMIT 1
+                        ) co ON TRUE
+                        WHERE {' AND '.join(filters)}
+                        ORDER BY a.created_at DESC NULLS LAST
+                        LIMIT 10
+                        """,
+                        params,
+                    )
+                    rows = cur.fetchall()
+
+        except Exception as exc:
+            print(f"Article direct search fallback: {exc}")
+            return None
+
+        if not rows:
+            return (
+                "I couldn't find any published articles matching that request. "
+                "Try another topic, category, or location."
+            )
+
+        descriptors = []
+        if category:
+            descriptors.append(f"category **{category.name}**")
+        if country:
+            descriptors.append(f"location **{country.name}**")
+        if descriptors:
+            intro = f"I found {len(rows)} published articles for " + " and ".join(descriptors) + "."
+        elif terms:
+            intro = f"I found {len(rows)} published articles matching your search."
+        else:
+            intro = f"Here are the {len(rows)} latest published articles."
+
+        lines = [intro, ""]
+        for idx, row in enumerate(rows, 1):
+            title = str(row.get("title") or "Untitled article").strip()
+            created = row.get("created_at")
+            date_text = created.strftime("%Y-%m-%d") if hasattr(created, "strftime") else str(created or "").split(" ")[0]
+            excerpt = self._clean_excerpt(row.get("sub_title") or row.get("content"))
+            lines.append(f"**{idx}. {title}**")
+            if row.get("category_name"):
+                lines.append(f"- Category: {row['category_name']}")
+            if row.get("country_name"):
+                lines.append(f"- Location: {row['country_name']}")
+            if date_text:
+                lines.append(f"- Published: {date_text}")
+            if excerpt:
+                lines.append(f"- {excerpt}")
+            if row.get("slug"):
+                lines.append(f"- Slug: `{row['slug']}`")
+            lines.append("")
+        return "\n".join(lines).strip()
+
+    @staticmethod
     def _clarification(message: str):
-        # A generic "find/search/show jobs" request does not identify a useful
-        # role or search term. Ask one question instead of making a broad query.
         if re.search(r"\b(find|search|show|list|get)\b", message) and re.search(r"\bjobs?\b", message):
             role_words = re.sub(r"\b(find|search|show|list|get|me|some|any|the|a|an|please|for|jobs?|job|vacancies?|openings?)\b", " ", message)
-            role_words = re.sub(r"\s+", " ", role_words).strip()
-            if not role_words:
+            if not re.sub(r"\s+", " ", role_words).strip():
                 return "What type of job would you like me to find? You can also include a location, for example: **waiter jobs in Dubai**."
 
         if re.search(r"\b(find|search|show|list|get)\b", message) and re.search(r"\b(events?|event)\b", message):
@@ -112,12 +320,6 @@ class HozpitalityWorkflowHandler(WorkflowHandler):
             detail = re.sub(r"\b(find|search|show|list|get|me|some|any|the|a|an|please|for|products?|product|marketplace)\b", " ", message)
             if not re.sub(r"\s+", "", detail):
                 return "What product or category are you looking for? You can also include a location."
-
-        if re.search(r"\b(find|search|show|list|get)\b", message) and re.search(r"\b(articles?|news)\b", message):
-            detail = re.sub(r"\b(find|search|show|list|get|me|some|any|the|a|an|please|for|articles?|article|news)\b", " ", message)
-            if not re.sub(r"\s+", "", detail):
-                return "What topic or category should I search for in the articles?"
-
         return None
 
 def create_app() -> FastAPI:
@@ -204,6 +406,14 @@ def create_app() -> FastAPI:
 
     # System prompt — tell the agent what database it's connected to
     db_name = os.getenv("POSTGRES_DATABASE", "unknown")
+    schema_intelligence = HozpitalitySchemaIntelligence(lambda: psycopg2.connect(
+        host=pg_host,
+        port=int(os.getenv("POSTGRES_PORT", "5432")),
+        dbname=os.getenv("POSTGRES_DATABASE"),
+        user=os.getenv("POSTGRES_USER"),
+        password=os.getenv("POSTGRES_PASSWORD"),
+    ))
+    schema_context = schema_intelligence.system_context()
     system_prompt_builder = DefaultSystemPromptBuilder(base_prompt=f"""You are Vanna, an AI data analyst assistant. Today's date is {__import__('datetime').date.today()}.
 
 DATABASE: You are connected to a PostgreSQL database named '{db_name}'.
@@ -235,6 +445,9 @@ Response Guidelines:
 - For job searches, prefer partial title matching with `job_title ILIKE '%term%'` rather than exact equality.
 - For job searches, return useful fields such as `job_title`, `job_city`, `job_desc`, `job_status`, `job_start_date`, `job_end_date`, `job_link`, and `slug`; avoid `SELECT *` unless specifically requested.
 
+Hozpitality Database Intelligence:
+{schema_context}
+
 Hozpitality Search Routing:
 - master_search_mastersearchindex is the cross-module discovery index and contains indexed content for jobs, professionals, companies, marketplace products, events, and articles.
 - Use master_search_mastersearchindex for broad Hozpitality searches where the content type is unclear or the user asks to search across the platform.
@@ -253,6 +466,10 @@ Hozpitality Search Routing:
 - For job results, prefer returning job_title, job_city, job_status, job_start_date, job_end_date, job_link, slug, and a short job_desc excerpt.
 - When company information is requested for a job, LEFT JOIN user_accounts u ON u.id = j.company_id and use u.company_name or u.first_name/last_name only when those fields are appropriate.
 - For broad cross-platform searches, query master_search_mastersearchindex first; use its indexed title, location_text, category_text, ai_keywords and content to identify matching content.
+- Polymorphic tables use content_type_id + object_id. Resolve django_content_type.id before joining object_id to a source table; never assume object_id points to one fixed table.
+- Article categories are dynamic records from base_category.name joined through base_article.category_id. Never hard-code a category such as Editor's Choice.
+- Article locations are dynamic records from countries.name joined through base_article_location(article_id, country_id). Never hard-code country IDs.
+- When the user names a category, country, or content type, resolve it against the database metadata before generating SQL.
 - For source-specific searches, use the source table and its authoritative fields rather than relying only on the search index.
 
 Hozpitality Table Mapping:
@@ -270,7 +487,9 @@ Source-table guidance:
 - base_job: authoritative job records and job links.
 - user_accounts: account/company/supplier/student/guest records. Use user_type to distinguish account types when needed.
 - professionals: professional-specific fields such as department, job_level, education_level, job_role, currently_working and current_company.
-- base_article: article title, content, category, status, slug and publication data.
+- base_article: article title, sub_title, content, category, location, created_at, youtube_link, thumbnail_url, slug, isFeatured, status, is_auto_renew_enabled.
+- base_article DOES NOT have is_live, is_deleted, or publication_date. For latest articles use status = 'publish' ORDER BY created_at DESC.
+- For Editor's Choice, use master_search_mastersearchindex.category_text (joined to base_article by object_id and Article content_type) rather than inventing an article field.
 - base_event: event title, dates, city, country, type, status, website and details.
 - marketplace_product: product title, type, condition, price, location, description, website_link, status and slug.
 - base_faq: FAQ question and answer.
@@ -329,12 +548,19 @@ Never invent a generic table such as `jobs` when a Hozpitality-specific table ma
         config=AgentConfig(
             stream_responses=False,
             temperature=0,
+            max_tool_iterations=4,
             # Never expose internal tool names, arguments, or tool-call text
             # to end users. Tool execution remains enabled internally.
             ui_features=UiFeatures(feature_group_access={}),
         ),
         system_prompt_builder=system_prompt_builder,
-        workflow_handler=HozpitalityWorkflowHandler(),
+        workflow_handler=HozpitalityWorkflowHandler({
+            "host": pg_host,
+            "port": int(os.getenv("POSTGRES_PORT", "5432")),
+            "dbname": os.getenv("POSTGRES_DATABASE"),
+            "user": os.getenv("POSTGRES_USER"),
+            "password": os.getenv("POSTGRES_PASSWORD"),
+        }),
     )
 
     # Schema explorer endpoint

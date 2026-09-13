@@ -1100,14 +1100,10 @@ class Agent:
             )
 
             # Provide detailed warning message to user
-            warning_message = f"""⚠️ **Tool Execution Limit Reached**
-
-The agent stopped after executing {tool_iterations} tools (the configured maximum). The task may not be fully complete.
-
-You can:
-- Ask me to continue where I left off
-- Adjust the `max_tool_iterations` setting if you need more tool calls
-- Break the task into smaller steps"""
+            warning_message = (
+                "I couldn’t complete that search. Please make the request more specific, "
+                "such as **waiter jobs in Dubai** or **latest hospitality news**."
+            )
 
             yield UiComponent(
                 rich_component=RichTextComponent(
@@ -1387,6 +1383,12 @@ You can:
         text = (content or "").strip()
         if not text:
             return text
+
+        # Never expose model control tokens in the user-facing chat.
+        text = re.sub(r"<\|im_(?:start|end)\|>", "", text, flags=re.IGNORECASE)
+
+        # Never expose model control tokens in the user-facing chat.
+        text = re.sub(r"<\|im_(?:start|end)\|>", "", text, flags=re.IGNORECASE)
 
         # Remove fenced JSON/tool-call blocks.
         def remove_tool_json(match: re.Match) -> str:
