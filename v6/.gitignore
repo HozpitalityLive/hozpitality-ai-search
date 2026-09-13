@@ -1,0 +1,8 @@
+.env
+.venv/
+chroma_data/
+__pycache__/
+*.py[cod]
+query_results_*.csv
+.DS_Store
+*.log

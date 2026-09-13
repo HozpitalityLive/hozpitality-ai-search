@@ -9,6 +9,7 @@ from ai_v3 import app as app3v3
 from ai_v4.websocket.chat import router as chat_router
 
 from v5.main import app as app5
+from v6.main import app as app6
 
 
 
@@ -49,3 +50,4 @@ main_app.mount("/app2v2", app2v2)
 main_app.mount("/app3v3", app3v3)
 main_app.mount("/appv4", chat_router)
 main_app.mount("/appv5", app5)
+main_app.mount("/appv6", app6)
