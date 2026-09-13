@@ -187,90 +187,128 @@ class HozpitalityWorkflowHandler(WorkflowHandler):
         return [term for term in terms if term not in remove]
 
     async def _search_articles(self, message: str) -> Optional[str]:
-        """
-        Search articles using the real schema.
-
-        Category and country are resolved from database taxonomies. No individual
-        category name is hard-coded.
-        """
+        """Search articles with source-table + search-index fallback."""
         try:
             with self._connect() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     category = self.schema.resolve_category(message)
                     country = self.schema.resolve_country(message)
                     terms = self._resolved_article_terms(message)
+                    category_name = category.name if category else None
+                    category_like = f"%{category_name}%" if category_name else None
 
-                    filters = ["a.status = 'publish'"]
+                    # Accept the normal Django values `publish` and `published`
+                    # without assuming one exact spelling.
+                    filters = ["LOWER(BTRIM(a.status)) LIKE 'publish%'"]
                     params = []
 
                     if category:
-                        filters.append("a.category_id = %s")
-                        params.append(category.id)
+                        normalized_category = re.sub(r"[^a-z0-9]+", " ", category_name.lower()).strip()
+                        filters.append("""(
+                            a.category_id = %s
+                            OR EXISTS (
+                                SELECT 1
+                                FROM master_search_mastersearchindex si_cat
+                                JOIN django_content_type ct_cat ON ct_cat.id = si_cat.content_type_id
+                                WHERE si_cat.object_id = a.id
+                                  AND LOWER(ct_cat.model) = 'article'
+                                  AND (
+                                      si_cat.category_text ILIKE %s
+                                      OR regexp_replace(LOWER(COALESCE(si_cat.category_text, '')), '[^a-z0-9]+', ' ', 'g') ILIKE %s
+                                  )
+                            )
+                        )""")
+                        params.extend([category.id, category_like, f"%{normalized_category}%"])
 
                     if country:
-                        filters.append(
-                            """
+                        filters.append("""
                             EXISTS (
-                                SELECT 1
-                                FROM base_article_location al
-                                WHERE al.article_id = a.id
-                                  AND al.country_id = %s
+                                SELECT 1 FROM base_article_location al
+                                WHERE al.article_id = a.id AND al.country_id = %s
                             )
-                            """
-                        )
+                        """)
                         params.append(country.id)
 
                     if terms:
                         term_clauses = []
-                        for term in terms[:5]:
-                            term_clauses.append(
-                                "(a.title ILIKE %s OR a.sub_title ILIKE %s OR a.content ILIKE %s)"
-                            )
-                            params.extend([
-                                f"%{term}%",
-                                f"%{term}%",
-                                f"%{term}%",
-                            ])
+                        for term in terms[:8]:
+                            like = f"%{term}%"
+                            term_clauses.append("""(
+                                a.title ILIKE %s OR a.sub_title ILIKE %s OR a.content ILIKE %s
+                                OR EXISTS (
+                                    SELECT 1
+                                    FROM master_search_mastersearchindex si_term
+                                    JOIN django_content_type ct_term ON ct_term.id = si_term.content_type_id
+                                    WHERE si_term.object_id = a.id
+                                      AND LOWER(ct_term.model) = 'article'
+                                      AND (
+                                          si_term.title ILIKE %s OR si_term.category_text ILIKE %s
+                                          OR si_term.ai_keywords ILIKE %s OR si_term.content ILIKE %s
+                                      )
+                                )
+                            )""")
+                            params.extend([like, like, like, like, like, like, like])
                         filters.append("(" + " OR ".join(term_clauses) + ")")
 
-                    cur.execute(
-                        f"""
-                        SELECT
-                            a.title,
-                            a.sub_title,
-                            a.content,
-                            a.slug,
-                            a.created_at,
-                            c.name AS category_name,
-                            co.name AS country_name
+                    cur.execute(f"""
+                        SELECT DISTINCT a.id, a.title, a.sub_title, a.content, a.slug, a.created_at,
+                               c.name AS category_name, co.name AS country_name,
+                               a.thumbnail_url, a.youtube_link
                         FROM base_article a
-                        LEFT JOIN base_category c
-                          ON c.id = a.category_id
+                        LEFT JOIN base_category c ON c.id = a.category_id
                         LEFT JOIN LATERAL (
-                            SELECT co.name
-                            FROM base_article_location al
-                            JOIN countries co ON co.id = al.country_id
-                            WHERE al.article_id = a.id
-                            ORDER BY co.name
-                            LIMIT 1
+                            SELECT co1.name FROM base_article_location al1
+                            JOIN countries co1 ON co1.id = al1.country_id
+                            WHERE al1.article_id = a.id ORDER BY co1.name LIMIT 1
                         ) co ON TRUE
                         WHERE {' AND '.join(filters)}
-                        ORDER BY a.created_at DESC NULLS LAST
+                        ORDER BY a.created_at DESC NULLS LAST, a.id DESC
                         LIMIT 10
-                        """,
-                        params,
-                    )
+                    """, params)
                     rows = cur.fetchall()
 
+                    # Controlled fallback: use only live, non-expired Article index
+                    # rows if source status vocabulary prevents a match.
+                    if not rows:
+                        ff = [
+                            "LOWER(ct.model) = 'article'",
+                            "si.is_live = TRUE",
+                            "(si.expires_at IS NULL OR si.expires_at >= CURRENT_TIMESTAMP)",
+                        ]
+                        fp = []
+                        if category:
+                            normalized_category = re.sub(r"[^a-z0-9]+", " ", category_name.lower()).strip()
+                            ff.append("(si.category_text ILIKE %s OR regexp_replace(LOWER(COALESCE(si.category_text, '')), '[^a-z0-9]+', ' ', 'g') ILIKE %s)")
+                            fp.extend([category_like, f"%{normalized_category}%"])
+                        if country:
+                            ff.append("si.location_text ILIKE %s")
+                            fp.append(f"%{country.name}%")
+                        if terms:
+                            tc = []
+                            for term in terms[:8]:
+                                like = f"%{term}%"
+                                tc.append("(si.title ILIKE %s OR si.category_text ILIKE %s OR si.ai_keywords ILIKE %s OR si.content ILIKE %s)")
+                                fp.extend([like, like, like, like])
+                            ff.append("(" + " OR ".join(tc) + ")")
+                        cur.execute(f"""
+                            SELECT DISTINCT a.id, a.title, a.sub_title, a.content, a.slug, a.created_at,
+                                   c.name AS category_name, si.location_text AS country_name,
+                                   a.thumbnail_url, a.youtube_link
+                            FROM master_search_mastersearchindex si
+                            JOIN django_content_type ct ON ct.id = si.content_type_id
+                            JOIN base_article a ON a.id = si.object_id
+                            LEFT JOIN base_category c ON c.id = a.category_id
+                            WHERE {' AND '.join(ff)}
+                            ORDER BY COALESCE(si.created_at, a.created_at) DESC NULLS LAST, a.id DESC
+                            LIMIT 10
+                        """, fp)
+                        rows = cur.fetchall()
         except Exception as exc:
-            print(f"Article direct search fallback: {exc}")
+            print(f"Article direct search failed: {exc}")
             return None
 
         if not rows:
-            return (
-                "I couldn't find any published articles matching that request. "
-                "Try another topic, category, or location."
-            )
+            return "I couldn't find any published articles matching that request. Try another topic, category, or location."
 
         descriptors = []
         if category:
@@ -291,16 +329,11 @@ class HozpitalityWorkflowHandler(WorkflowHandler):
             date_text = created.strftime("%Y-%m-%d") if hasattr(created, "strftime") else str(created or "").split(" ")[0]
             excerpt = self._clean_excerpt(row.get("sub_title") or row.get("content"))
             lines.append(f"**{idx}. {title}**")
-            if row.get("category_name"):
-                lines.append(f"- Category: {row['category_name']}")
-            if row.get("country_name"):
-                lines.append(f"- Location: {row['country_name']}")
-            if date_text:
-                lines.append(f"- Published: {date_text}")
-            if excerpt:
-                lines.append(f"- {excerpt}")
-            if row.get("slug"):
-                lines.append(f"- Slug: `{row['slug']}`")
+            if row.get("category_name"): lines.append(f"- Category: {row['category_name']}")
+            if row.get("country_name"): lines.append(f"- Location: {row['country_name']}")
+            if date_text: lines.append(f"- Published: {date_text}")
+            if excerpt: lines.append(f"- {excerpt}")
+            if row.get("slug"): lines.append(f"- Slug: `{row['slug']}`")
             lines.append("")
         return "\n".join(lines).strip()
 
