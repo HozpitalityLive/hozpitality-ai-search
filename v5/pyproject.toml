@@ -3,13 +3,13 @@ requires = ["flit_core >=3.2,<4"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "datachat"
-version = "0.1.0"
+name = "hozpitality-ai-v6"
+version = "6.0.0"
 authors = [
   { name="Harun Yuksel" },
 ]
 
-description = "Self-hosted text-to-SQL chat interface — fork of Vanna 2.0"
+description = "Hozpitality AI Search V6 — hybrid global search and text-to-SQL assistant"
 readme = "README.md"
 requires-python = ">=3.9"
 classifiers = [
@@ -63,6 +63,7 @@ marqo = ["marqo"]
 zhipuai = ["zhipuai"]
 ollama = ["ollama", "httpx"]
 qdrant = ["qdrant-client>=1.0.0", "fastembed"]
+search = ["sentence-transformers>=3.0"]
 vllm = ["vllm"]
 pinecone = ["pinecone", "fastembed"]
 opensearch = ["opensearch-py", "opensearch-dsl", "langchain-community", "langchain-huggingface"]
