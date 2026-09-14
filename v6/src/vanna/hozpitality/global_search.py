@@ -51,6 +51,11 @@ class GlobalSearchService:
         self._source_cache: dict[int, Optional[dict[str, Any]]] = {}
         self._search_column: Optional[str] = None
         self.last_stats: dict[str, Any] = {}
+        self.debug = str(__import__("os").getenv("V6_DEBUG", "true")).lower() in {"1", "true", "yes", "on"}
+
+    def _debug(self, message: str):
+        if self.debug:
+            print(f"[V6 DEBUG] {message}", flush=True)
 
     def _connect(self):
         return psycopg2.connect(**self.pg_config)
@@ -275,8 +280,10 @@ class GlobalSearchService:
 
         unique = list(dict.fromkeys(t for t in tokens if len(t) >= 3))[:12]
         if not unique:
+            self._debug(f"location classification: no eligible tokens from {tokens!r}")
             return []
 
+        self._debug(f"location classification candidates={unique!r}")
         branches = []
         params: list[Any] = []
         for token in unique:
@@ -308,15 +315,19 @@ class GlobalSearchService:
                 cur.execute(query, params)
                 rows = cur.fetchall()
         except Exception as exc:
-            print(f"V6 location classification skipped: {exc}")
+            print(f"[V6 DEBUG] location classification SQL failed: {exc}", flush=True)
             return []
+
+        self._debug("location hit counts=" + repr({str(r["token"]): int(r["location_hits"] or 0) for r in rows}))
 
         valid = {
             str(row["token"]).lower()
             for row in rows
             if int(row["location_hits"] or 0) >= 3
         }
-        return [token for token in unique if token.lower() in valid]
+        result = [token for token in unique if token.lower() in valid]
+        self._debug(f"location classification result={result!r}")
+        return result
 
     def _build_candidate_query(
         self,
@@ -570,6 +581,13 @@ class GlobalSearchService:
         params.extend([content_type_id is not None, content_type_id or 0])
         params.extend(extra_params)
         params.append(limit)
+        self._debug(
+            "candidate SQL prepared: "
+            f"keywords={keyword_tokens!r} locations={location_tokens!r} "
+            f"content_type_id={content_type_id!r} params={len(params)} limit={limit}"
+        )
+        self._debug("candidate SQL:\\n" + sql_text.strip())
+        self._debug("candidate params=" + repr(params))
         return sql_text, params
 
     def _vector_enabled(self) -> bool:
@@ -598,6 +616,7 @@ class GlobalSearchService:
 
     def search_hits(self, message: str, limit: int = 10) -> list[dict[str, Any]]:
         plan = self.planner.plan(message, limit)
+        self._debug(f"SEARCH START query={message!r} plan={plan!r}")
         if plan.analytics:
             self.last_stats = {"strategy": "ANALYTICS", "count": 0}
             return []
@@ -606,6 +625,10 @@ class GlobalSearchService:
         raw_tokens = self._tokens(plan.normalized)
         entity_words = self._entity_stopwords(entity_type)
         semantic_tokens = [t for t in raw_tokens if t not in entity_words]
+        self._debug(
+            f"tokens raw={raw_tokens!r} entity_type={entity_type!r} "
+            f"entity_stopwords={sorted(entity_words)!r} semantic={semantic_tokens!r}"
+        )
 
         # Dynamically identify locations from the master index. The remaining
         # tokens are the semantic search terms. This fixes "chef jobs Dubai":
@@ -619,6 +642,11 @@ class GlobalSearchService:
 
         keyword_phrase = " ".join(keyword_tokens[:12]).strip()
         location_phrase = " ".join(location_tokens[:6]).strip()
+        self._debug(
+            f"parsed query => entity={entity_type!r} keyword_tokens={keyword_tokens!r} "
+            f"keyword_phrase={keyword_phrase!r} location_tokens={location_tokens!r} "
+            f"location_phrase={location_phrase!r}"
+        )
         if not keyword_phrase and not location_phrase:
             self.last_stats = {
                 "strategy": "GLOBAL_SEARCH",
@@ -630,8 +658,10 @@ class GlobalSearchService:
         content_type_id: Optional[int] = None
         if entity_type:
             ct = self.schema.resolve_content_type(entity_type)
+            self._debug(f"content type resolution entity={entity_type!r} => {ct!r}")
             if ct:
                 content_type_id = int(ct.id)
+        self._debug(f"resolved content_type_id={content_type_id!r}")
 
         query_vector: Optional[list[float]] = None
         if self._vector_enabled():
@@ -648,8 +678,10 @@ class GlobalSearchService:
             str(limit),
             "v6.2",
         )
+        self._debug(f"cache key={cache_key!r}")
         cached = self.cache.get(cache_key)
         if cached is not None:
+            self._debug(f"CACHE HIT rows={len(cached)}")
             self.last_stats = {
                 "cache_hit": True,
                 "strategy": plan.strategy,
@@ -674,11 +706,30 @@ class GlobalSearchService:
                 limit=max(1, min(int(limit), 20)),
                 query_vector=candidate_vector,
             )
+            self._debug(f"EXECUTE candidate query vector={bool(candidate_vector)}")
             with self._connect() as conn, conn.cursor(
                 cursor_factory=psycopg2.extras.RealDictCursor
             ) as cur:
                 cur.execute(query, params)
-                return [dict(row) for row in cur.fetchall()]
+                rows = [dict(row) for row in cur.fetchall()]
+                self._debug(f"EXECUTE returned rows={len(rows)}")
+                if rows:
+                    self._debug(
+                        "top candidates=" + repr([
+                            {
+                                "id": r.get("id"),
+                                "object_id": r.get("object_id"),
+                                "title": r.get("title"),
+                                "location": r.get("location_text"),
+                                "fts": r.get("fts_score"),
+                                "trgm": r.get("trgm_score"),
+                                "loc": r.get("loc_score"),
+                                "relevance": r.get("relevance"),
+                            }
+                            for r in rows[:10]
+                        ])
+                    )
+                return rows
 
         try:
             hits = execute(query_vector)
@@ -689,7 +740,7 @@ class GlobalSearchService:
                     hits = execute(None)
                     query_vector = None
                 except Exception as lexical_exc:
-                    print(f"V6 lexical search failed: {lexical_exc}")
+                    print(f"[V6 DEBUG] lexical search failed: {type(lexical_exc).__name__}: {lexical_exc}", flush=True)
                     self.last_stats = {
                         "cache_hit": False,
                         "strategy": plan.strategy,
@@ -698,7 +749,7 @@ class GlobalSearchService:
                     }
                     return []
             else:
-                print(f"V6 global search failed: {exc}")
+                print(f"[V6 DEBUG] global search failed: {type(exc).__name__}: {exc}", flush=True)
                 self.last_stats = {
                     "cache_hit": False,
                     "strategy": plan.strategy,
