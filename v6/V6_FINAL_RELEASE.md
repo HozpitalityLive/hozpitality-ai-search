@@ -71,3 +71,4 @@ curl --get --data-urlencode "q=Marriott" http://127.0.0.1:8085/api/search
 ```
 
 Do not stop or replace the V5 service on port 8084 while validating V6.
+\n## Content Type Resolution Fix\n\nWhen multiple django_content_type rows share the same model name, V6 now prefers the `base` app for public master-search records. This prevents `job` from resolving to a secondary `job.job` content type when the master index uses `base.job`.\n
