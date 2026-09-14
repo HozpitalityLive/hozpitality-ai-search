@@ -262,118 +262,386 @@ class GlobalSearchService:
     def _live_clause(self, historical: bool) -> str:
         if historical:
             return "TRUE"
-        return "(si.is_live = TRUE OR si.is_live IS NULL) AND (si.expires_at IS NULL OR si.expires_at >= CURRENT_TIMESTAMP)"
+        return (
+            "(si.is_live = TRUE OR si.is_live IS NULL) "
+            "AND (si.expires_at IS NULL OR si.expires_at >= CURRENT_TIMESTAMP)"
+        )
 
-    def _build_candidate_query(self, tokens: list[str], phrase: str, content_type_id: Optional[int], historical: bool, limit: int, query_vector: Optional[list[float]]):
+    def _build_candidate_query(
+        self,
+        tokens: list[str],
+        phrase: str,
+        content_type_id: Optional[int],
+        historical: bool,
+        limit: int,
+        query_vector: Optional[list[float]],
+    ):
+        """
+        Build a bounded hybrid lexical/vector query.
+
+        Important V6 rules:
+        - FTS is the primary retrieval path.
+        - Trigram is an independent fuzzy/typo path.
+        - Vector search is genuinely optional.
+        - Entity filtering is applied only when the planner explicitly
+          resolves a content type.
+        - Expensive relevance scoring happens only on the small UNION
+          candidate set, never on the whole master index.
+        """
         search_col = self._detect_search_column()
-        tsquery = " & ".join(tokens[:12]) if tokens else phrase
-        like_phrase = f"%{phrase}%"
+
+        # Use the normalized phrase for plainto_tsquery.  Passing an
+        # already-built "a & b & c" string to plainto_tsquery is incorrect
+        # because plainto_tsquery is itself the parser.
+        fts_query = phrase
+
+        # Short phrases need a slightly broader trigram threshold.
         trigram_threshold = 0.18 if len(phrase) >= 5 else 0.25
-        ctes = [
-            f"fts AS (SELECT si.id, ts_rank_cd(si.{search_col}, plainto_tsquery('simple', unaccent(%s))) AS fts_score FROM master_search_mastersearchindex si WHERE {self._live_clause(historical)} AND si.{search_col} @@ plainto_tsquery('simple', unaccent(%s)) ORDER BY fts_score DESC LIMIT 100)",
-            "trgm AS (SELECT si.id, GREATEST(similarity(si.title, %s), similarity(si.user_name, %s), similarity(si.category_text, %s), similarity(si.location_text, %s), similarity(si.slug, %s)) AS trgm_score FROM master_search_mastersearchindex si WHERE "
-            + self._live_clause(historical)
-            + " AND (si.title % %s OR si.user_name % %s OR si.category_text % %s OR si.location_text % %s OR si.slug % %s) LIMIT 100)",
-        ]
-        params: list[Any] = [tsquery, tsquery, phrase, phrase, phrase, phrase, phrase, phrase, phrase, phrase, phrase, phrase]
-        if query_vector:
-            ctes.append(
-                "vec AS (SELECT si.id, 1 - (si.embedding <=> %s::vector) AS vec_score FROM master_search_mastersearchindex si WHERE "
-                + self._live_clause(historical)
-                + " AND si.embedding IS NOT NULL ORDER BY si.embedding <=> %s::vector LIMIT 100)"
+
+        # Candidate limits are deliberately bounded.
+        fts_limit = max(100, min(int(limit) * 12, 300))
+        trgm_limit = max(100, min(int(limit) * 12, 300))
+        vector_limit = max(100, min(int(limit) * 12, 300))
+
+        ctes: list[str] = [
+            f"""
+            fts AS (
+                SELECT
+                    si.id,
+                    ts_rank_cd(
+                        si.{search_col},
+                        plainto_tsquery('simple', unaccent(%s))
+                    ) AS fts_score
+                FROM master_search_mastersearchindex si
+                WHERE {self._live_clause(historical)}
+                  AND si.{search_col} @@ plainto_tsquery(
+                        'simple',
+                        unaccent(%s)
+                  )
+                ORDER BY fts_score DESC, si.id DESC
+                LIMIT {fts_limit}
             )
+            """,
+            f"""
+            trgm AS (
+                SELECT
+                    si.id,
+                    GREATEST(
+                        similarity(COALESCE(si.title, ''), %s),
+                        similarity(COALESCE(si.user_name, ''), %s),
+                        similarity(COALESCE(si.category_text, ''), %s),
+                        similarity(COALESCE(si.location_text, ''), %s),
+                        similarity(COALESCE(si.slug, ''), %s)
+                    ) AS trgm_score
+                FROM master_search_mastersearchindex si
+                WHERE {self._live_clause(historical)}
+                  AND (
+                      si.title % %s
+                      OR si.user_name % %s
+                      OR si.category_text % %s
+                      OR si.location_text % %s
+                      OR si.slug % %s
+                  )
+                  AND GREATEST(
+                      similarity(COALESCE(si.title, ''), %s),
+                      similarity(COALESCE(si.user_name, ''), %s),
+                      similarity(COALESCE(si.category_text, ''), %s),
+                      similarity(COALESCE(si.location_text, ''), %s),
+                      similarity(COALESCE(si.slug, ''), %s)
+                  ) >= {trigram_threshold}
+                ORDER BY trgm_score DESC, si.id DESC
+                LIMIT {trgm_limit}
+            )
+            """,
+        ]
+
+        # The trigram CTE contains 15 phrase parameters:
+        # 5 similarity() + 5 % operators + 5 final similarity() threshold.
+        params: list[Any] = [
+            fts_query,
+            fts_query,
+            phrase, phrase, phrase, phrase, phrase,
+            phrase, phrase, phrase, phrase, phrase,
+            phrase, phrase, phrase, phrase, phrase,
+        ]
+
+        if query_vector:
             vec = "[" + ",".join(f"{float(x):.8f}" for x in query_vector) + "]"
+            ctes.append(
+                f"""
+                vec AS (
+                    SELECT
+                        si.id,
+                        1 - (si.embedding <=> %s::vector) AS vec_score
+                    FROM master_search_mastersearchindex si
+                    WHERE {self._live_clause(historical)}
+                      AND si.embedding IS NOT NULL
+                    ORDER BY si.embedding <=> %s::vector
+                    LIMIT {vector_limit}
+                )
+                """
+            )
             params.extend([vec, vec])
 
-        ctes.append("candidates AS (SELECT id FROM fts UNION SELECT id FROM trgm" + (" UNION SELECT id FROM vec" if query_vector else "") + ")")
+        union_parts = ["SELECT id FROM fts", "SELECT id FROM trgm"]
+        if query_vector:
+            union_parts.append("SELECT id FROM vec")
+
+        ctes.append(
+            "candidates AS ("
+            + " UNION "
+            .join(union_parts)
+            + ")"
+        )
+
         type_filter = ""
         extra_params: list[Any] = []
+
         if content_type_id is not None:
             type_filter = " AND si.content_type_id = %s"
             extra_params.append(content_type_id)
 
+        # Relevance is calculated only against the bounded candidate set.
         sql_text = f"""
-            WITH {', '.join(ctes)}
+            WITH {", ".join(ctes)}
             SELECT
-                si.id, si.object_id, si.title, si.location_text, si.category_text,
-                si.ai_keywords, si.is_live, si.created_at, si.content_type_id,
-                si.expires_at, si.user_name, si.content, si.slug,
-                ct.app_label, ct.model,
+                si.id,
+                si.object_id,
+                si.title,
+                si.location_text,
+                si.category_text,
+                si.ai_keywords,
+                si.is_live,
+                si.created_at,
+                si.content_type_id,
+                si.expires_at,
+                si.user_name,
+                si.content,
+                si.slug,
+                ct.app_label,
+                ct.model,
+
                 COALESCE(fts.fts_score, 0) AS fts_score,
                 COALESCE(trgm.trgm_score, 0) AS trgm_score,
                 {"COALESCE(vec.vec_score, 0)" if query_vector else "0"} AS vec_score,
+
                 (
-                    CASE WHEN lower(COALESCE(si.title,'')) = lower(%s) THEN 200 ELSE 0 END +
-                    CASE WHEN position(lower(%s) in lower(COALESCE(si.title,''))) > 0 THEN 100 ELSE 0 END +
-                    CASE WHEN position(lower(%s) in lower(COALESCE(si.user_name,''))) > 0 THEN 85 ELSE 0 END +
-                    CASE WHEN position(lower(%s) in lower(COALESCE(si.category_text,''))) > 0 THEN 70 ELSE 0 END +
-                    COALESCE(fts.fts_score,0) * 35 +
-                    COALESCE(trgm.trgm_score,0) * 35 +
-                    {"COALESCE(vec.vec_score,0) * 30" if query_vector else "0"}
+                    -- Exact title is the strongest lexical signal.
+                    CASE
+                        WHEN lower(COALESCE(si.title, '')) = lower(%s)
+                        THEN 240 ELSE 0
+                    END
+
+                    -- Exact phrase contained in title.
+                    + CASE
+                        WHEN position(
+                            lower(%s) IN lower(COALESCE(si.title, ''))
+                        ) > 0
+                        THEN 130 ELSE 0
+                    END
+
+                    -- Exact phrase contained in owner/person.
+                    + CASE
+                        WHEN position(
+                            lower(%s) IN lower(COALESCE(si.user_name, ''))
+                        ) > 0
+                        THEN 95 ELSE 0
+                    END
+
+                    -- Category and location are useful but weaker signals.
+                    + CASE
+                        WHEN position(
+                            lower(%s) IN lower(COALESCE(si.category_text, ''))
+                        ) > 0
+                        THEN 75 ELSE 0
+                    END
+
+                    + CASE
+                        WHEN position(
+                            lower(%s) IN lower(COALESCE(si.location_text, ''))
+                        ) > 0
+                        THEN 55 ELSE 0
+                    END
+
+                    + COALESCE(fts.fts_score, 0) * 45
+                    + COALESCE(trgm.trgm_score, 0) * 40
+                    {" + COALESCE(vec.vec_score, 0) * 30" if query_vector else ""}
                 ) AS relevance
+
             FROM candidates c
-            JOIN master_search_mastersearchindex si ON si.id = c.id
-            JOIN django_content_type ct ON ct.id = si.content_type_id
-            LEFT JOIN fts ON fts.id = si.id
-            LEFT JOIN trgm ON trgm.id = si.id
+            JOIN master_search_mastersearchindex si
+              ON si.id = c.id
+            JOIN django_content_type ct
+              ON ct.id = si.content_type_id
+            LEFT JOIN fts
+              ON fts.id = si.id
+            LEFT JOIN trgm
+              ON trgm.id = si.id
             {"LEFT JOIN vec ON vec.id = si.id" if query_vector else ""}
-            WHERE {self._live_clause(historical)} {type_filter}
-            ORDER BY relevance DESC, si.created_at DESC NULLS LAST, si.id DESC
+
+            WHERE {self._live_clause(historical)}
+              {type_filter}
+
+            ORDER BY
+                relevance DESC,
+                si.created_at DESC NULLS LAST,
+                si.id DESC
             LIMIT %s
         """
-        params.extend([phrase, phrase, phrase, phrase])
+
+        # Five relevance phrase parameters + optional content type + limit.
+        params.extend([phrase, phrase, phrase, phrase, phrase])
         params.extend(extra_params)
         params.append(limit)
+
         return sql_text, params
+
+    def _vector_enabled(self) -> bool:
+        """Return True only when SEARCH_VECTOR_ENABLED is explicitly enabled."""
+        import os
+
+        return os.getenv("SEARCH_VECTOR_ENABLED", "false").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
 
     def search_hits(self, message: str, limit: int = 10) -> list[dict[str, Any]]:
         plan = self.planner.plan(message, limit)
+
         if plan.analytics:
-            return []
-        tokens = self._tokens(plan.normalized)
-        phrase = " ".join(tokens[:12]).strip() or plan.normalized
-        if len(phrase) < 2:
+            self.last_stats = {
+                "strategy": "ANALYTICS",
+                "count": 0,
+            }
             return []
 
-        ct = self.schema.resolve_content_type(plan.normalized)
-        content_type_id = ct.id if ct else None
-        query_vector = self.embedding.encode(phrase)
-        cache_key = self.cache.key(plan.normalized, str(content_type_id or "all"), str(plan.historical), str(limit), "v6")
+        tokens = self._tokens(plan.normalized)
+        phrase = " ".join(tokens[:12]).strip() or plan.normalized
+
+        if len(phrase) < 2:
+            self.last_stats = {
+                "strategy": "GLOBAL_SEARCH",
+                "count": 0,
+                "reason": "query_too_short",
+            }
+            return []
+
+        # IMPORTANT:
+        # resolve_content_type() must only constrain the search when the
+        # planner has identified an explicit entity type.  A company name
+        # such as "Marriott" must remain a global search.
+        content_type_id: Optional[int] = None
+        entity_type = self._norm(getattr(plan, "entity_type", "") or "")
+
+        explicit_entities = {
+            "job", "jobs",
+            "professional", "professionals",
+            "company", "companies",
+            "article", "articles",
+            "event", "events",
+            "product", "products",
+            "supplier", "suppliers",
+            "faq", "faqs",
+            "award", "awards",
+        }
+
+        if entity_type in explicit_entities:
+            ct = self.schema.resolve_content_type(entity_type)
+            if ct:
+                content_type_id = int(ct.id)
+
+        # Vector retrieval must be optional.  The previous implementation
+        # encoded every request regardless of SEARCH_VECTOR_ENABLED.
+        query_vector: Optional[list[float]] = None
+        vector_requested = self._vector_enabled()
+
+        if vector_requested:
+            try:
+                query_vector = self.embedding.encode(phrase)
+            except Exception as exc:
+                print(f"V6 vector retrieval disabled for this request: {exc}")
+                query_vector = None
+
+        cache_key = self.cache.key(
+            plan.normalized,
+            str(content_type_id or "all"),
+            str(plan.historical),
+            str(limit),
+            "v6",
+        )
+
         cached = self.cache.get(cache_key)
         if cached is not None:
-            self.last_stats = {"cache_hit": True, "strategy": "GLOBAL_SEARCH", "count": len(cached)}
+            self.last_stats = {
+                "cache_hit": True,
+                "strategy": plan.strategy,
+                "content_type": entity_type or None,
+                "count": len(cached),
+                "vector": bool(query_vector),
+            }
             return cached
 
         started = time.perf_counter()
-        query, params = self._build_candidate_query(
-            tokens, phrase, content_type_id, plan.historical, max(1, min(limit, 20)), query_vector
-        )
-        try:
-            with self._connect() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+
+        def execute(candidate_vector: Optional[list[float]]):
+            query, params = self._build_candidate_query(
+                tokens=tokens,
+                phrase=phrase,
+                content_type_id=content_type_id,
+                historical=plan.historical,
+                limit=max(1, min(int(limit), 20)),
+                query_vector=candidate_vector,
+            )
+
+            with self._connect() as conn, conn.cursor(
+                cursor_factory=psycopg2.extras.RealDictCursor
+            ) as cur:
                 cur.execute(query, params)
-                hits = [dict(row) for row in cur.fetchall()]
+                return [dict(row) for row in cur.fetchall()]
+
+        try:
+            hits = execute(query_vector)
         except Exception as exc:
-            # If vector search is unavailable/malformed, retry lexical-only.
-            if query_vector:
-                query, params = self._build_candidate_query(
-                    tokens, phrase, content_type_id, plan.historical, max(1, min(limit, 20)), None
-                )
-                with self._connect() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute(query, params)
-                    hits = [dict(row) for row in cur.fetchall()]
+            # Always retry with pure lexical retrieval.  This makes vector
+            # failures non-fatal and keeps FTS/trigram available.
+            if query_vector is not None:
+                print(f"V6 vector search failed; retrying lexical search: {exc}")
+                try:
+                    hits = execute(None)
+                    query_vector = None
+                except Exception as lexical_exc:
+                    print(f"V6 lexical search failed: {lexical_exc}")
+                    self.last_stats = {
+                        "cache_hit": False,
+                        "strategy": plan.strategy,
+                        "count": 0,
+                        "error": str(lexical_exc),
+                    }
+                    return []
             else:
                 print(f"V6 global search failed: {exc}")
+                self.last_stats = {
+                    "cache_hit": False,
+                    "strategy": plan.strategy,
+                    "count": 0,
+                    "error": str(exc),
+                }
                 return []
 
         self.cache.set(cache_key, hits)
+
         self.last_stats = {
             "cache_hit": False,
             "strategy": plan.strategy,
-            "content_type": plan.entity_type,
+            "content_type": entity_type or None,
             "count": len(hits),
-            "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+            "latency_ms": round(
+                (time.perf_counter() - started) * 1000,
+                2,
+            ),
             "vector": bool(query_vector),
+            "fts_trigram": True,
         }
+
         return hits
 
     def search(self, message: str, limit: int = 10) -> Optional[str]:
