@@ -269,14 +269,7 @@ class GlobalSearchService:
 
 
     def _classify_location_tokens(self, tokens: list[str]) -> list[str]:
-        """Identify likely geography tokens from indexed location data.
-
-        This is data-driven rather than a hard-coded city list.  A token is
-        treated as a location only when it has meaningful coverage in
-        ``location_text``.  The coverage test is deliberately conservative so
-        words such as ``chef`` cannot become a location merely because a few
-        malformed records contain them in their location field.
-        """
+        """Classify geography tokens from real word matches in location_text."""
         if not tokens:
             return []
 
@@ -287,28 +280,25 @@ class GlobalSearchService:
         branches = []
         params: list[Any] = []
         for token in unique:
+            # Normalize punctuation in location_text to spaces, then search
+            # for a whole word. This avoids pg_trgm false positives such as
+            # "chef" being treated as a location because of bad data.
             branches.append(
                 f"""
                 SELECT %s AS token,
-                       COUNT(*) FILTER (
-                           WHERE si.location_text %% %s
-                       ) AS location_hits,
-                       COUNT(*) FILTER (
-                           WHERE si.title %% %s
-                              OR si.ai_keywords %% %s
-                              OR si.content %% %s
-                       ) AS semantic_hits
+                       COUNT(*) AS location_hits
                 FROM master_search_mastersearchindex si
                 WHERE {self._live_clause(False)}
-                  AND (
-                      si.location_text %% %s
-                      OR si.title %% %s
-                      OR si.ai_keywords %% %s
-                  )
+                  AND position(
+                      ' ' || lower(%s) || ' '
+                      IN ' ' || regexp_replace(
+                          lower(COALESCE(si.location_text, '')),
+                          '[^a-z0-9]+', ' ', 'g'
+                      ) || ' '
+                  ) > 0
                 """
             )
-            # token label + location filter + 3 semantic comparisons + WHERE
-            params.extend([token, token, token, token, token, token, token, token])
+            params.extend([token, token])
 
         query = " UNION ALL ".join(branches)
         try:
@@ -321,22 +311,12 @@ class GlobalSearchService:
             print(f"V6 location classification skipped: {exc}")
             return []
 
-        result: list[str] = []
-        for row in rows:
-            token = str(row["token"]).lower()
-            location_hits = int(row["location_hits"] or 0)
-            semantic_hits = int(row["semantic_hits"] or 0)
-
-            # Require real location coverage.  The relative test handles both
-            # large cities (Dubai) and smaller geographies while the absolute
-            # floor prevents isolated/malformed location values from winning.
-            if location_hits >= 10 and (
-                location_hits >= semantic_hits * 0.02
-                or location_hits >= 50
-            ):
-                result.append(token)
-
-        return [token for token in unique if token.lower() in set(result)]
+        valid = {
+            str(row["token"]).lower()
+            for row in rows
+            if int(row["location_hits"] or 0) >= 3
+        }
+        return [token for token in unique if token.lower() in valid]
 
     def _build_candidate_query(
         self,
@@ -407,9 +387,9 @@ class GlobalSearchService:
         for token in trigram_terms[:8]:
             trgm_conditions.append(
                 "(si.title %% %s OR si.user_name %% %s OR si.category_text %% %s "
-                "OR si.slug %% %s)"
+                "OR si.slug %% %s OR si.content %% %s OR si.ai_keywords %% %s)"
             )
-            trgm_score_args.extend([token, token, token, token])
+            trgm_score_args.extend([token, token, token, token, token, token])
 
         # GREATEST of token/field similarities; parameters are repeated because
         # psycopg2 does not support named parameters in this positional query.
@@ -421,10 +401,12 @@ class GlobalSearchService:
                 "similarity(COALESCE(si.title,''), %s),"
                 "similarity(COALESCE(si.user_name,''), %s),"
                 "similarity(COALESCE(si.category_text,''), %s),"
-                "similarity(COALESCE(si.slug,''), %s)"
+                "similarity(COALESCE(si.slug,''), %s),"
+                "similarity(COALESCE(si.content,''), %s),"
+                "similarity(COALESCE(si.ai_keywords,''), %s)"
                 ")"
             )
-            score_params.extend([token, token, token, token])
+            score_params.extend([token, token, token, token, token, token])
 
         trgm_where = " OR ".join(trgm_conditions) if trgm_conditions else "FALSE"
         trgm_score = "GREATEST(" + ",".join(score_terms) + ")" if score_terms else "0"
@@ -445,7 +427,7 @@ class GlobalSearchService:
         # score parameters appear before WHERE/operator parameters.
         params.extend(score_params)
         for token in trigram_terms[:8]:
-            params.extend([token, token, token, token])
+            params.extend([token, token, token, token, token, token])
 
         # Separate location candidate pool. It prevents a common word such as
         # "chef" from crowding Dubai jobs out of the bounded lexical pool.
@@ -664,7 +646,7 @@ class GlobalSearchService:
             str(content_type_id or "all"),
             str(plan.historical),
             str(limit),
-            "v6.1",
+            "v6.2",
         )
         cached = self.cache.get(cache_key)
         if cached is not None:
