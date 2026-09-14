@@ -60,8 +60,21 @@ class QueryUnderstanding:
         self.dictionary_path = Path(
             dictionary_path
             or os.getenv(
-                "SYMSpell_DICTIONARY",
-                str(Path(__file__).resolve().parents[3] / "data" / "symspell_dictionary.txt"),
+                "SYMSPELL_DICTIONARY",
+                os.getenv(
+                    "SYMSpell_DICTIONARY",
+                    str(
+                        Path(__file__).resolve().parents[3]
+                        / "data"
+                        / "symspell_dictionary.txt"
+                    ),
+                ),
+            )
+        )
+        self.max_edit_distance = int(
+            os.getenv(
+                "SYMSPELL_MAX_EDIT_DISTANCE",
+                os.getenv("SYMSpell_MAX_EDIT_DISTANCE", "2"),
             )
         )
         self._nlp = self._build_nlp()
@@ -90,7 +103,7 @@ class QueryUnderstanding:
             return None
         try:
             sym = SymSpell(
-                max_dictionary_edit_distance=int(os.getenv("SYMSpell_MAX_EDIT_DISTANCE", "2")),
+                max_dictionary_edit_distance=int(os.getenv("SYMSPELL_MAX_EDIT_DISTANCE", os.getenv("SYMSpell_MAX_EDIT_DISTANCE", "2"))),
                 prefix_length=7,
             )
             # term_index=0, count_index=1 matches:
@@ -127,7 +140,7 @@ class QueryUnderstanding:
             suggestions = self._symspell.lookup(
                 token,
                 Verbosity.CLOSEST,
-                max_edit_distance=int(os.getenv("SYMSpell_MAX_EDIT_DISTANCE", "2")),
+                max_edit_distance=int(os.getenv("SYMSPELL_MAX_EDIT_DISTANCE", os.getenv("SYMSpell_MAX_EDIT_DISTANCE", "2"))),
                 include_unknown=False,
             )
             if not suggestions:

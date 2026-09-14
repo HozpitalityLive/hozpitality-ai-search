@@ -23,6 +23,7 @@ dependencies = [
     "pandas",
     "httpx>=0.28.0",
     "PyYAML",
+    "python-dotenv>=1.0.0",
     "plotly",
     "tabulate",
     "sqlparse",
