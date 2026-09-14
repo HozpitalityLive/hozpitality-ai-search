@@ -101,15 +101,20 @@ def register_chat_routes(
                     )
 
                     chat_request = ChatRequest(**data)
+                except WebSocketDisconnect:
+                    # Normal client close (including Stop Generation / navigation).
+                    return
                 except Exception as e:
-                    traceback.print_stack()
-                    traceback.print_exc()
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "data": {"message": f"Invalid request: {str(e)}"},
-                        }
-                    )
+                    # Do not print a full traceback for a malformed client request.
+                    try:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "data": {"message": f"Invalid request: {str(e)}"},
+                            }
+                        )
+                    except WebSocketDisconnect:
+                        return
                     continue
 
                 # Stream response
@@ -131,17 +136,21 @@ def register_chat_routes(
                         }
                     )
 
+                except WebSocketDisconnect:
+                    # Client stopped the request or disconnected normally.
+                    return
                 except Exception as e:
-                    traceback.print_stack()
-                    traceback.print_exc()
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "data": {"message": str(e)},
-                            "conversation_id": chat_request.conversation_id or "",
-                            "request_id": chat_request.request_id or "",
-                        }
-                    )
+                    try:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "data": {"message": str(e)},
+                                "conversation_id": chat_request.conversation_id or "",
+                                "request_id": chat_request.request_id or "",
+                            }
+                        )
+                    except WebSocketDisconnect:
+                        return
 
         except WebSocketDisconnect:
             pass
