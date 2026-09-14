@@ -171,7 +171,7 @@ def main() -> None:
     try:
         with tmp.open("w", encoding="utf-8") as f:
             for word, frequency in rows:
-                f.write(f"{word}\t{frequency}\n")
+                f.write(f"{word} {frequency}\n")
 
         tmp.replace(OUT)
 
