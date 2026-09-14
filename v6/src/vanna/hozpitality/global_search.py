@@ -336,11 +336,11 @@ class GlobalSearchService:
                 FROM master_search_mastersearchindex si
                 WHERE {self._live_clause(historical)}
                   AND (
-                      si.title % %s
-                      OR si.user_name % %s
-                      OR si.category_text % %s
-                      OR si.location_text % %s
-                      OR si.slug % %s
+                      si.title %% %s
+                      OR si.user_name %% %s
+                      OR si.category_text %% %s
+                      OR si.location_text %% %s
+                      OR si.slug %% %s
                   )
                   AND GREATEST(
                       similarity(COALESCE(si.title, ''), %s),
