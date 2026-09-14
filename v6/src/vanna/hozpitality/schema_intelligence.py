@@ -192,21 +192,7 @@ class HozpitalitySchemaIntelligence:
 
         matches = [x for x in self.content_types() if self._normalize(x.get("model")) == model]
         if matches:
-            # Multiple Django content types can share the same model name
-            # (for example base.job and job.job). Hozpitality's master search
-            # index uses the public Base models for global search, so prefer
-            # the `base` app when it exists. Fall back deterministically to
-            # the first match only when no base content type is available.
-            base_matches = [
-                x for x in matches
-                if self._normalize(x.get("app_label")) == "base"
-            ]
-            selected = base_matches[0] if base_matches else matches[0]
-            return ResolvedValue(
-                int(selected["id"]),
-                selected["model"],
-                1.0,
-            )
+            return ResolvedValue(int(matches[0]["id"]), matches[0]["model"], 1.0)
         return None
 
     def article_query_context(self, message: str) -> dict[str, Any]:

@@ -51,11 +51,6 @@ class GlobalSearchService:
         self._source_cache: dict[int, Optional[dict[str, Any]]] = {}
         self._search_column: Optional[str] = None
         self.last_stats: dict[str, Any] = {}
-        self.debug = str(__import__("os").getenv("V6_DEBUG", "true")).lower() in {"1", "true", "yes", "on"}
-
-    def _debug(self, message: str):
-        if self.debug:
-            print(f"[V6 DEBUG] {message}", flush=True)
 
     def _connect(self):
         return psycopg2.connect(**self.pg_config)
@@ -280,10 +275,8 @@ class GlobalSearchService:
 
         unique = list(dict.fromkeys(t for t in tokens if len(t) >= 3))[:12]
         if not unique:
-            self._debug(f"location classification: no eligible tokens from {tokens!r}")
             return []
 
-        self._debug(f"location classification candidates={unique!r}")
         branches = []
         params: list[Any] = []
         for token in unique:
@@ -315,19 +308,15 @@ class GlobalSearchService:
                 cur.execute(query, params)
                 rows = cur.fetchall()
         except Exception as exc:
-            print(f"[V6 DEBUG] location classification SQL failed: {exc}", flush=True)
+            print(f"V6 location classification skipped: {exc}")
             return []
-
-        self._debug("location hit counts=" + repr({str(r["token"]): int(r["location_hits"] or 0) for r in rows}))
 
         valid = {
             str(row["token"]).lower()
             for row in rows
             if int(row["location_hits"] or 0) >= 3
         }
-        result = [token for token in unique if token.lower() in valid]
-        self._debug(f"location classification result={result!r}")
-        return result
+        return [token for token in unique if token.lower() in valid]
 
     def _build_candidate_query(
         self,
@@ -398,9 +387,9 @@ class GlobalSearchService:
         for token in trigram_terms[:8]:
             trgm_conditions.append(
                 "(si.title %% %s OR si.user_name %% %s OR si.category_text %% %s "
-                "OR si.slug %% %s OR si.content %% %s OR si.ai_keywords %% %s)"
+                "OR si.slug %% %s)"
             )
-            trgm_score_args.extend([token, token, token, token, token, token])
+            trgm_score_args.extend([token, token, token, token])
 
         # GREATEST of token/field similarities; parameters are repeated because
         # psycopg2 does not support named parameters in this positional query.
@@ -412,12 +401,10 @@ class GlobalSearchService:
                 "similarity(COALESCE(si.title,''), %s),"
                 "similarity(COALESCE(si.user_name,''), %s),"
                 "similarity(COALESCE(si.category_text,''), %s),"
-                "similarity(COALESCE(si.slug,''), %s),"
-                "similarity(COALESCE(si.content,''), %s),"
-                "similarity(COALESCE(si.ai_keywords,''), %s)"
+                "similarity(COALESCE(si.slug,''), %s)"
                 ")"
             )
-            score_params.extend([token, token, token, token, token, token])
+            score_params.extend([token, token, token, token])
 
         trgm_where = " OR ".join(trgm_conditions) if trgm_conditions else "FALSE"
         trgm_score = "GREATEST(" + ",".join(score_terms) + ")" if score_terms else "0"
@@ -438,7 +425,7 @@ class GlobalSearchService:
         # score parameters appear before WHERE/operator parameters.
         params.extend(score_params)
         for token in trigram_terms[:8]:
-            params.extend([token, token, token, token, token, token])
+            params.extend([token, token, token, token])
 
         # Separate location candidate pool. It prevents a common word such as
         # "chef" from crowding Dubai jobs out of the bounded lexical pool.
@@ -488,7 +475,85 @@ class GlobalSearchService:
             )
             params.extend([vec, vec])
 
+        # When a location is explicitly present, create a focused retrieval pool.
+        # This is critical: independently taking the top N keyword and top N location
+        # candidates can miss their intersection (e.g. many "chef" jobs worldwide).
+        focused_parts = []
+        if keyword_phrase and location_phrase:
+            loc_like_parts = []
+            for _ in location_tokens[:6]:
+                loc_like_parts.append(
+                    "(lower(COALESCE(si.location_text,'')) LIKE lower(%s) "
+                    "OR lower(COALESCE(si.title,'')) LIKE lower(%s) "
+                    "OR lower(COALESCE(si.content,'')) LIKE lower(%s) "
+                    "OR lower(COALESCE(si.ai_keywords,'')) LIKE lower(%s) "
+                    "OR lower(COALESCE(si.slug,'')) LIKE lower(%s))"
+                )
+            focused_loc_where = " OR ".join(loc_like_parts)
+            ctes.append(
+                f"""
+                focused_fts AS (
+                    SELECT si.id,
+                           ts_rank_cd(
+                               si.{search_col},
+                               websearch_to_tsquery('simple', unaccent(%s))
+                           ) AS focused_score
+                    FROM master_search_mastersearchindex si
+                    WHERE {self._live_clause(historical)}
+                      AND si.{search_col} @@ websearch_to_tsquery(
+                          'simple', unaccent(%s)
+                      )
+                      AND ({focused_loc_where})
+                    ORDER BY focused_score DESC, si.id DESC
+                    LIMIT 300
+                )
+                """
+            )
+            params.extend([keyword_phrase, keyword_phrase])
+            for token in location_tokens[:6]:
+                pattern = f"%{token}%"
+                params.extend([pattern] * 5)
+            focused_parts.append("SELECT id FROM focused_fts")
+
+            # Typo-aware focused retrieval. Keep trigram restricted to indexed
+            # short columns; location is enforced in the bounded candidate pool.
+            focused_trgm_cond = []
+            focused_trgm_score = []
+            for token in trigram_terms[:8]:
+                focused_trgm_cond.append(
+                    "(si.title %% %s OR si.user_name %% %s OR "
+                    "si.category_text %% %s OR si.slug %% %s)"
+                )
+                focused_trgm_score.append(
+                    "GREATEST(similarity(COALESCE(si.title,''), %s),"
+                    "similarity(COALESCE(si.user_name,''), %s),"
+                    "similarity(COALESCE(si.category_text,''), %s),"
+                    "similarity(COALESCE(si.slug,''), %s))"
+                )
+            if focused_trgm_cond:
+                ctes.append(
+                    f"""
+                    focused_trgm AS (
+                        SELECT si.id,
+                               GREATEST({",".join(focused_trgm_score)}) AS focused_trgm_score
+                        FROM master_search_mastersearchindex si
+                        WHERE {self._live_clause(historical)}
+                          AND ({" OR ".join(focused_trgm_cond)})
+                          AND ({focused_loc_where})
+                        ORDER BY focused_trgm_score DESC, si.id DESC
+                        LIMIT 300
+                    )
+                    """
+                )
+                for token in trigram_terms[:8]:
+                    params.extend([token] * 4)
+                for token in location_tokens[:6]:
+                    pattern = f"%{token}%"
+                    params.extend([pattern] * 5)
+                focused_parts.append("SELECT id FROM focused_trgm")
+
         union_parts = ["SELECT id FROM fts", "SELECT id FROM trgm", "SELECT id FROM loc"]
+        union_parts.extend(focused_parts)
         if query_vector:
             union_parts.append("SELECT id FROM vec")
         ctes.append("candidates AS (" + " UNION ".join(union_parts) + ")")
@@ -567,6 +632,14 @@ class GlobalSearchService:
             {"LEFT JOIN vec ON vec.id = si.id" if query_vector else ""}
             WHERE {self._live_clause(historical)}
               {type_filter}
+              {("AND (" + " OR ".join([
+                  "(lower(COALESCE(si.location_text,'')) LIKE lower(%s) "
+                  "OR lower(COALESCE(si.title,'')) LIKE lower(%s) "
+                  "OR lower(COALESCE(si.content,'')) LIKE lower(%s) "
+                  "OR lower(COALESCE(si.ai_keywords,'')) LIKE lower(%s) "
+                  "OR lower(COALESCE(si.slug,'')) LIKE lower(%s))"
+                  for _ in location_tokens[:6]
+              ]) + ")" if location_tokens else "")}
             ORDER BY relevance DESC, si.created_at DESC NULLS LAST, si.id DESC
             LIMIT %s
         """
@@ -580,14 +653,10 @@ class GlobalSearchService:
         params.extend(location_boost_params)
         params.extend([content_type_id is not None, content_type_id or 0])
         params.extend(extra_params)
+        for token in location_tokens[:6]:
+            pattern = f"%{token}%"
+            params.extend([pattern] * 5)
         params.append(limit)
-        self._debug(
-            "candidate SQL prepared: "
-            f"keywords={keyword_tokens!r} locations={location_tokens!r} "
-            f"content_type_id={content_type_id!r} params={len(params)} limit={limit}"
-        )
-        self._debug("candidate SQL:\\n" + sql_text.strip())
-        self._debug("candidate params=" + repr(params))
         return sql_text, params
 
     def _vector_enabled(self) -> bool:
@@ -616,7 +685,6 @@ class GlobalSearchService:
 
     def search_hits(self, message: str, limit: int = 10) -> list[dict[str, Any]]:
         plan = self.planner.plan(message, limit)
-        self._debug(f"SEARCH START query={message!r} plan={plan!r}")
         if plan.analytics:
             self.last_stats = {"strategy": "ANALYTICS", "count": 0}
             return []
@@ -625,10 +693,6 @@ class GlobalSearchService:
         raw_tokens = self._tokens(plan.normalized)
         entity_words = self._entity_stopwords(entity_type)
         semantic_tokens = [t for t in raw_tokens if t not in entity_words]
-        self._debug(
-            f"tokens raw={raw_tokens!r} entity_type={entity_type!r} "
-            f"entity_stopwords={sorted(entity_words)!r} semantic={semantic_tokens!r}"
-        )
 
         # Dynamically identify locations from the master index. The remaining
         # tokens are the semantic search terms. This fixes "chef jobs Dubai":
@@ -642,11 +706,6 @@ class GlobalSearchService:
 
         keyword_phrase = " ".join(keyword_tokens[:12]).strip()
         location_phrase = " ".join(location_tokens[:6]).strip()
-        self._debug(
-            f"parsed query => entity={entity_type!r} keyword_tokens={keyword_tokens!r} "
-            f"keyword_phrase={keyword_phrase!r} location_tokens={location_tokens!r} "
-            f"location_phrase={location_phrase!r}"
-        )
         if not keyword_phrase and not location_phrase:
             self.last_stats = {
                 "strategy": "GLOBAL_SEARCH",
@@ -658,10 +717,8 @@ class GlobalSearchService:
         content_type_id: Optional[int] = None
         if entity_type:
             ct = self.schema.resolve_content_type(entity_type)
-            self._debug(f"content type resolution entity={entity_type!r} => {ct!r}")
             if ct:
                 content_type_id = int(ct.id)
-        self._debug(f"resolved content_type_id={content_type_id!r}")
 
         query_vector: Optional[list[float]] = None
         if self._vector_enabled():
@@ -678,10 +735,8 @@ class GlobalSearchService:
             str(limit),
             "v6.2",
         )
-        self._debug(f"cache key={cache_key!r}")
         cached = self.cache.get(cache_key)
         if cached is not None:
-            self._debug(f"CACHE HIT rows={len(cached)}")
             self.last_stats = {
                 "cache_hit": True,
                 "strategy": plan.strategy,
@@ -706,30 +761,11 @@ class GlobalSearchService:
                 limit=max(1, min(int(limit), 20)),
                 query_vector=candidate_vector,
             )
-            self._debug(f"EXECUTE candidate query vector={bool(candidate_vector)}")
             with self._connect() as conn, conn.cursor(
                 cursor_factory=psycopg2.extras.RealDictCursor
             ) as cur:
                 cur.execute(query, params)
-                rows = [dict(row) for row in cur.fetchall()]
-                self._debug(f"EXECUTE returned rows={len(rows)}")
-                if rows:
-                    self._debug(
-                        "top candidates=" + repr([
-                            {
-                                "id": r.get("id"),
-                                "object_id": r.get("object_id"),
-                                "title": r.get("title"),
-                                "location": r.get("location_text"),
-                                "fts": r.get("fts_score"),
-                                "trgm": r.get("trgm_score"),
-                                "loc": r.get("loc_score"),
-                                "relevance": r.get("relevance"),
-                            }
-                            for r in rows[:10]
-                        ])
-                    )
-                return rows
+                return [dict(row) for row in cur.fetchall()]
 
         try:
             hits = execute(query_vector)
@@ -740,7 +776,7 @@ class GlobalSearchService:
                     hits = execute(None)
                     query_vector = None
                 except Exception as lexical_exc:
-                    print(f"[V6 DEBUG] lexical search failed: {type(lexical_exc).__name__}: {lexical_exc}", flush=True)
+                    print(f"V6 lexical search failed: {lexical_exc}")
                     self.last_stats = {
                         "cache_hit": False,
                         "strategy": plan.strategy,
@@ -749,7 +785,7 @@ class GlobalSearchService:
                     }
                     return []
             else:
-                print(f"[V6 DEBUG] global search failed: {type(exc).__name__}: {exc}", flush=True)
+                print(f"V6 global search failed: {exc}")
                 self.last_stats = {
                     "cache_hit": False,
                     "strategy": plan.strategy,
