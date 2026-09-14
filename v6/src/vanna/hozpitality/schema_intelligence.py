@@ -192,12 +192,13 @@ class HozpitalitySchemaIntelligence:
 
         matches = [x for x in self.content_types() if self._normalize(x.get("model")) == model]
         if matches:
-            # Hozpitality has duplicate Django content types in some apps.
-            # The master search index uses the canonical public `base` content
-            # types (e.g. base.job = 18, while app.job may also exist).
+            # Django installations can contain duplicate model names across apps
+            # (e.g. job.job and base.job). The master search index uses the
+            # canonical base content type for Hozpitality content, so prefer
+            # app_label=base when it exists. Fall back deterministically to the
+            # lowest ID rather than relying on database row order.
             matches.sort(key=lambda x: (
                 0 if self._normalize(x.get("app_label")) == "base" else 1,
-                0 if self._normalize(x.get("model")) == model else 1,
                 int(x.get("id") or 0),
             ))
             return ResolvedValue(int(matches[0]["id"]), matches[0]["model"], 1.0)

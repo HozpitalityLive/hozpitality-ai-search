@@ -111,3 +111,32 @@ python main.py
 - Keep V6 as an independent service behind Nginx rather than mounting it into the legacy V2/V3/V4 process.
 
 See `docs/V6_DEPLOYMENT.md` and `docs/V6_ARCHITECTURE.md`.
+
+
+## V6 Query Understanding: spaCy EntityRuler + SymSpell
+
+V6 does not use a hardcoded typo-alias table. Query understanding is deterministic and local:
+
+1. **spaCy EntityRuler** extracts Hozpitality entity types (`job`, `professional`,
+   `company`, `article`, `event`, `product`, `faq`, `award`) without downloading
+   a language model.
+2. **SymSpell** corrects misspelled semantic tokens against a vocabulary generated
+   from the live Hozpitality master-search corpus.
+3. PostgreSQL FTS + pg_trgm performs retrieval; an explicitly supplied location is
+   a hard filter when `location_text` is populated.
+
+Build the vocabulary after database migrations/backfills:
+
+```bash
+python scripts/build_symspell_dictionary.py
+```
+
+Optional environment variables:
+
+```bash
+SYMSpell_DICTIONARY=data/symspell_dictionary.txt
+SYMSpell_MAX_EDIT_DISTANCE=2
+```
+
+If the dictionary is absent, V6 still works; SymSpell simply remains disabled and
+PostgreSQL trigram retrieval is used as the fallback.

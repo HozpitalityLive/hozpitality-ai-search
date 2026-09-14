@@ -28,6 +28,8 @@ dependencies = [
     "sqlparse",
     "sqlalchemy",
     "requests",
+    "spacy>=3.7,<4",
+    "symspellpy>=6.7,<7",
 ]
 
 [project.scripts]

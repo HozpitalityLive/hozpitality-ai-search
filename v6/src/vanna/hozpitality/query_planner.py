@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .query_understanding import QueryUnderstanding
+
 
 @dataclass(frozen=True)
 class SearchPlan:
@@ -41,6 +43,9 @@ class QueryPlanner:
         "award": r"\b(award|awards|recognition|winner|winners|nomination|nominations)\b",
     }
 
+    def __init__(self):
+        self.understanding = QueryUnderstanding()
+
     @staticmethod
     def normalize(query: str) -> str:
         query = query or ""
@@ -53,11 +58,20 @@ class QueryPlanner:
         analytics = bool(self.ANALYTICS.search(normalized))
         historical = bool(self.HISTORICAL.search(normalized))
 
-        entity = None
-        for name, pattern in self.ENTITY_HINTS.items():
-            if re.search(pattern, normalized):
-                entity = name
-                break
+        # spaCy EntityRuler resolves platform entities deterministically. It is
+        # deliberately before the regex fallback so phrases such as "job" and
+        # "jobs" are treated as entities, while SymSpell correction remains
+        # data-driven rather than a hardcoded typo map.
+        corrected, corrected_tokens, extracted_entity = self.understanding.normalize_query(normalized)
+        if corrected:
+            normalized = " ".join(corrected_tokens)
+        entity = extracted_entity
+
+        if entity is None:
+            for name, pattern in self.ENTITY_HINTS.items():
+                if re.search(pattern, normalized):
+                    entity = name
+                    break
 
         if analytics:
             strategy = "SQL_ANALYTICS"

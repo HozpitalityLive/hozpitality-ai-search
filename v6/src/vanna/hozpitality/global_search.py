@@ -37,6 +37,7 @@ SENSITIVE_COLUMNS = {
 }
 
 
+
 class GlobalSearchService:
     def __init__(self, pg_config: dict[str, Any], schema_intelligence):
         self.pg_config = pg_config
@@ -329,55 +330,33 @@ class GlobalSearchService:
         limit: int,
         query_vector: Optional[list[float]],
     ):
-        """Build a deterministic, bounded hybrid query.
+        """Build the bounded V6 hybrid candidate/reranking query.
 
-        Explicit locations are HARD constraints, not merely ranking signals.
-        This is essential for queries such as "chef jobs Dubai": the candidate
-        pool must contain records matching both the semantic keyword and Dubai.
+        Query understanding is deliberately separated from retrieval:
+        * entity words (e.g. ``jobs``) are not searched as keywords once the
+          entity is resolved;
+        * location tokens (e.g. ``Dubai``) are retrieved/scored separately;
+        * FTS handles normal terms;
+        * trigram handles typos such as ``restarant``;
+        * pgvector is optional;
+        * expensive scoring happens only on bounded candidates.
         """
         search_col = self._detect_search_column()
-        keyword_phrase = (keyword_phrase or "").strip()
-        location_phrase = (location_phrase or "").strip()
-        live = self._live_clause(historical)
-        lim = max(1, min(int(limit), 20))
-        candidate_limit = max(100, min(lim * 30, 500))
+        keyword_phrase = keyword_phrase.strip() or " ".join(keyword_tokens).strip()
+        location_phrase = location_phrase.strip()
 
-        params: list[Any] = []
+        fts_limit = max(100, min(int(limit) * 20, 400))
+        trgm_limit = max(100, min(int(limit) * 20, 400))
+        loc_limit = max(100, min(int(limit) * 20, 300))
+        vector_limit = max(100, min(int(limit) * 20, 300))
+
         ctes: list[str] = []
+        params: list[Any] = []
 
-        type_clause = ""
-        if content_type_id is not None:
-            type_clause = " AND si.content_type_id = %s"
-
-        def location_condition(alias="si"):
-            parts = []
-            for token in location_tokens[:6]:
-                pattern = f"%{token}%"
-                parts.append(
-                    f"(lower(COALESCE({alias}.location_text,'')) LIKE lower(%s)"
-                    f" OR lower(COALESCE({alias}.title,'')) LIKE lower(%s)"
-                    f" OR lower(COALESCE({alias}.content,'')) LIKE lower(%s)"
-                    f" OR lower(COALESCE({alias}.ai_keywords,'')) LIKE lower(%s)"
-                    f" OR lower(COALESCE({alias}.slug,'')) LIKE lower(%s))"
-                )
-            return " OR ".join(parts) if parts else "TRUE"
-
-        # FTS candidate pool. When a location is explicit, enforce it INSIDE
-        # this CTE so the top-N keyword candidates cannot crowd Dubai out.
+        # FTS is only applied to semantic keywords, not entity/location words.
         if keyword_phrase:
-            fts_where = f"""{live}{type_clause}
-                      AND si.{search_col} @@ websearch_to_tsquery(
-                          'simple', unaccent(%s)
-                      )"""
-            params_fts: list[Any] = []
-            if content_type_id is not None:
-                params_fts.append(content_type_id)
-            params_fts.append(keyword_phrase)
-            if location_tokens:
-                fts_where += f" AND ({location_condition()})"
-                for token in location_tokens[:6]:
-                    params_fts.extend([f"%{token}%"] * 5)
-            ctes.append(f"""
+            ctes.append(
+                f"""
                 fts AS (
                     SELECT si.id,
                            ts_rank_cd(
@@ -385,121 +364,233 @@ class GlobalSearchService:
                                websearch_to_tsquery('simple', unaccent(%s))
                            ) AS fts_score
                     FROM master_search_mastersearchindex si
-                    WHERE {live}
-                      {type_clause}
+                    WHERE {self._live_clause(historical)}
                       AND si.{search_col} @@ websearch_to_tsquery(
                           'simple', unaccent(%s)
                       )
-                      {f"AND ({location_condition()})" if location_tokens else ""}
                     ORDER BY fts_score DESC, si.id DESC
-                    LIMIT {candidate_limit}
+                    LIMIT {fts_limit}
                 )
-            """)
-            # SELECT rank expression params, then WHERE params, in exact order.
-            params.extend([keyword_phrase])
-            if content_type_id is not None:
-                params.extend([content_type_id])
-            params.extend([keyword_phrase])
-            if location_tokens:
-                for token in location_tokens[:6]:
-                    params.extend([f"%{token}%"] * 5)
+                """
+            )
+            params.extend([keyword_phrase, keyword_phrase])
         else:
             ctes.append("fts AS (SELECT NULL::bigint AS id, 0::float AS fts_score WHERE FALSE)")
 
-        # Trigram candidate pool. Search each semantic token independently so
-        # misspellings such as "restarant" can still retrieve "restaurant".
-        trigram_terms = [t for t in keyword_tokens if len(t) >= 2][:8]
+        # Trigram retrieval is token-aware. This is important for typo queries
+        # and for multiword phrases where whole-phrase similarity is weak.
+        trigram_terms = [t for t in keyword_tokens if len(t) >= 2]
         if not trigram_terms and keyword_phrase:
-            trigram_terms = [keyword_phrase[:80]]
+            trigram_terms = [keyword_phrase]
 
-        if trigram_terms:
-            conds = []
-            score_parts = []
-            score_params: list[Any] = []
-            where_params: list[Any] = []
-            for token in trigram_terms:
-                conds.append(
+        trgm_conditions = []
+        trgm_score_args = []
+        for token in trigram_terms[:8]:
+            trgm_conditions.append(
+                "(si.title %% %s OR si.user_name %% %s OR si.category_text %% %s "
+                "OR si.slug %% %s)"
+            )
+            trgm_score_args.extend([token, token, token, token])
+
+        # GREATEST of token/field similarities; parameters are repeated because
+        # psycopg2 does not support named parameters in this positional query.
+        score_terms = []
+        score_params: list[Any] = []
+        for token in trigram_terms[:8]:
+            score_terms.append(
+                "GREATEST("
+                "similarity(COALESCE(si.title,''), %s),"
+                "similarity(COALESCE(si.user_name,''), %s),"
+                "similarity(COALESCE(si.category_text,''), %s),"
+                "similarity(COALESCE(si.slug,''), %s)"
+                ")"
+            )
+            score_params.extend([token, token, token, token])
+
+        trgm_where = " OR ".join(trgm_conditions) if trgm_conditions else "FALSE"
+        trgm_score = "GREATEST(" + ",".join(score_terms) + ")" if score_terms else "0"
+
+        ctes.append(
+            f"""
+            trgm AS (
+                SELECT si.id,
+                       {trgm_score} AS trgm_score
+                FROM master_search_mastersearchindex si
+                WHERE {self._live_clause(historical)}
+                  AND ({trgm_where})
+                ORDER BY trgm_score DESC, si.id DESC
+                LIMIT {trgm_limit}
+            )
+            """
+        )
+        # score parameters appear before WHERE/operator parameters.
+        params.extend(score_params)
+        for token in trigram_terms[:8]:
+            params.extend([token, token, token, token])
+
+        # Separate location candidate pool. It prevents a common word such as
+        # "chef" from crowding Dubai jobs out of the bounded lexical pool.
+        loc_where_parts = []
+        loc_params: list[Any] = []
+        for token in location_tokens[:6]:
+            loc_where_parts.append("si.location_text %% %s")
+            loc_params.append(token)
+
+        if loc_where_parts:
+            loc_score = "GREATEST(" + ",".join(
+                ["similarity(COALESCE(si.location_text,''), %s)"] * len(location_tokens[:6])
+            ) + ")"
+            ctes.append(
+                f"""
+                loc AS (
+                    SELECT si.id,
+                           {loc_score} AS loc_score
+                    FROM master_search_mastersearchindex si
+                    WHERE {self._live_clause(historical)}
+                      AND ({' OR '.join(loc_where_parts)})
+                    ORDER BY loc_score DESC, si.id DESC
+                    LIMIT {loc_limit}
+                )
+                """
+            )
+            for token in location_tokens[:6]:
+                params.append(token)
+            params.extend(loc_params)
+        else:
+            ctes.append("loc AS (SELECT NULL::bigint AS id, 0::float AS loc_score WHERE FALSE)")
+
+        if query_vector:
+            vec = "[" + ",".join(f"{float(x):.8f}" for x in query_vector) + "]"
+            ctes.append(
+                f"""
+                vec AS (
+                    SELECT si.id,
+                           1 - (si.embedding <=> %s::vector) AS vec_score
+                    FROM master_search_mastersearchindex si
+                    WHERE {self._live_clause(historical)}
+                      AND si.embedding IS NOT NULL
+                    ORDER BY si.embedding <=> %s::vector
+                    LIMIT {vector_limit}
+                )
+                """
+            )
+            params.extend([vec, vec])
+
+        # When a location is explicitly present, create a focused retrieval pool.
+        # This is critical: independently taking the top N keyword and top N location
+        # candidates can miss their intersection (e.g. many "chef" jobs worldwide).
+        focused_parts = []
+        if keyword_phrase and location_phrase:
+            # Explicit locations are HARD constraints. A populated
+            # location_text must match the requested location. Only records
+            # without location_text may fall back to textual fields.
+            loc_like_parts = []
+            for _ in location_tokens[:6]:
+                loc_like_parts.append(
+                    "(lower(COALESCE(si.location_text,'')) LIKE lower(%s) "
+                    "OR (NULLIF(trim(COALESCE(si.location_text,'')), '') IS NULL "
+                    "AND (lower(COALESCE(si.title,'')) LIKE lower(%s) "
+                    "OR lower(COALESCE(si.content,'')) LIKE lower(%s) "
+                    "OR lower(COALESCE(si.ai_keywords,'')) LIKE lower(%s) "
+                    "OR lower(COALESCE(si.slug,'')) LIKE lower(%s))))"
+                )
+            focused_loc_where = " OR ".join(loc_like_parts)
+            ctes.append(
+                f"""
+                focused_fts AS (
+                    SELECT si.id,
+                           ts_rank_cd(
+                               si.{search_col},
+                               websearch_to_tsquery('simple', unaccent(%s))
+                           ) AS focused_score
+                    FROM master_search_mastersearchindex si
+                    WHERE {self._live_clause(historical)}
+                      AND si.{search_col} @@ websearch_to_tsquery(
+                          'simple', unaccent(%s)
+                      )
+                      AND ({focused_loc_where})
+                    ORDER BY focused_score DESC, si.id DESC
+                    LIMIT 300
+                )
+                """
+            )
+            params.extend([keyword_phrase, keyword_phrase])
+            for token in location_tokens[:6]:
+                pattern = f"%{token}%"
+                params.extend([pattern] * 5)
+            focused_parts.append("SELECT id FROM focused_fts")
+
+            # SymSpell-corrected / typo-aware focused retrieval. Keep trigram restricted to indexed
+            # short columns; location is enforced in the bounded candidate pool.
+            focused_trgm_cond = []
+            focused_trgm_score = []
+            for token in trigram_terms[:8]:
+                focused_trgm_cond.append(
                     "(si.title %% %s OR si.user_name %% %s OR "
                     "si.category_text %% %s OR si.slug %% %s)"
                 )
-                where_params.extend([token] * 4)
-                score_parts.append(
+                focused_trgm_score.append(
                     "GREATEST(similarity(COALESCE(si.title,''), %s),"
                     "similarity(COALESCE(si.user_name,''), %s),"
                     "similarity(COALESCE(si.category_text,''), %s),"
                     "similarity(COALESCE(si.slug,''), %s))"
                 )
-                score_params.extend([token] * 4)
-
-            loc_sql = f" AND ({location_condition()})" if location_tokens else ""
-            ctes.append(f"""
-                trgm AS (
-                    SELECT si.id,
-                           GREATEST({",".join(score_parts)}) AS trgm_score
-                    FROM master_search_mastersearchindex si
-                    WHERE {live}
-                      {type_clause}
-                      AND ({" OR ".join(conds)})
-                      {loc_sql}
-                    ORDER BY trgm_score DESC, si.id DESC
-                    LIMIT {candidate_limit}
+            if focused_trgm_cond:
+                ctes.append(
+                    f"""
+                    focused_trgm AS (
+                        SELECT si.id,
+                               GREATEST({",".join(focused_trgm_score)}) AS focused_trgm_score
+                        FROM master_search_mastersearchindex si
+                        WHERE {self._live_clause(historical)}
+                          AND ({" OR ".join(focused_trgm_cond)})
+                          AND ({focused_loc_where})
+                        ORDER BY focused_trgm_score DESC, si.id DESC
+                        LIMIT 300
+                    )
+                    """
                 )
-            """)
-            # score expression appears before WHERE expressions.
-            params.extend(score_params)
-            if content_type_id is not None:
-                params.extend([content_type_id])
-            params.extend(where_params)
-            if location_tokens:
+                for token in trigram_terms[:8]:
+                    params.extend([token] * 4)
                 for token in location_tokens[:6]:
-                    params.extend([f"%{token}%"] * 5)
-        else:
-            ctes.append("trgm AS (SELECT NULL::bigint AS id, 0::float AS trgm_score WHERE FALSE)")
+                    pattern = f"%{token}%"
+                    params.extend([pattern] * 5)
+                focused_parts.append("SELECT id FROM focused_trgm")
 
-        # Optional vector candidate pool. Keep it bounded and only include it
-        # when explicitly enabled.
+        union_parts = ["SELECT id FROM fts", "SELECT id FROM trgm", "SELECT id FROM loc"]
+        union_parts.extend(focused_parts)
         if query_vector:
-            vec = "[" + ",".join(f"{float(x):.8f}" for x in query_vector) + "]"
-            ctes.append(f"""
-                vec AS (
-                    SELECT si.id,
-                           1 - (si.embedding <=> %s::vector) AS vec_score
-                    FROM master_search_mastersearchindex si
-                    WHERE {live}
-                      {type_clause}
-                      AND si.embedding IS NOT NULL
-                      {f"AND ({location_condition()})" if location_tokens else ""}
-                    ORDER BY si.embedding <=> %s::vector
-                    LIMIT {candidate_limit}
-                )
-            """)
-            params.append(vec)
-            if content_type_id is not None:
-                params.append(content_type_id)
-            if location_tokens:
-                for token in location_tokens[:6]:
-                    params.extend([f"%{token}%"] * 5)
-            params.append(vec)
-        else:
-            ctes.append("vec AS (SELECT NULL::bigint AS id, 0::float AS vec_score WHERE FALSE)")
+            union_parts.append("SELECT id FROM vec")
+        ctes.append("candidates AS (" + " UNION ".join(union_parts) + ")")
 
-        ctes.append("""
-            candidates AS (
-                SELECT id FROM fts
-                UNION
-                SELECT id FROM trgm
-                UNION
-                SELECT id FROM vec
+        type_filter = ""
+        extra_params: list[Any] = []
+        if content_type_id is not None:
+            type_filter = " AND si.content_type_id = %s"
+            extra_params.append(content_type_id)
+
+        # Per-token lexical and location boosts. These are calculated only on
+        # the bounded UNION candidate set.
+        keyword_boost_parts = []
+        keyword_boost_params: list[Any] = []
+        for token in keyword_tokens[:8]:
+            keyword_boost_parts.append(
+                "CASE WHEN lower(COALESCE(si.title,'')) LIKE lower(%s) THEN 55 ELSE 0 END"
             )
-        """)
+            keyword_boost_params.append(f"%{token}%")
 
-        # Final SELECT parameters are kept at the end so parameter ordering is
-        # straightforward and independent of the CTE construction.
-        title_exact = keyword_phrase or ""
-        title_like = f"%{keyword_phrase}%" if keyword_phrase else ""
-        loc_like = f"%{location_phrase}%" if location_phrase else ""
+        location_boost_parts = []
+        location_boost_params: list[Any] = []
+        for token in location_tokens[:6]:
+            location_boost_parts.append(
+                "CASE WHEN lower(COALESCE(si.location_text,'')) LIKE lower(%s) THEN 95 ELSE 0 END"
+            )
+            location_boost_params.append(f"%{token}%")
 
-        select_sql = f"""
+        exact_title_params = [keyword_phrase, keyword_phrase] if keyword_phrase else ["", ""]
+        location_phrase_param = [location_phrase] if location_phrase else [""]
+
+        sql_text = f"""
             WITH {", ".join(ctes)}
             SELECT
                 si.id,
@@ -519,20 +610,22 @@ class GlobalSearchService:
                 ct.model,
                 COALESCE(fts.fts_score, 0) AS fts_score,
                 COALESCE(trgm.trgm_score, 0) AS trgm_score,
-                0::float AS loc_score,
-                COALESCE(vec.vec_score, 0) AS vec_score,
+                COALESCE(loc.loc_score, 0) AS loc_score,
+                {"COALESCE(vec.vec_score, 0)" if query_vector else "0"} AS vec_score,
                 (
-                    CASE WHEN %s <> '' AND lower(COALESCE(si.title,'')) = lower(%s)
+                    CASE WHEN lower(COALESCE(si.title,'')) = lower(%s)
                          THEN 220 ELSE 0 END
-                    + CASE WHEN %s <> '' AND lower(COALESCE(si.title,'')) LIKE lower(%s)
+                    + CASE WHEN lower(COALESCE(si.title,'')) LIKE lower(%s)
                            THEN 100 ELSE 0 END
-                    + CASE WHEN %s <> '' AND lower(COALESCE(si.location_text,'')) LIKE lower(%s)
+                    + CASE WHEN %s <> ''
+                              AND lower(COALESCE(si.location_text,'')) LIKE lower(%s)
                            THEN 120 ELSE 0 END
-                    + COALESCE(fts.fts_score, 0) * 70
-                    + COALESCE(trgm.trgm_score, 0) * 50
-                    + CASE WHEN %s <> '' AND lower(COALESCE(si.location_text,'')) LIKE lower(%s)
-                           THEN 110 ELSE 0 END
-                    + COALESCE(vec.vec_score, 0) * 30
+                    + {" + ".join(keyword_boost_parts) if keyword_boost_parts else "0"}
+                    + {" + ".join(location_boost_parts) if location_boost_parts else "0"}
+                    + COALESCE(fts.fts_score, 0) * 55
+                    + COALESCE(trgm.trgm_score, 0) * 42
+                    + COALESCE(loc.loc_score, 0) * 65
+                    {" + COALESCE(vec.vec_score, 0) * 30" if query_vector else ""}
                     + CASE WHEN %s = TRUE AND si.content_type_id = %s THEN 35 ELSE 0 END
                 ) AS relevance
             FROM candidates c
@@ -540,31 +633,37 @@ class GlobalSearchService:
             JOIN django_content_type ct ON ct.id = si.content_type_id
             LEFT JOIN fts ON fts.id = si.id
             LEFT JOIN trgm ON trgm.id = si.id
-            LEFT JOIN vec ON vec.id = si.id
-            WHERE {live}
-              {type_clause}
-              {f"AND ({location_condition()})" if location_tokens else ""}
+            LEFT JOIN loc ON loc.id = si.id
+            {"LEFT JOIN vec ON vec.id = si.id" if query_vector else ""}
+            WHERE {self._live_clause(historical)}
+              {type_filter}
+              {("AND (" + " OR ".join([
+                  "(lower(COALESCE(si.location_text,'')) LIKE lower(%s) "
+                  "OR (NULLIF(trim(COALESCE(si.location_text,'')), '') IS NULL "
+                  "AND (lower(COALESCE(si.title,'')) LIKE lower(%s) "
+                  "OR lower(COALESCE(si.content,'')) LIKE lower(%s) "
+                  "OR lower(COALESCE(si.ai_keywords,'')) LIKE lower(%s) "
+                  "OR lower(COALESCE(si.slug,'')) LIKE lower(%s))))"
+                  for _ in location_tokens[:6]
+              ]) + ")" if location_tokens else "")}
             ORDER BY relevance DESC, si.created_at DESC NULLS LAST, si.id DESC
             LIMIT %s
         """
 
-        # Final SELECT expression parameters.
-        params.extend([
-            keyword_phrase, title_exact,
-            keyword_phrase, title_like,
-            location_phrase, loc_like,
-            location_phrase, loc_like,
-            content_type_id is not None, content_type_id or 0,
-        ])
-        # Final WHERE type/location parameters.
-        if content_type_id is not None:
-            params.append(content_type_id)
-        if location_tokens:
-            for token in location_tokens[:6]:
-                params.extend([f"%{token}%"] * 5)
-        params.append(lim)
-
-        return select_sql, params
+        params.extend(exact_title_params)
+        if location_phrase:
+            params.extend([location_phrase, f"%{location_phrase}%"])
+        else:
+            params.extend(["", ""])
+        params.extend(keyword_boost_params)
+        params.extend(location_boost_params)
+        params.extend([content_type_id is not None, content_type_id or 0])
+        params.extend(extra_params)
+        for token in location_tokens[:6]:
+            pattern = f"%{token}%"
+            params.extend([pattern] * 5)
+        params.append(limit)
+        return sql_text, params
 
     def _vector_enabled(self) -> bool:
         import os
@@ -600,7 +699,6 @@ class GlobalSearchService:
         raw_tokens = self._tokens(plan.normalized)
         entity_words = self._entity_stopwords(entity_type)
         semantic_tokens = [t for t in raw_tokens if t not in entity_words]
-
         # Dynamically identify locations from the master index. The remaining
         # tokens are the semantic search terms. This fixes "chef jobs Dubai":
         # entity=job, keywords=chef, location=Dubai.
@@ -640,7 +738,7 @@ class GlobalSearchService:
             str(content_type_id or "all"),
             str(plan.historical),
             str(limit),
-            "v6.3",
+            "v6.4",
         )
         cached = self.cache.get(cache_key)
         if cached is not None:
