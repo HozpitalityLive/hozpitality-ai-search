@@ -269,47 +269,74 @@ class GlobalSearchService:
 
 
     def _classify_location_tokens(self, tokens: list[str]) -> list[str]:
-        """Identify query tokens that behave like locations using live index data.
+        """Identify likely geography tokens from indexed location data.
 
-        This is intentionally data-driven: it works for cities, countries,
-        regions and airport/area strings without maintaining a hard-coded
-        geography dictionary.
+        This is data-driven rather than a hard-coded city list.  A token is
+        treated as a location only when it has meaningful coverage in
+        ``location_text``.  The coverage test is deliberately conservative so
+        words such as ``chef`` cannot become a location merely because a few
+        malformed records contain them in their location field.
         """
         if not tokens:
             return []
-        unique = list(dict.fromkeys(t for t in tokens if len(t) >= 3))
+
+        unique = list(dict.fromkeys(t for t in tokens if len(t) >= 3))[:12]
         if not unique:
             return []
 
-        # One indexed trigram count per token.  Writing these as UNION ALL
-        # branches lets PostgreSQL use the location trigram GIN index instead
-        # of joining a VALUES table to the whole master index.
         branches = []
         params: list[Any] = []
-        for token in unique[:8]:
+        for token in unique:
             branches.append(
                 f"""
-                SELECT %s AS token, COUNT(*) AS hits
+                SELECT %s AS token,
+                       COUNT(*) FILTER (
+                           WHERE si.location_text %% %s
+                       ) AS location_hits,
+                       COUNT(*) FILTER (
+                           WHERE si.title %% %s
+                              OR si.ai_keywords %% %s
+                              OR si.content %% %s
+                       ) AS semantic_hits
                 FROM master_search_mastersearchindex si
                 WHERE {self._live_clause(False)}
-                  AND si.location_text %% %s
+                  AND (
+                      si.location_text %% %s
+                      OR si.title %% %s
+                      OR si.ai_keywords %% %s
+                  )
                 """
             )
-            params.extend([token, token])
+            # token label + location filter + 3 semantic comparisons + WHERE
+            params.extend([token, token, token, token, token, token, token, token])
+
         query = " UNION ALL ".join(branches)
         try:
             with self._connect() as conn, conn.cursor(
                 cursor_factory=psycopg2.extras.RealDictCursor
             ) as cur:
                 cur.execute(query, params)
-                counts = {str(r["token"]).lower(): int(r["hits"]) for r in cur.fetchall()}
+                rows = cur.fetchall()
         except Exception as exc:
             print(f"V6 location classification skipped: {exc}")
             return []
 
-        # A location token should occur in multiple indexed records.  The
-        # threshold prevents ordinary topic words from becoming locations.
-        return [token for token in unique if counts.get(token.lower(), 0) >= 3]
+        result: list[str] = []
+        for row in rows:
+            token = str(row["token"]).lower()
+            location_hits = int(row["location_hits"] or 0)
+            semantic_hits = int(row["semantic_hits"] or 0)
+
+            # Require real location coverage.  The relative test handles both
+            # large cities (Dubai) and smaller geographies while the absolute
+            # floor prevents isolated/malformed location values from winning.
+            if location_hits >= 10 and (
+                location_hits >= semantic_hits * 0.02
+                or location_hits >= 50
+            ):
+                result.append(token)
+
+        return [token for token in unique if token.lower() in set(result)]
 
     def _build_candidate_query(
         self,
