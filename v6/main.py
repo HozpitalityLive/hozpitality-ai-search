@@ -1,5 +1,5 @@
 """
-Hozpitality AI Search V6 — hybrid global search + Vanna text-to-SQL.
+Hozpitality AI Search V6.1 — hybrid global search + Vanna text-to-SQL.
 
 Connects to PostgreSQL and BigQuery databases.
 Run with: python main.py
@@ -384,7 +384,7 @@ class HozpitalityWorkflowHandler(WorkflowHandler):
         return None
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Hozpitality AI Search V6", version="6.0.0")
+    app = FastAPI(title="Hozpitality AI Search V6", version="6.1.0")
 
     app.add_middleware(
         CORSMiddleware,
@@ -403,7 +403,7 @@ def create_app() -> FastAPI:
         return {
             "status": "ok",
             "service": "hozpitality-ai-v6",
-            "version": "6.0.0",
+            "version": "6.1.0",
         }
 
     # LLM
@@ -737,6 +737,6 @@ if __name__ == "__main__":
     import uvicorn
 
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8084"))
+    port = int(os.getenv("PORT", "8085"))
     print(f"Starting Vanna server at http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)

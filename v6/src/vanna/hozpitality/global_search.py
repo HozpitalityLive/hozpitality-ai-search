@@ -267,112 +267,197 @@ class GlobalSearchService:
             "AND (si.expires_at IS NULL OR si.expires_at >= CURRENT_TIMESTAMP)"
         )
 
+
+    def _classify_location_tokens(self, tokens: list[str]) -> list[str]:
+        """Identify query tokens that behave like locations using live index data.
+
+        This is intentionally data-driven: it works for cities, countries,
+        regions and airport/area strings without maintaining a hard-coded
+        geography dictionary.
+        """
+        if not tokens:
+            return []
+        unique = list(dict.fromkeys(t for t in tokens if len(t) >= 3))
+        if not unique:
+            return []
+
+        # One indexed trigram count per token.  Writing these as UNION ALL
+        # branches lets PostgreSQL use the location trigram GIN index instead
+        # of joining a VALUES table to the whole master index.
+        branches = []
+        params: list[Any] = []
+        for token in unique[:8]:
+            branches.append(
+                f"""
+                SELECT %s AS token, COUNT(*) AS hits
+                FROM master_search_mastersearchindex si
+                WHERE {self._live_clause(False)}
+                  AND si.location_text %% %s
+                """
+            )
+            params.extend([token, token])
+        query = " UNION ALL ".join(branches)
+        try:
+            with self._connect() as conn, conn.cursor(
+                cursor_factory=psycopg2.extras.RealDictCursor
+            ) as cur:
+                cur.execute(query, params)
+                counts = {str(r["token"]).lower(): int(r["hits"]) for r in cur.fetchall()}
+        except Exception as exc:
+            print(f"V6 location classification skipped: {exc}")
+            return []
+
+        # A location token should occur in multiple indexed records.  The
+        # threshold prevents ordinary topic words from becoming locations.
+        return [token for token in unique if counts.get(token.lower(), 0) >= 3]
+
     def _build_candidate_query(
         self,
-        tokens: list[str],
-        phrase: str,
+        keyword_tokens: list[str],
+        keyword_phrase: str,
+        location_tokens: list[str],
+        location_phrase: str,
         content_type_id: Optional[int],
         historical: bool,
         limit: int,
         query_vector: Optional[list[float]],
     ):
-        """
-        Build a bounded hybrid lexical/vector query.
+        """Build the bounded V6 hybrid candidate/reranking query.
 
-        Important V6 rules:
-        - FTS is the primary retrieval path.
-        - Trigram is an independent fuzzy/typo path.
-        - Vector search is genuinely optional.
-        - Entity filtering is applied only when the planner explicitly
-          resolves a content type.
-        - Expensive relevance scoring happens only on the small UNION
-          candidate set, never on the whole master index.
+        Query understanding is deliberately separated from retrieval:
+        * entity words (e.g. ``jobs``) are not searched as keywords once the
+          entity is resolved;
+        * location tokens (e.g. ``Dubai``) are retrieved/scored separately;
+        * FTS handles normal terms;
+        * trigram handles typos such as ``restarant``;
+        * pgvector is optional;
+        * expensive scoring happens only on bounded candidates.
         """
         search_col = self._detect_search_column()
+        keyword_phrase = keyword_phrase.strip() or " ".join(keyword_tokens).strip()
+        location_phrase = location_phrase.strip()
 
-        # Use the normalized phrase for plainto_tsquery.  Passing an
-        # already-built "a & b & c" string to plainto_tsquery is incorrect
-        # because plainto_tsquery is itself the parser.
-        fts_query = phrase
+        fts_limit = max(100, min(int(limit) * 20, 400))
+        trgm_limit = max(100, min(int(limit) * 20, 400))
+        loc_limit = max(100, min(int(limit) * 20, 300))
+        vector_limit = max(100, min(int(limit) * 20, 300))
 
-        # Short phrases need a slightly broader trigram threshold.
-        trigram_threshold = 0.18 if len(phrase) >= 5 else 0.25
+        ctes: list[str] = []
+        params: list[Any] = []
 
-        # Candidate limits are deliberately bounded.
-        fts_limit = max(100, min(int(limit) * 12, 300))
-        trgm_limit = max(100, min(int(limit) * 12, 300))
-        vector_limit = max(100, min(int(limit) * 12, 300))
-
-        ctes: list[str] = [
-            f"""
-            fts AS (
-                SELECT
-                    si.id,
-                    ts_rank_cd(
-                        si.{search_col},
-                        plainto_tsquery('simple', unaccent(%s))
-                    ) AS fts_score
-                FROM master_search_mastersearchindex si
-                WHERE {self._live_clause(historical)}
-                  AND si.{search_col} @@ plainto_tsquery(
-                        'simple',
-                        unaccent(%s)
-                  )
-                ORDER BY fts_score DESC, si.id DESC
-                LIMIT {fts_limit}
+        # FTS is only applied to semantic keywords, not entity/location words.
+        if keyword_phrase:
+            ctes.append(
+                f"""
+                fts AS (
+                    SELECT si.id,
+                           ts_rank_cd(
+                               si.{search_col},
+                               websearch_to_tsquery('simple', unaccent(%s))
+                           ) AS fts_score
+                    FROM master_search_mastersearchindex si
+                    WHERE {self._live_clause(historical)}
+                      AND si.{search_col} @@ websearch_to_tsquery(
+                          'simple', unaccent(%s)
+                      )
+                    ORDER BY fts_score DESC, si.id DESC
+                    LIMIT {fts_limit}
+                )
+                """
             )
-            """,
+            params.extend([keyword_phrase, keyword_phrase])
+        else:
+            ctes.append("fts AS (SELECT NULL::bigint AS id, 0::float AS fts_score WHERE FALSE)")
+
+        # Trigram retrieval is token-aware. This is important for typo queries
+        # and for multiword phrases where whole-phrase similarity is weak.
+        trigram_terms = [t for t in keyword_tokens if len(t) >= 2]
+        if not trigram_terms and keyword_phrase:
+            trigram_terms = [keyword_phrase]
+
+        trgm_conditions = []
+        trgm_score_args = []
+        for token in trigram_terms[:8]:
+            trgm_conditions.append(
+                "(si.title %% %s OR si.user_name %% %s OR si.category_text %% %s "
+                "OR si.slug %% %s)"
+            )
+            trgm_score_args.extend([token, token, token, token])
+
+        # GREATEST of token/field similarities; parameters are repeated because
+        # psycopg2 does not support named parameters in this positional query.
+        score_terms = []
+        score_params: list[Any] = []
+        for token in trigram_terms[:8]:
+            score_terms.append(
+                "GREATEST("
+                "similarity(COALESCE(si.title,''), %s),"
+                "similarity(COALESCE(si.user_name,''), %s),"
+                "similarity(COALESCE(si.category_text,''), %s),"
+                "similarity(COALESCE(si.slug,''), %s)"
+                ")"
+            )
+            score_params.extend([token, token, token, token])
+
+        trgm_where = " OR ".join(trgm_conditions) if trgm_conditions else "FALSE"
+        trgm_score = "GREATEST(" + ",".join(score_terms) + ")" if score_terms else "0"
+
+        ctes.append(
             f"""
             trgm AS (
-                SELECT
-                    si.id,
-                    GREATEST(
-                        similarity(COALESCE(si.title, ''), %s),
-                        similarity(COALESCE(si.user_name, ''), %s),
-                        similarity(COALESCE(si.category_text, ''), %s),
-                        similarity(COALESCE(si.location_text, ''), %s),
-                        similarity(COALESCE(si.slug, ''), %s)
-                    ) AS trgm_score
+                SELECT si.id,
+                       {trgm_score} AS trgm_score
                 FROM master_search_mastersearchindex si
                 WHERE {self._live_clause(historical)}
-                  AND (
-                      si.title %% %s
-                      OR si.user_name %% %s
-                      OR si.category_text %% %s
-                      OR si.location_text %% %s
-                      OR si.slug %% %s
-                  )
-                  AND GREATEST(
-                      similarity(COALESCE(si.title, ''), %s),
-                      similarity(COALESCE(si.user_name, ''), %s),
-                      similarity(COALESCE(si.category_text, ''), %s),
-                      similarity(COALESCE(si.location_text, ''), %s),
-                      similarity(COALESCE(si.slug, ''), %s)
-                  ) >= {trigram_threshold}
+                  AND ({trgm_where})
                 ORDER BY trgm_score DESC, si.id DESC
                 LIMIT {trgm_limit}
             )
-            """,
-        ]
+            """
+        )
+        # score parameters appear before WHERE/operator parameters.
+        params.extend(score_params)
+        for token in trigram_terms[:8]:
+            params.extend([token, token, token, token])
 
-        # The trigram CTE contains 15 phrase parameters:
-        # 5 similarity() + 5 % operators + 5 final similarity() threshold.
-        params: list[Any] = [
-            fts_query,
-            fts_query,
-            phrase, phrase, phrase, phrase, phrase,
-            phrase, phrase, phrase, phrase, phrase,
-            phrase, phrase, phrase, phrase, phrase,
-        ]
+        # Separate location candidate pool. It prevents a common word such as
+        # "chef" from crowding Dubai jobs out of the bounded lexical pool.
+        loc_where_parts = []
+        loc_params: list[Any] = []
+        for token in location_tokens[:6]:
+            loc_where_parts.append("si.location_text %% %s")
+            loc_params.append(token)
+
+        if loc_where_parts:
+            loc_score = "GREATEST(" + ",".join(
+                ["similarity(COALESCE(si.location_text,''), %s)"] * len(location_tokens[:6])
+            ) + ")"
+            ctes.append(
+                f"""
+                loc AS (
+                    SELECT si.id,
+                           {loc_score} AS loc_score
+                    FROM master_search_mastersearchindex si
+                    WHERE {self._live_clause(historical)}
+                      AND ({' OR '.join(loc_where_parts)})
+                    ORDER BY loc_score DESC, si.id DESC
+                    LIMIT {loc_limit}
+                )
+                """
+            )
+            for token in location_tokens[:6]:
+                params.append(token)
+            params.extend(loc_params)
+        else:
+            ctes.append("loc AS (SELECT NULL::bigint AS id, 0::float AS loc_score WHERE FALSE)")
 
         if query_vector:
             vec = "[" + ",".join(f"{float(x):.8f}" for x in query_vector) + "]"
             ctes.append(
                 f"""
                 vec AS (
-                    SELECT
-                        si.id,
-                        1 - (si.embedding <=> %s::vector) AS vec_score
+                    SELECT si.id,
+                           1 - (si.embedding <=> %s::vector) AS vec_score
                     FROM master_search_mastersearchindex si
                     WHERE {self._live_clause(historical)}
                       AND si.embedding IS NOT NULL
@@ -383,25 +468,38 @@ class GlobalSearchService:
             )
             params.extend([vec, vec])
 
-        union_parts = ["SELECT id FROM fts", "SELECT id FROM trgm"]
+        union_parts = ["SELECT id FROM fts", "SELECT id FROM trgm", "SELECT id FROM loc"]
         if query_vector:
             union_parts.append("SELECT id FROM vec")
-
-        ctes.append(
-            "candidates AS ("
-            + " UNION "
-            .join(union_parts)
-            + ")"
-        )
+        ctes.append("candidates AS (" + " UNION ".join(union_parts) + ")")
 
         type_filter = ""
         extra_params: list[Any] = []
-
         if content_type_id is not None:
             type_filter = " AND si.content_type_id = %s"
             extra_params.append(content_type_id)
 
-        # Relevance is calculated only against the bounded candidate set.
+        # Per-token lexical and location boosts. These are calculated only on
+        # the bounded UNION candidate set.
+        keyword_boost_parts = []
+        keyword_boost_params: list[Any] = []
+        for token in keyword_tokens[:8]:
+            keyword_boost_parts.append(
+                "CASE WHEN lower(COALESCE(si.title,'')) LIKE lower(%s) THEN 55 ELSE 0 END"
+            )
+            keyword_boost_params.append(f"%{token}%")
+
+        location_boost_parts = []
+        location_boost_params: list[Any] = []
+        for token in location_tokens[:6]:
+            location_boost_parts.append(
+                "CASE WHEN lower(COALESCE(si.location_text,'')) LIKE lower(%s) THEN 95 ELSE 0 END"
+            )
+            location_boost_params.append(f"%{token}%")
+
+        exact_title_params = [keyword_phrase, keyword_phrase] if keyword_phrase else ["", ""]
+        location_phrase_param = [location_phrase] if location_phrase else [""]
+
         sql_text = f"""
             WITH {", ".join(ctes)}
             SELECT
@@ -420,104 +518,99 @@ class GlobalSearchService:
                 si.slug,
                 ct.app_label,
                 ct.model,
-
                 COALESCE(fts.fts_score, 0) AS fts_score,
                 COALESCE(trgm.trgm_score, 0) AS trgm_score,
+                COALESCE(loc.loc_score, 0) AS loc_score,
                 {"COALESCE(vec.vec_score, 0)" if query_vector else "0"} AS vec_score,
-
                 (
-                    -- Exact title is the strongest lexical signal.
-                    CASE
-                        WHEN lower(COALESCE(si.title, '')) = lower(%s)
-                        THEN 240 ELSE 0
-                    END
-
-                    -- Exact phrase contained in title.
-                    + CASE
-                        WHEN position(
-                            lower(%s) IN lower(COALESCE(si.title, ''))
-                        ) > 0
-                        THEN 130 ELSE 0
-                    END
-
-                    -- Exact phrase contained in owner/person.
-                    + CASE
-                        WHEN position(
-                            lower(%s) IN lower(COALESCE(si.user_name, ''))
-                        ) > 0
-                        THEN 95 ELSE 0
-                    END
-
-                    -- Category and location are useful but weaker signals.
-                    + CASE
-                        WHEN position(
-                            lower(%s) IN lower(COALESCE(si.category_text, ''))
-                        ) > 0
-                        THEN 75 ELSE 0
-                    END
-
-                    + CASE
-                        WHEN position(
-                            lower(%s) IN lower(COALESCE(si.location_text, ''))
-                        ) > 0
-                        THEN 55 ELSE 0
-                    END
-
-                    + COALESCE(fts.fts_score, 0) * 45
-                    + COALESCE(trgm.trgm_score, 0) * 40
+                    CASE WHEN lower(COALESCE(si.title,'')) = lower(%s)
+                         THEN 220 ELSE 0 END
+                    + CASE WHEN lower(COALESCE(si.title,'')) LIKE lower(%s)
+                           THEN 100 ELSE 0 END
+                    + CASE WHEN %s <> ''
+                              AND lower(COALESCE(si.location_text,'')) LIKE lower(%s)
+                           THEN 120 ELSE 0 END
+                    + {" + ".join(keyword_boost_parts) if keyword_boost_parts else "0"}
+                    + {" + ".join(location_boost_parts) if location_boost_parts else "0"}
+                    + COALESCE(fts.fts_score, 0) * 55
+                    + COALESCE(trgm.trgm_score, 0) * 42
+                    + COALESCE(loc.loc_score, 0) * 65
                     {" + COALESCE(vec.vec_score, 0) * 30" if query_vector else ""}
+                    + CASE WHEN %s = TRUE AND si.content_type_id = %s THEN 35 ELSE 0 END
                 ) AS relevance
-
             FROM candidates c
-            JOIN master_search_mastersearchindex si
-              ON si.id = c.id
-            JOIN django_content_type ct
-              ON ct.id = si.content_type_id
-            LEFT JOIN fts
-              ON fts.id = si.id
-            LEFT JOIN trgm
-              ON trgm.id = si.id
+            JOIN master_search_mastersearchindex si ON si.id = c.id
+            JOIN django_content_type ct ON ct.id = si.content_type_id
+            LEFT JOIN fts ON fts.id = si.id
+            LEFT JOIN trgm ON trgm.id = si.id
+            LEFT JOIN loc ON loc.id = si.id
             {"LEFT JOIN vec ON vec.id = si.id" if query_vector else ""}
-
             WHERE {self._live_clause(historical)}
               {type_filter}
-
-            ORDER BY
-                relevance DESC,
-                si.created_at DESC NULLS LAST,
-                si.id DESC
+            ORDER BY relevance DESC, si.created_at DESC NULLS LAST, si.id DESC
             LIMIT %s
         """
 
-        # Five relevance phrase parameters + optional content type + limit.
-        params.extend([phrase, phrase, phrase, phrase, phrase])
+        params.extend(exact_title_params)
+        if location_phrase:
+            params.extend([location_phrase, f"%{location_phrase}%"])
+        else:
+            params.extend(["", ""])
+        params.extend(keyword_boost_params)
+        params.extend(location_boost_params)
+        params.extend([content_type_id is not None, content_type_id or 0])
         params.extend(extra_params)
         params.append(limit)
-
         return sql_text, params
 
     def _vector_enabled(self) -> bool:
-        """Return True only when SEARCH_VECTOR_ENABLED is explicitly enabled."""
         import os
-
         return os.getenv("SEARCH_VECTOR_ENABLED", "false").strip().lower() in {
             "1", "true", "yes", "on"
         }
 
+    def _entity_stopwords(self, entity_type: str) -> set[str]:
+        aliases = {
+            "job": {"job", "jobs", "vacancy", "vacancies", "career", "careers",
+                    "employment", "opening", "openings", "position", "positions"},
+            "professional": {"professional", "professionals", "candidate", "candidates",
+                              "profile", "profiles", "resume", "cv"},
+            "company": {"company", "companies", "employer", "employers",
+                        "organization", "organisation", "organisations"},
+            "article": {"article", "articles", "news", "blog", "blogs", "story", "stories"},
+            "event": {"event", "events", "conference", "conferences", "expo", "exhibition",
+                      "exhibitions"},
+            "product": {"product", "products", "marketplace", "supplier", "suppliers"},
+            "faq": {"faq", "faqs", "question", "questions", "help"},
+            "award": {"award", "awards", "recognition", "winner", "winners",
+                      "nomination", "nominations"},
+        }
+        return aliases.get(entity_type, set())
+
     def search_hits(self, message: str, limit: int = 10) -> list[dict[str, Any]]:
         plan = self.planner.plan(message, limit)
-
         if plan.analytics:
-            self.last_stats = {
-                "strategy": "ANALYTICS",
-                "count": 0,
-            }
+            self.last_stats = {"strategy": "ANALYTICS", "count": 0}
             return []
 
-        tokens = self._tokens(plan.normalized)
-        phrase = " ".join(tokens[:12]).strip() or plan.normalized
+        entity_type = self._norm(getattr(plan, "entity_type", "") or "")
+        raw_tokens = self._tokens(plan.normalized)
+        entity_words = self._entity_stopwords(entity_type)
+        semantic_tokens = [t for t in raw_tokens if t not in entity_words]
 
-        if len(phrase) < 2:
+        # Dynamically identify locations from the master index. The remaining
+        # tokens are the semantic search terms. This fixes "chef jobs Dubai":
+        # entity=job, keywords=chef, location=Dubai.
+        location_tokens = self._classify_location_tokens(semantic_tokens)
+        keyword_tokens = [t for t in semantic_tokens if t not in set(location_tokens)]
+
+        # Keep at least one search term for pure typo/global queries.
+        if not keyword_tokens and not location_tokens:
+            keyword_tokens = semantic_tokens[:12]
+
+        keyword_phrase = " ".join(keyword_tokens[:12]).strip()
+        location_phrase = " ".join(location_tokens[:6]).strip()
+        if not keyword_phrase and not location_phrase:
             self.last_stats = {
                 "strategy": "GLOBAL_SEARCH",
                 "count": 0,
@@ -525,56 +618,35 @@ class GlobalSearchService:
             }
             return []
 
-        # IMPORTANT:
-        # resolve_content_type() must only constrain the search when the
-        # planner has identified an explicit entity type.  A company name
-        # such as "Marriott" must remain a global search.
         content_type_id: Optional[int] = None
-        entity_type = self._norm(getattr(plan, "entity_type", "") or "")
-
-        explicit_entities = {
-            "job", "jobs",
-            "professional", "professionals",
-            "company", "companies",
-            "article", "articles",
-            "event", "events",
-            "product", "products",
-            "supplier", "suppliers",
-            "faq", "faqs",
-            "award", "awards",
-        }
-
-        if entity_type in explicit_entities:
+        if entity_type:
             ct = self.schema.resolve_content_type(entity_type)
             if ct:
                 content_type_id = int(ct.id)
 
-        # Vector retrieval must be optional.  The previous implementation
-        # encoded every request regardless of SEARCH_VECTOR_ENABLED.
         query_vector: Optional[list[float]] = None
-        vector_requested = self._vector_enabled()
-
-        if vector_requested:
+        if self._vector_enabled():
             try:
-                query_vector = self.embedding.encode(phrase)
+                vector_text = " ".join(x for x in (keyword_tokens + location_tokens) if x)
+                query_vector = self.embedding.encode(vector_text)
             except Exception as exc:
                 print(f"V6 vector retrieval disabled for this request: {exc}")
-                query_vector = None
 
         cache_key = self.cache.key(
             plan.normalized,
             str(content_type_id or "all"),
             str(plan.historical),
             str(limit),
-            "v6",
+            "v6.1",
         )
-
         cached = self.cache.get(cache_key)
         if cached is not None:
             self.last_stats = {
                 "cache_hit": True,
                 "strategy": plan.strategy,
                 "content_type": entity_type or None,
+                "keywords": keyword_tokens,
+                "location": location_tokens,
                 "count": len(cached),
                 "vector": bool(query_vector),
             }
@@ -582,16 +654,17 @@ class GlobalSearchService:
 
         started = time.perf_counter()
 
-        def execute(candidate_vector: Optional[list[float]]):
+        def execute(candidate_vector):
             query, params = self._build_candidate_query(
-                tokens=tokens,
-                phrase=phrase,
+                keyword_tokens=keyword_tokens,
+                keyword_phrase=keyword_phrase,
+                location_tokens=location_tokens,
+                location_phrase=location_phrase,
                 content_type_id=content_type_id,
                 historical=plan.historical,
                 limit=max(1, min(int(limit), 20)),
                 query_vector=candidate_vector,
             )
-
             with self._connect() as conn, conn.cursor(
                 cursor_factory=psycopg2.extras.RealDictCursor
             ) as cur:
@@ -601,8 +674,6 @@ class GlobalSearchService:
         try:
             hits = execute(query_vector)
         except Exception as exc:
-            # Always retry with pure lexical retrieval.  This makes vector
-            # failures non-fatal and keeps FTS/trigram available.
             if query_vector is not None:
                 print(f"V6 vector search failed; retrying lexical search: {exc}")
                 try:
@@ -628,20 +699,17 @@ class GlobalSearchService:
                 return []
 
         self.cache.set(cache_key, hits)
-
         self.last_stats = {
             "cache_hit": False,
             "strategy": plan.strategy,
             "content_type": entity_type or None,
+            "keywords": keyword_tokens,
+            "location": location_tokens,
             "count": len(hits),
-            "latency_ms": round(
-                (time.perf_counter() - started) * 1000,
-                2,
-            ),
+            "latency_ms": round((time.perf_counter() - started) * 1000, 2),
             "vector": bool(query_vector),
             "fts_trigram": True,
         }
-
         return hits
 
     def search(self, message: str, limit: int = 10) -> Optional[str]:
@@ -652,6 +720,13 @@ class GlobalSearchService:
         lines = [f"I found {len(hits)} matching Hozpitality records.", ""]
         for index, hit in enumerate(hits, 1):
             lines.append(f"### {index}")
-            lines.extend(self._format_hit(hit, source_rows.get((int(hit["content_type_id"]), int(hit["object_id"])))) )
+            lines.extend(
+                self._format_hit(
+                    hit,
+                    source_rows.get(
+                        (int(hit["content_type_id"]), int(hit["object_id"]))
+                    ),
+                )
+            )
             lines.append("")
         return "\n".join(lines).strip()

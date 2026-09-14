@@ -28,3 +28,12 @@
 - Kept source enrichment bounded to matched object IDs.
 - Kept sensitive columns out of generic source enrichment.
 - Preserved Vanna SQL path for analytics and complex database reasoning.
+
+
+## V6.1 Final — Entity + Location Retrieval
+
+- Entity words are removed from lexical keyword retrieval after routing.
+- Locations are dynamically classified from indexed location data.
+- Keyword and location candidate pools are ranked independently and merged.
+- Trigram retrieval is token-aware for typo-tolerant search.
+- Default V6 service port is 8085 so V5 can remain on 8084.
