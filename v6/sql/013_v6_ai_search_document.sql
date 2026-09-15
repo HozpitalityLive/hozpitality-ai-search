@@ -1,11 +1,14 @@
--- Hozpitality AI Search V6 search foundation.
--- Run outside a transaction. Safe to re-run.
+-- Hozpitality AI Search V6.5
+-- Canonical search document + structured metadata.
+--
+-- Safe to run repeatedly. This migration intentionally does NOT add a
+-- trigram index to ai_search_text because it can become very large.
+-- ai_search_text is indexed through search_vector_v6 (GIN).
+--
+-- metadata is structured JSONB for exact/future faceted filtering.
+
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
-CREATE EXTENSION IF NOT EXISTS vector;
-
-ALTER TABLE public.master_search_mastersearchindex
-    ADD COLUMN IF NOT EXISTS search_vector_v6 tsvector;
 
 ALTER TABLE public.master_search_mastersearchindex
     ADD COLUMN IF NOT EXISTS ai_search_text text;
@@ -20,6 +23,8 @@ WHERE metadata IS NULL;
 ALTER TABLE public.master_search_mastersearchindex
     ALTER COLUMN metadata SET DEFAULT '{}'::jsonb;
 
+-- Keep V6 FTS authoritative and include the complete canonical search
+-- document. The old columns remain useful as separate structured signals.
 CREATE OR REPLACE FUNCTION public.hozpitality_v6_search_vector_update()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -49,13 +54,21 @@ ON public.master_search_mastersearchindex;
 
 CREATE TRIGGER hozpitality_v6_search_vector_trigger
 BEFORE INSERT OR UPDATE OF
-title, entity_name, category_text, company_name, user_name,
-subcategory_text, country_text, city_text, location_text,
-ai_keywords, slug, ai_summary, content, ai_search_text
+    title, entity_name, category_text, company_name, user_name,
+    subcategory_text, country_text, city_text, location_text,
+    ai_keywords, slug, ai_summary, content, ai_search_text
 ON public.master_search_mastersearchindex
 FOR EACH ROW
 EXECUTE FUNCTION public.hozpitality_v6_search_vector_update();
 
--- V6 deliberately does not use a trigram index on the large content/keywords
--- fields. Those indexes can consume substantial disk and CPU on 500K+ rows.
--- Keep trigram indexes for short identity/taxonomy fields instead.
+-- FTS index. Re-use the existing index name if the V6 foundation already
+-- created it; CREATE INDEX IF NOT EXISTS is safe for fresh installations.
+CREATE INDEX IF NOT EXISTS msi_search_v6_gin
+ON public.master_search_mastersearchindex
+USING gin (search_vector_v6);
+
+-- Structured metadata index. Useful for future exact filters without
+-- bloating the lexical search index.
+CREATE INDEX IF NOT EXISTS msi_metadata_gin
+ON public.master_search_mastersearchindex
+USING gin (metadata jsonb_path_ops);

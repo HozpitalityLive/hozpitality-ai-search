@@ -140,3 +140,49 @@ SYMSpell_MAX_EDIT_DISTANCE=2
 
 If the dictionary is absent, V6 still works; SymSpell simply remains disabled and
 PostgreSQL trigram retrieval is used as the fallback.
+
+
+## V6.5 Canonical AI Search Documents
+
+V6.5 keeps one master-search row per entity and builds a deterministic
+canonical search document in `ai_search_text`. The document includes the
+entity's identity, taxonomy, location, profile/content fields, and important
+database relationships. `metadata` stores the corresponding structured
+relationship attributes as JSONB.
+
+For professionals this includes job role, department, job level, education,
+current company, skills, languages, industries and experience. Articles include
+category and article countries. Jobs include company, country, roles,
+departments, levels, industries and job/employment types. Similar relationship
+enrichment is provided for companies, events, products, FAQs, awards, posts and
+categories.
+
+Run the migration first:
+
+```bash
+psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$POSTGRES_DATABASE"   -f sql/013_v6_ai_search_document.sql
+```
+
+Then backfill in controlled batches:
+
+```bash
+python scripts/backfill_ai_search_text.py --limit 1000 --batch-size 500 --sleep 0.10 --confirm
+python scripts/backfill_ai_search_text.py --batch-size 500 --sleep 0.05 --confirm
+```
+
+After the backfill, rebuild the V6 FTS vector once so existing rows include
+`ai_search_text`:
+
+```bash
+python scripts/backfill_ai_search_text.py --limit 1 --rebuild-fts --confirm
+```
+
+For semantic search, embeddings now prefer `ai_search_text` automatically:
+
+```bash
+python scripts/backfill_embeddings.py --limit 1000 --batch-size 64 --db-batch 256 --sleep 0.20 --confirm
+```
+
+The V6 lexical index intentionally uses the existing GIN index on
+`search_vector_v6`; a large trigram index on `ai_search_text` is not created.
+This keeps disk/CPU costs bounded while FTS searches the complete document.

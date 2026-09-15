@@ -49,7 +49,7 @@ def main() -> None:
             db_batch = max(1, min(args.db_batch, 2000))
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, concat_ws(' | ', title, category_text, location_text, user_name, ai_keywords, content, slug) AS text
+                    SELECT id, LEFT(COALESCE(NULLIF(ai_search_text, ''), concat_ws(' | ', title, category_text, location_text, user_name, ai_keywords, content, slug)), 12000) AS text
                     FROM public.master_search_mastersearchindex
                     WHERE id > %s AND embedding IS NULL
                     ORDER BY id

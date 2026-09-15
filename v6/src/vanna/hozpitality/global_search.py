@@ -239,6 +239,13 @@ class GlobalSearchService:
             lines.append(f"- Category: {self._display(hit['category_text'], 160)}")
         if hit.get("user_name"):
             lines.append(f"- Person/Owner: {self._display(hit['user_name'], 160)}")
+        metadata = hit.get("metadata") or {}
+        relationships = metadata.get("relationships") if isinstance(metadata, dict) else None
+        if isinstance(relationships, dict):
+            for label, value in relationships.items():
+                display = self._display(value, 180)
+                if display:
+                    lines.append(f"- {str(label).replace('_', ' ').title()}: {display}")
         if hit.get("slug"):
             lines.append(f"- Slug: `{self._display(hit['slug'], 180)}`")
         if source:
@@ -668,6 +675,7 @@ class GlobalSearchService:
                 [
                     "CASE WHEN lower(COALESCE(si.title, '')) = lower(%(exact_title)s) THEN 220 ELSE 0 END",
                     "CASE WHEN lower(COALESCE(si.title, '')) LIKE lower(%(title_phrase)s) THEN 100 ELSE 0 END",
+                    "CASE WHEN lower(COALESCE(si.ai_search_text, '')) LIKE lower(%(title_phrase)s) THEN 35 ELSE 0 END",
                 ]
             )
 
@@ -743,6 +751,8 @@ class GlobalSearchService:
                 si.expires_at,
                 si.user_name,
                 si.content,
+                si.ai_search_text,
+                si.metadata,
                 si.slug,
                 ct.app_label,
                 ct.model,
