@@ -2700,17 +2700,58 @@ def build_document(master: dict[str, Any], source: dict[str, Any]) -> tuple[str,
     }
     return document, compact_metadata(metadata)
 
+MODEL_ALIASES = {
+    "award": {"award", "awards"},
+    "professional": {"professional", "professionals"},
+    "company": {"company", "companies"},
+    "article": {"article", "articles"},
+    "job": {"job", "jobs"},
+    "event": {"event", "events"},
+    "product": {"product", "products"},
+    "faq": {"faq", "faqs"},
+    "category": {"category", "categories"},
+    "post": {"post", "posts"},
+}
+
+
+def canonical_model(model: str) -> str:
+    value = str(model or "").strip().lower()
+
+    for canonical, aliases in MODEL_ALIASES.items():
+        if value in aliases:
+            return canonical
+
+    return value
+
 
 def resolve_content_types(cur, model_filter: str | None):
     """
     Resolve Django content types that actually exist in the master index.
 
-    When multiple apps contain the same model name, prefer the `base`
-    application. The ordering is applied outside the DISTINCT query so
-    PostgreSQL does not reject the ORDER BY expression.
+    Django ContentType uses the actual model name, which may be singular
+    or plural depending on the model class.
+
+    V6 uses canonical entity names such as:
+        award
+        professional
+        company
+        article
+        job
+        event
+        product
+        faq
+        category
+        post
+
+    Example:
+        Django ContentType: awards
+        V6 canonical model: award
     """
 
     if model_filter:
+        canonical = canonical_model(model_filter)
+        aliases = sorted(MODEL_ALIASES.get(canonical, {canonical}))
+
         cur.execute(
             """
             SELECT
@@ -2725,7 +2766,7 @@ def resolve_content_types(cur, model_filter: str | None):
                 FROM public.django_content_type ct
                 JOIN public.master_search_mastersearchindex si
                     ON si.content_type_id = ct.id
-                WHERE lower(ct.model) = lower(%s)
+                WHERE lower(ct.model) = ANY(%s)
             ) x
             ORDER BY
                 CASE
@@ -2734,7 +2775,7 @@ def resolve_content_types(cur, model_filter: str | None):
                 END,
                 x.id
             """,
-            (model_filter,),
+            (aliases,),
         )
     else:
         cur.execute(
@@ -2803,7 +2844,16 @@ def main():
 
         for ct in content_types:
             ct_id = int(ct["id"])
-            model = str(ct["model"] or "").lower()
+
+            django_model = str(ct["model"] or "").lower()
+            model = canonical_model(django_model)
+
+            print(
+                f"content_type_id={ct_id} "
+                f"django_model={django_model} "
+                f"canonical_model={model}",
+                flush=True,
+            )
 
             last_master_id = 0
             model_processed = 0
