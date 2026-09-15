@@ -120,19 +120,34 @@ def db_rows(cur, query: str, params: list[Any] | tuple[Any, ...]):
     return [dict(r) for r in cur.fetchall()]
 
 
-def fetch_master(cur, content_type_id: int, object_ids: list[int], force: bool):
-    condition = "" if force else "AND COALESCE(si.ai_search_text, '') = ''"
+def fetch_master(
+    cur,
+    content_type_id: int,
+    object_ids: list[int],
+    force: bool,
+):
+    condition = (
+        ""
+        if force
+        else "AND COALESCE(si.ai_search_text, '') = ''"
+    )
+
     cur.execute(
         f"""
-        SELECT si.id, si.object_id, si.content_type_id, si.entity_type,
-               si.entity_name, si.title, si.subtitle, si.slug, si.content,
-               si.ai_keywords, si.ai_summary, si.user_id, si.user_name,
-               si.company_id, si.company_name, si.category_id, si.category_text,
-               si.subcategory_id, si.subcategory_text, si.country_id,
-               si.country_text, si.city_id, si.city_text, si.location_text,
-               si.status, si.is_live, si.is_deleted, si.is_searchable,
-               si.is_public, si.created_at, si.updated_at, si.published_at,
-               si.expires_at
+        SELECT
+            si.id,
+            si.object_id,
+            si.content_type_id,
+            si.title,
+            si.location_text,
+            si.category_text,
+            si.ai_keywords,
+            si.user_name,
+            si.content,
+            si.slug,
+            si.is_live,
+            si.created_at,
+            si.expires_at
         FROM public.master_search_mastersearchindex si
         WHERE si.content_type_id = %s
           AND si.object_id = ANY(%s)
@@ -141,107 +156,442 @@ def fetch_master(cur, content_type_id: int, object_ids: list[int], force: bool):
         """,
         (content_type_id, object_ids),
     )
+
     return [dict(r) for r in cur.fetchall()]
 
 
 def professional_rows(cur, ids):
-    return db_rows(cur, """
+    """
+    Fetch Professional + UserAccount + all important relationships.
+
+    Includes:
+      - Department
+      - Job Level
+      - Job Role
+      - Education
+      - Current Company
+      - Skills
+      - Languages
+      - Industries
+      - Supplier Industries
+      - Supplier Categories
+      - Experience
+      - Country
+      - Nationality
+      - Profile information
+    """
+
+    return db_rows(
+        cur,
+        """
         SELECT
+
             p.useraccount_ptr_id AS object_id,
-            concat_ws(' ', u.first_name, u.last_name) AS full_name,
-            u.about_us, u.tagline, u.city_town, u.slug AS user_slug,
-            u.current_country_id,
-            d.name AS department_name,
-            jl.name AS job_level_name,
-            jr.name AS job_role_name,
-            el.name AS education_level_name,
-            c.name AS current_company_name,
-            COALESCE(sk.skills, '') AS skills,
-            COALESCE(la.languages, '') AS languages,
-            COALESCE(ind.industries, '') AS industries,
-            COALESCE(exp.experience, '') AS experience
-        FROM public.professionals p
-        JOIN public.user_accounts u
-          ON u.id = p.useraccount_ptr_id
-        LEFT JOIN public.departments d ON d.id = p.department_id
-        LEFT JOIN public.job_levels jl ON jl.id = p.job_level_id
-        LEFT JOIN public.job_role jr ON jr.id = p.job_role_id
-        LEFT JOIN public.education_level el ON el.id = p.education_level_id
-        LEFT JOIN public.companies c ON c.useraccount_ptr_id = p.current_company_id
-        LEFT JOIN public.countries co ON co.id = u.current_country_id
-        LEFT JOIN LATERAL (
-            SELECT string_agg(DISTINCT s.name, ', ' ORDER BY s.name) AS skills
-            FROM public.professionals_skills ps
-            JOIN public.skills s ON s.id = ps.skills_id
-            WHERE ps.professional_id = p.useraccount_ptr_id
-        ) sk ON TRUE
-        LEFT JOIN LATERAL (
-            SELECT string_agg(DISTINCT l.name, ', ' ORDER BY l.name) AS languages
-            FROM public.professionals_language_know pl
-            JOIN public.languages l ON l.id = pl.language_id
-            WHERE pl.professional_id = p.useraccount_ptr_id
-        ) la ON TRUE
-        LEFT JOIN LATERAL (
-            SELECT string_agg(DISTINCT i.name, ', ' ORDER BY i.name) AS industries
-            FROM public.user_accounts_industry ui
-            JOIN public.industries i ON i.id = ui.industry_id
-            WHERE ui.useraccount_id = p.useraccount_ptr_id
-        ) ind ON TRUE
-        LEFT JOIN LATERAL (
-            SELECT string_agg(
-                DISTINCT concat_ws(
-                    ' — ',
-                    e.job_designation,
-                    e.company_name,
-                    e.location,
-                    d2.name,
-                    jr2.name,
-                    i2.name
-                ),
-                ' | ' ORDER BY concat_ws(
-                    ' — ',
-                    e.job_designation,
-                    e.company_name,
-                    e.location,
-                    d2.name,
-                    jr2.name,
-                    i2.name
-                )
-            ) AS experience
-            FROM public.base_experience e
-            LEFT JOIN public.departments d2 ON d2.id = e.department_id
-            LEFT JOIN public.job_role jr2 ON jr2.id = e.job_role_id
-            LEFT JOIN public.industries i2 ON i2.id = e.industry_id
-            WHERE e.user_id = p.useraccount_ptr_id
-        ) exp ON TRUE
-        WHERE p.useraccount_ptr_id = ANY(%s)
-    """, (ids,))
 
+            -- User
+            concat_ws(
+                ' ',
+                NULLIF(u.first_name, ''),
+                NULLIF(u.last_name, '')
+            ) AS full_name,
 
-def company_rows(cur, ids):
-    return db_rows(cur, """
-        SELECT
-            c.useraccount_ptr_id AS object_id,
-            c.name,
-            c.created_by,
-            c.current_designation,
-            c.website_link,
+            u.username,
             u.about_us,
             u.tagline,
             u.city_town,
-            u.current_country_id,
+            u.address,
+            u.postal_code,
             u.slug AS user_slug,
-            COALESCE(ind.industries, '') AS industries
-        FROM public.companies c
-        JOIN public.user_accounts u ON u.id = c.useraccount_ptr_id
+
+            u.current_country_id,
+            current_country.name AS current_country_name,
+            current_country.country_code AS current_country_code,
+
+            u.nationality_id,
+            nationality.name AS nationality_name,
+
+            u.user_type,
+            u.verified,
+            u.is_pro,
+            u.is_working,
+            u.is_featured,
+
+            u.company_name AS account_company_name,
+
+            -- Professional
+            p.department_id,
+            d.name AS department_name,
+
+            p.job_level_id,
+            jl.name AS job_level_name,
+
+            p.education_level_id,
+            el.name AS education_level_name,
+
+            p.job_role_id,
+            jr.name AS job_role_name,
+
+            p.currently_working,
+
+            p.current_company_id,
+            c.name AS current_company_name,
+
+            p.current_company_text,
+            p.resume_title,
+
+            -- Skills
+            COALESCE(
+                sk.skills,
+                ''
+            ) AS skills,
+
+            -- Languages
+            COALESCE(
+                la.languages,
+                ''
+            ) AS languages,
+
+            -- ALL Industries
+            COALESCE(
+                ind.industries,
+                ''
+            ) AS industries,
+
+            -- Supplier Industries
+            COALESCE(
+                supplier_ind.industries,
+                ''
+            ) AS supplier_industries,
+
+            -- Supplier Categories
+            COALESCE(
+                supplier_cat.supplier_categories,
+                ''
+            ) AS supplier_categories,
+
+            -- Experience
+            COALESCE(
+                exp.experience,
+                ''
+            ) AS experience,
+
+            -- Package
+            u.package_id,
+            package.package_id AS package_reference_id,
+            package_type.name AS package_type_name
+
+        FROM public.professionals p
+
+        JOIN public.user_accounts u
+            ON u.id = p.useraccount_ptr_id
+
+        -- Professional relationships
+        LEFT JOIN public.departments d
+            ON d.id = p.department_id
+
+        LEFT JOIN public.job_levels jl
+            ON jl.id = p.job_level_id
+
+        LEFT JOIN public.job_role jr
+            ON jr.id = p.job_role_id
+
+        LEFT JOIN public.education_level el
+            ON el.id = p.education_level_id
+
+        LEFT JOIN public.companies c
+            ON c.useraccount_ptr_id = p.current_company_id
+
+        -- Country
+        LEFT JOIN public.countries current_country
+            ON current_country.id = u.current_country_id
+
+        -- Nationality
+        LEFT JOIN public.countries nationality
+            ON nationality.id = u.nationality_id
+
+        -- Package
+        LEFT JOIN public.base_package package
+            ON package.id = u.package_id
+
+        LEFT JOIN public.base_packagetype package_type
+            ON package_type.id = package.package_type_id
+
+        -- Skills
         LEFT JOIN LATERAL (
-            SELECT string_agg(DISTINCT i.name, ', ' ORDER BY i.name) AS industries
+            SELECT
+                string_agg(
+                    DISTINCT s.name,
+                    ', '
+                    ORDER BY s.name
+                ) AS skills
+            FROM public.professionals_skills ps
+            JOIN public.skills s
+                ON s.id = ps.skills_id
+            WHERE ps.professional_id = p.useraccount_ptr_id
+        ) sk
+            ON TRUE
+
+        -- Languages
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT l.name,
+                    ', '
+                    ORDER BY l.name
+                ) AS languages
+            FROM public.professionals_language_know pl
+            JOIN public.languages l
+                ON l.id = pl.language_id
+            WHERE pl.professional_id = p.useraccount_ptr_id
+        ) la
+            ON TRUE
+
+        -- ALL INDUSTRIES
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT i.name,
+                    ', '
+                    ORDER BY i.name
+                ) AS industries
             FROM public.user_accounts_industry ui
-            JOIN public.industries i ON i.id = ui.industry_id
+            JOIN public.industries i
+                ON i.id = ui.industry_id
+            WHERE ui.useraccount_id = p.useraccount_ptr_id
+        ) ind
+            ON TRUE
+
+        -- SUPPLIER INDUSTRIES
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT i.name,
+                    ', '
+                    ORDER BY i.name
+                ) AS industries
+            FROM public.user_accounts_industry ui
+            JOIN public.industries i
+                ON i.id = ui.industry_id
+            WHERE ui.useraccount_id = p.useraccount_ptr_id
+              AND LOWER(COALESCE(i.context, ''))
+                    = 'supplier'
+        ) supplier_ind
+            ON TRUE
+
+        -- SUPPLIER CATEGORIES
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT sc.name,
+                    ', '
+                    ORDER BY sc.name
+                ) AS supplier_categories
+            FROM public.user_accounts_supplier_category usc
+            JOIN public.supplier_category sc
+                ON sc.id = usc.suppliercategory_id
+            WHERE usc.useraccount_id = p.useraccount_ptr_id
+        ) supplier_cat
+            ON TRUE
+
+        -- Experience
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT concat_ws(
+                        ' — ',
+                        e.job_designation,
+                        e.company_name,
+                        e.location,
+                        d2.name,
+                        jr2.name,
+                        i2.name
+                    ),
+                    ' | '
+                    ORDER BY concat_ws(
+                        ' — ',
+                        e.job_designation,
+                        e.company_name,
+                        e.location,
+                        d2.name,
+                        jr2.name,
+                        i2.name
+                    )
+                ) AS experience
+
+            FROM public.base_experience e
+
+            LEFT JOIN public.departments d2
+                ON d2.id = e.department_id
+
+            LEFT JOIN public.job_role jr2
+                ON jr2.id = e.job_role_id
+
+            LEFT JOIN public.industries i2
+                ON i2.id = e.industry_id
+
+            WHERE e.user_id = p.useraccount_ptr_id
+        ) exp
+            ON TRUE
+
+        WHERE p.useraccount_ptr_id = ANY(%s)
+        """,
+        (ids,),
+    )
+
+def is_supplier_account(source: dict[str, Any]) -> bool:
+    return bool(
+        clean(source.get("supplier_industries"))
+        or clean(source.get("supplier_categories"))
+    )
+
+
+def company_rows(cur, ids):
+    """
+    Fetch Company + UserAccount information + relationships.
+
+    A Company can also be a Supplier.
+
+    Supplier detection:
+        UserAccount.industry -> Industry.context = 'supplier'
+
+    Supplier categories:
+        UserAccount.supplier_category -> SupplierCategory
+    """
+
+    return db_rows(
+        cur,
+        """
+        SELECT
+            c.useraccount_ptr_id AS object_id,
+
+            -- Company
+            c.name AS company_name,
+            c.created_by,
+            c.current_designation,
+            c.website_link,
+
+            -- User Account
+            concat_ws(
+                ' ',
+                NULLIF(u.first_name, ''),
+                NULLIF(u.last_name, '')
+            ) AS full_name,
+
+            u.username,
+            u.user_type,
+            u.company_name AS account_company_name,
+            u.about_us,
+            u.tagline,
+            u.city_town,
+            u.address,
+            u.postal_code,
+            u.slug AS user_slug,
+
+            u.current_country_id,
+            current_country.name AS current_country_name,
+            current_country.country_code AS current_country_code,
+
+            u.nationality_id,
+            nationality.name AS nationality_name,
+
+            u.verified,
+            u.is_pro,
+            u.is_working,
+            u.is_featured,
+
+            -- General + Supplier Industries
+            COALESCE(
+                ind.industries,
+                ''
+            ) AS industries,
+
+            COALESCE(
+                supplier_ind.industries,
+                ''
+            ) AS supplier_industries,
+
+            -- Supplier Categories
+            COALESCE(
+                supplier_cat.supplier_categories,
+                ''
+            ) AS supplier_categories,
+
+            -- Package
+            u.package_id,
+            package.package_id AS package_reference_id,
+            package_type.name AS package_type_name
+
+        FROM public.companies c
+
+        JOIN public.user_accounts u
+            ON u.id = c.useraccount_ptr_id
+
+        -- Current Country
+        LEFT JOIN public.countries current_country
+            ON current_country.id = u.current_country_id
+
+        -- Nationality
+        LEFT JOIN public.countries nationality
+            ON nationality.id = u.nationality_id
+
+        -- Package
+        LEFT JOIN public.base_package package
+            ON package.id = u.package_id
+
+        LEFT JOIN public.base_packagetype package_type
+            ON package_type.id = package.package_type_id
+
+        -- ALL INDUSTRIES
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT i.name,
+                    ', '
+                    ORDER BY i.name
+                ) AS industries
+            FROM public.user_accounts_industry ui
+            JOIN public.industries i
+                ON i.id = ui.industry_id
             WHERE ui.useraccount_id = c.useraccount_ptr_id
-        ) ind ON TRUE
+        ) ind
+            ON TRUE
+
+        -- ONLY SUPPLIER INDUSTRIES
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT i.name,
+                    ', '
+                    ORDER BY i.name
+                ) AS industries
+            FROM public.user_accounts_industry ui
+            JOIN public.industries i
+                ON i.id = ui.industry_id
+            WHERE ui.useraccount_id = c.useraccount_ptr_id
+              AND LOWER(COALESCE(i.context, ''))
+                    = 'supplier'
+        ) supplier_ind
+            ON TRUE
+
+        -- SUPPLIER CATEGORIES
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT sc.name,
+                    ', '
+                    ORDER BY sc.name
+                ) AS supplier_categories
+            FROM public.user_accounts_supplier_category usc
+            JOIN public.supplier_category sc
+                ON sc.id = usc.suppliercategory_id
+            WHERE usc.useraccount_id = c.useraccount_ptr_id
+        ) supplier_cat
+            ON TRUE
+
         WHERE c.useraccount_ptr_id = ANY(%s)
-    """, (ids,))
+        """,
+        (ids,),
+    )
 
 
 def article_rows(cur, ids):
@@ -265,54 +615,489 @@ def article_rows(cur, ids):
 
 
 def job_rows(cur, ids):
-    return db_rows(cur, """
+    """
+    Fetch Job + all important searchable relationships.
+
+    Includes:
+      - Company
+      - Company UserAccount information
+      - Job Industries
+      - Job Roles
+      - Job Departments
+      - Job Levels
+      - Country
+      - Job Type
+      - Employment Type
+      - Salary Range
+      - Currency
+      - Package Type
+      - Posted By User
+      - Received Application Countries
+      - Job flags/status
+      - Walk-in information
+      - Job dates
+      - Job URL / slug
+    """
+
+    return db_rows(
+        cur,
+        """
         SELECT
             j.id AS object_id,
-            j.job_title, j.job_desc, j.job_city, j.job_address, j.job_status,
-            j.salary_description, j.reference, j.posted_by,
-            j.company_id, c.name AS company_name,
-            j.job_country_id, co.name AS country_name,
-            et.name AS employment_type,
+
+            /* ============================================================
+               JOB CORE
+               ============================================================ */
+
+            j.job_title,
+            j.job_desc,
+            j.job_city,
+            j.job_address,
+            j.job_status,
+
+            j.job_start_date,
+            j.job_end_date,
+
+            j.salary_description,
+            j.reference,
+
+            j.posted_by,
+            j.posted_by_user_id,
+
+            j.job_link,
+            j.slug,
+
+            j.is_live,
+            j.is_deleted,
+            j.is_featured,
+            j.is_premium,
+
+            j.is_spider,
+            j.is_spider_job,
+            j.is_confidential,
+            j.hide_company_details,
+
+            j.is_auto_renew_enabled,
+            j.is_credit_used,
+            j.is_migrated,
+
+            j.receive_response,
+
+            /* Walk-in */
+            j."walkInFromDate" AS walkin_from_date,
+            j."walkInToDate" AS walkin_to_date,
+            j."walkInTime" AS walkin_time,
+            j."walkInVenue" AS walkin_venue,
+
+            /* ============================================================
+               COMPANY
+               ============================================================ */
+
+            j.company_id,
+
+            c.name AS company_name,
+
+            cu.username AS company_username,
+
+            concat_ws(
+                ' ',
+                NULLIF(cu.first_name, ''),
+                NULLIF(cu.last_name, '')
+            ) AS company_account_name,
+
+            cu.company_name AS company_account_company_name,
+
+            cu.city_town AS company_city,
+
+            cu.address AS company_address,
+
+            company_country.name AS company_country_name,
+
+            company_country.country_code AS company_country_code,
+
+            cu.user_type AS company_user_type,
+
+            cu.verified AS company_verified,
+
+            cu.is_pro AS company_is_pro,
+
+            cu.is_featured AS company_is_featured,
+
+            /* ============================================================
+               JOB COUNTRY
+               ============================================================ */
+
+            j.job_country_id,
+
+            co.name AS country_name,
+
+            co.country_code AS country_code,
+
+            co.code AS country_code_short,
+
+            /* ============================================================
+               JOB TYPE
+               ============================================================ */
+
+            j.jobtype_id,
+
             jt.name AS job_type,
+
+            /* ============================================================
+               EMPLOYMENT TYPE
+               ============================================================ */
+
+            j.employementtype_id,
+
+            et.name AS employment_type,
+
+            /* ============================================================
+               SALARY RANGE
+               ============================================================ */
+
+            j."salaryRange_id",
+
             sr.name AS salary_range,
+
+            /* ============================================================
+               CURRENCY
+               ============================================================ */
+
+            j.currency_id,
+
+            cur.code AS currency_code,
+
             cur.name AS currency_name,
-            COALESCE(role.roles, '') AS roles,
-            COALESCE(dep.departments, '') AS departments,
-            COALESCE(lvl.levels, '') AS levels,
-            COALESCE(ind.industries, '') AS industries
+
+            cur.symbol AS currency_symbol,
+
+            /* ============================================================
+               PACKAGE TYPE
+               ============================================================ */
+
+            j.package_type_id,
+
+            package_type.name AS package_type_name,
+
+            package_type.description AS package_type_description,
+
+            package_type.is_PAYG AS package_is_payg,
+            package_type.is_POP AS package_is_pop,
+            package_type.is_CC AS package_is_cc,
+            package_type.is_PREMIUM AS package_is_premium,
+            package_type.is_SP AS package_is_sp,
+            package_type.is_GP AS package_is_gp,
+            package_type.is_EP AS package_is_ep,
+
+            /* ============================================================
+               POSTED BY USER
+               ============================================================ */
+
+            posted_user.username AS posted_by_username,
+
+            concat_ws(
+                ' ',
+                NULLIF(posted_user.first_name, ''),
+                NULLIF(posted_user.last_name, '')
+            ) AS posted_by_name,
+
+            posted_user.user_type AS posted_by_user_type,
+
+            posted_country.name AS posted_by_country_name,
+
+            posted_country.country_code AS posted_by_country_code,
+
+            /* ============================================================
+               JOB INDUSTRIES
+               ============================================================ */
+
+            COALESCE(
+                ind.industries,
+                ''
+            ) AS industries,
+
+            /* ============================================================
+               JOB ROLES
+               ============================================================ */
+
+            COALESCE(
+                role.roles,
+                ''
+            ) AS roles,
+
+            /* ============================================================
+               JOB DEPARTMENTS
+               ============================================================ */
+
+            COALESCE(
+                dep.departments,
+                ''
+            ) AS departments,
+
+            /* ============================================================
+               JOB LEVELS
+               ============================================================ */
+
+            COALESCE(
+                lvl.levels,
+                ''
+            ) AS levels,
+
+            /* ============================================================
+               RECEIVED APPLICATION COUNTRIES
+               ============================================================ */
+
+            COALESCE(
+                received_countries.countries,
+                ''
+            ) AS received_application_countries,
+
+            /* ============================================================
+               COMPANY INDUSTRIES
+               ============================================================ */
+
+            COALESCE(
+                company_ind.industries,
+                ''
+            ) AS company_industries,
+
+            /* ============================================================
+               COMPANY SUPPLIER INDUSTRIES
+               ============================================================ */
+
+            COALESCE(
+                company_supplier_ind.industries,
+                ''
+            ) AS company_supplier_industries,
+
+            /* ============================================================
+               COMPANY SUPPLIER CATEGORIES
+               ============================================================ */
+
+            COALESCE(
+                company_supplier_cat.categories,
+                ''
+            ) AS company_supplier_categories
+
         FROM public.base_job j
-        LEFT JOIN public.companies c ON c.useraccount_ptr_id = j.company_id
-        LEFT JOIN public.countries co ON co.id = j.job_country_id
-        LEFT JOIN public.employment_type et ON et.id = j.employementtype_id
-        LEFT JOIN public.job_type jt ON jt.id = j.jobtype_id
-        LEFT JOIN public.base_salaryrange sr ON sr.id = j."salaryRange_id"
-        LEFT JOIN public.base_currency cur ON cur.id = j.currency_id
+
+        /* ================================================================
+           COMPANY
+           ================================================================= */
+
+        LEFT JOIN public.companies c
+            ON c.useraccount_ptr_id = j.company_id
+
+        LEFT JOIN public.user_accounts cu
+            ON cu.id = c.useraccount_ptr_id
+
+        LEFT JOIN public.countries company_country
+            ON company_country.id = cu.current_country_id
+
+        /* ================================================================
+           JOB COUNTRY
+           ================================================================= */
+
+        LEFT JOIN public.countries co
+            ON co.id = j.job_country_id
+
+        /* ================================================================
+           JOB TYPE
+           ================================================================= */
+
+        LEFT JOIN public.job_type jt
+            ON jt.id = j.jobtype_id
+
+        /* ================================================================
+           EMPLOYMENT TYPE
+           ================================================================= */
+
+        LEFT JOIN public.employment_type et
+            ON et.id = j.employementtype_id
+
+        /* ================================================================
+           SALARY RANGE
+           ================================================================= */
+
+        LEFT JOIN public.base_salaryrange sr
+            ON sr.id = j."salaryRange_id"
+
+        /* ================================================================
+           CURRENCY
+           ================================================================= */
+
+        LEFT JOIN public.base_currency cur
+            ON cur.id = j.currency_id
+
+        /* ================================================================
+           PACKAGE TYPE
+           ================================================================= */
+
+        LEFT JOIN public.base_packagetype package_type
+            ON package_type.id = j.package_type_id
+
+        /* ================================================================
+           POSTED BY USER
+           ================================================================= */
+
+        LEFT JOIN public.user_accounts posted_user
+            ON posted_user.id = j.posted_by_user_id
+
+        LEFT JOIN public.countries posted_country
+            ON posted_country.id = posted_user.current_country_id
+
+        /* ================================================================
+           JOB ROLES
+           ================================================================= */
+
         LEFT JOIN LATERAL (
-            SELECT string_agg(DISTINCT r.name, ', ' ORDER BY r.name) AS roles
+            SELECT
+                string_agg(
+                    DISTINCT r.name,
+                    ', '
+                    ORDER BY r.name
+                ) AS roles
             FROM public.base_job_job_role x
-            JOIN public.job_role r ON r.id = x.jobrole_id
+            JOIN public.job_role r
+                ON r.id = x.jobrole_id
             WHERE x.job_id = j.id
-        ) role ON TRUE
+        ) role
+            ON TRUE
+
+        /* ================================================================
+           JOB DEPARTMENTS
+           ================================================================= */
+
         LEFT JOIN LATERAL (
-            SELECT string_agg(DISTINCT d.name, ', ' ORDER BY d.name) AS departments
+            SELECT
+                string_agg(
+                    DISTINCT d.name,
+                    ', '
+                    ORDER BY d.name
+                ) AS departments
             FROM public.base_job_job_department x
-            JOIN public.departments d ON d.id = x.department_id
+            JOIN public.departments d
+                ON d.id = x.department_id
             WHERE x.job_id = j.id
-        ) dep ON TRUE
+        ) dep
+            ON TRUE
+
+        /* ================================================================
+           JOB LEVELS
+           ================================================================= */
+
         LEFT JOIN LATERAL (
-            SELECT string_agg(DISTINCT l.name, ', ' ORDER BY l.name) AS levels
+            SELECT
+                string_agg(
+                    DISTINCT l.name,
+                    ', '
+                    ORDER BY l.name
+                ) AS levels
             FROM public.base_job_job_level x
-            JOIN public.job_levels l ON l.id = x.joblevel_id
+            JOIN public.job_levels l
+                ON l.id = x.joblevel_id
             WHERE x.job_id = j.id
-        ) lvl ON TRUE
+        ) lvl
+            ON TRUE
+
+        /* ================================================================
+           JOB INDUSTRIES
+           ================================================================= */
+
         LEFT JOIN LATERAL (
-            SELECT string_agg(DISTINCT i.name, ', ' ORDER BY i.name) AS industries
+            SELECT
+                string_agg(
+                    DISTINCT i.name,
+                    ', '
+                    ORDER BY i.name
+                ) AS industries
             FROM public.base_job_job_industry x
-            JOIN public.industries i ON i.id = x.industry_id
+            JOIN public.industries i
+                ON i.id = x.industry_id
             WHERE x.job_id = j.id
-        ) ind ON TRUE
+        ) ind
+            ON TRUE
+
+        /* ================================================================
+           RECEIVED APPLICATION COUNTRIES
+           ================================================================= */
+
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT rc.name,
+                    ', '
+                    ORDER BY rc.name
+                ) AS countries
+            FROM public.base_job_received_applications x
+            JOIN public.countries rc
+                ON rc.id = x.country_id
+            WHERE x.job_id = j.id
+        ) received_countries
+            ON TRUE
+
+        /* ================================================================
+           COMPANY INDUSTRIES
+           ================================================================= */
+
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT i.name,
+                    ', '
+                    ORDER BY i.name
+                ) AS industries
+            FROM public.user_accounts_industry ui
+            JOIN public.industries i
+                ON i.id = ui.industry_id
+            WHERE ui.useraccount_id = j.company_id
+        ) company_ind
+            ON TRUE
+
+        /* ================================================================
+           COMPANY SUPPLIER INDUSTRIES
+
+           A company is considered a supplier when it has an Industry
+           whose context is "supplier".
+           ================================================================= */
+
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT i.name,
+                    ', '
+                    ORDER BY i.name
+                ) AS industries
+            FROM public.user_accounts_industry ui
+            JOIN public.industries i
+                ON i.id = ui.industry_id
+            WHERE ui.useraccount_id = j.company_id
+              AND LOWER(COALESCE(i.context, '')) = 'supplier'
+        ) company_supplier_ind
+            ON TRUE
+
+        /* ================================================================
+           COMPANY SUPPLIER CATEGORIES
+           ================================================================= */
+
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT sc.name,
+                    ', '
+                    ORDER BY sc.name
+                ) AS categories
+            FROM public.user_accounts_supplier_category usc
+            JOIN public.supplier_category sc
+                ON sc.id = usc.suppliercategory_id
+            WHERE usc.useraccount_id = j.company_id
+        ) company_supplier_cat
+            ON TRUE
+
         WHERE j.id = ANY(%s)
-    """, (ids,))
+    """,
+        (ids,),
+    )
 
 
 def event_rows(cur, ids):
@@ -331,25 +1116,132 @@ def event_rows(cur, ids):
 
 
 def product_rows(cur, ids):
-    return db_rows(cur, """
+    """
+    Fetch Product + all important searchable relationships.
+
+    Relationships included:
+      ProductCategory
+      Currency
+      Country
+      Available Countries
+      Posted By User
+      Package
+      Package Type
+    """
+
+    return db_rows(
+        cur,
+        """
         SELECT
-            p.id AS object_id, p.title, p.description, p.keywords,
-            p.current_location, p.prime_city, p.other_location,
-            p.p_condition, p.status, p.price, p.discounted_price,
-            p.posted_by_id, u.username AS posted_by,
-            p.country_id, co.name AS country_name,
-            COALESCE(cat.categories, '') AS categories
+            p.id AS object_id,
+
+            -- Product
+            p.title,
+            p.p_type,
+            p.p_condition,
+            p.price,
+            p.price_setting,
+            p.current_location,
+            p.prime_city,
+            p.other_location,
+            p.keywords,
+            p.description,
+            p.status,
+            p.start_date,
+            p.expiry_date,
+            p.discount_percentage,
+            p.discounted_price,
+            p.is_featured,
+            p.is_auto_renew_enabled,
+            p.slug,
+
+            -- Posted By
+            p.posted_by_id,
+            u.username AS posted_by_username,
+            concat_ws(
+                ' ',
+                NULLIF(u.first_name, ''),
+                NULLIF(u.last_name, '')
+            ) AS posted_by_name,
+            u.user_type AS posted_by_user_type,
+
+            -- Product Country
+            p.country_id,
+            country.name AS country_name,
+            country.country_code AS country_code,
+
+            -- Currency
+            p.currency_id,
+            currency.code AS currency_code,
+            currency.name AS currency_name,
+            currency.symbol AS currency_symbol,
+
+            -- Package
+            p.package_id,
+            package.package_id AS package_reference_id,
+            package_type.name AS package_type_name,
+
+            -- Product Categories
+            COALESCE(
+                categories.categories,
+                ''
+            ) AS categories,
+
+            -- Available Countries
+            COALESCE(
+                available_countries.available_countries,
+                ''
+            ) AS available_countries
+
         FROM public.marketplace_product p
-        LEFT JOIN public.user_accounts u ON u.id = p.posted_by_id
-        LEFT JOIN public.countries co ON co.id = p.country_id
+
+        LEFT JOIN public.user_accounts u
+            ON u.id = p.posted_by_id
+
+        LEFT JOIN public.countries country
+            ON country.id = p.country_id
+
+        LEFT JOIN public.base_currency currency
+            ON currency.id = p.currency_id
+
+        LEFT JOIN public.base_package package
+            ON package.id = p.package_id
+
+        LEFT JOIN public.base_packagetype package_type
+            ON package_type.id = package.package_type_id
+
         LEFT JOIN LATERAL (
-            SELECT string_agg(DISTINCT pc.name, ', ' ORDER BY pc.name) AS categories
+            SELECT
+                string_agg(
+                    DISTINCT pc.name,
+                    ', '
+                    ORDER BY pc.name
+                ) AS categories
             FROM public.marketplace_product_category x
-            JOIN public.marketplace_productcategory pc ON pc.id = x.productcategory_id
+            JOIN public.marketplace_productcategory pc
+                ON pc.id = x.productcategory_id
             WHERE x.product_id = p.id
-        ) cat ON TRUE
+        ) categories
+            ON TRUE
+
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT c.name,
+                    ', '
+                    ORDER BY c.name
+                ) AS available_countries
+            FROM public.marketplace_product_available_in_countries x
+            JOIN public.countries c
+                ON c.id = x.country_id
+            WHERE x.product_id = p.id
+        ) available_countries
+            ON TRUE
+
         WHERE p.id = ANY(%s)
-    """, (ids,))
+        """,
+        (ids,),
+    )
 
 
 def faq_rows(cur, ids):
@@ -361,23 +1253,169 @@ def faq_rows(cur, ids):
 
 
 def award_rows(cur, ids):
-    return db_rows(cur, """
+    """
+    Fetch Award + all important searchable relationships.
+
+    Includes:
+      - Award title / subtitle / description
+      - Award short title
+      - Award categories
+      - Category countries
+      - Award country
+      - Award location
+      - Award year
+      - Voting dates / status
+      - Award active status
+      - Nomination / voting / category / winner links
+      - Award code / slug
+      - YouTube link
+      - Award date
+      - Coordinates
+      - Display/action flags
+    """
+
+    return db_rows(
+        cur,
+        """
         SELECT
-            a.id AS object_id, a.award_title, a.award_description,
-            a.award_short_title, a.award_subtitle, a.location,
-            a.country_id, co.name AS country_name, a.award_year,
-            a.award_is_active, a.is_voting_active, a.slug,
-            COALESCE(cat.categories, '') AS categories
+            a.id AS object_id,
+
+            /* ============================================================
+               AWARD CORE
+               ============================================================ */
+
+            a.sequence_number,
+
+            a.award_short_title,
+            a.award_title,
+            a.award_subtitle,
+            a.award_description,
+
+            a.award_detail_url,
+
+            a.award_is_active,
+            a.award_created_at,
+
+            a.voting_start_date,
+            a.voting_end_date,
+
+            a.award_on,
+
+            a.show_nomination_button,
+            a.nomination_link,
+
+            a.show_vote_now_button,
+            a.vote_now_link,
+
+            a.show_personal_categories_button,
+            a.personal_categories_link,
+
+            a.show_corporate_categories_button,
+            a.corporate_categories_link,
+
+            a.show_award_winners_button,
+            a.award_winners_link,
+
+            a.is_voting_active,
+
+            a.youtube_link,
+
+            a.location,
+
+            a.country_id,
+            co.name AS country_name,
+            co.country_code AS country_code,
+            co.code AS country_code_short,
+
+            a.hide_country_from_url,
+
+            a.code,
+            a.slug,
+
+            a.latitude,
+            a.longitude,
+
+            a.award_year,
+
+            /* ============================================================
+               AWARD CATEGORIES
+               ============================================================ */
+
+            COALESCE(
+                cat.categories,
+                ''
+            ) AS categories,
+
+            /* Category countries are useful for queries such as:
+               "awards for UAE hospitality categories"
+            */
+
+            COALESCE(
+                cat.category_countries,
+                ''
+            ) AS category_countries,
+
+            /* Structured category information for metadata */
+
+            COALESCE(
+                cat.category_details::text,
+                '[]'
+            ) AS category_details
+
         FROM public.base_awards a
-        LEFT JOIN public.countries co ON co.id = a.country_id
+
+        /* ================================================================
+           AWARD COUNTRY
+           ================================================================= */
+
+        LEFT JOIN public.countries co
+            ON co.id = a.country_id
+
+        /* ================================================================
+           AWARD CATEGORIES
+           ================================================================= */
+
         LEFT JOIN LATERAL (
-            SELECT string_agg(DISTINCT ac.category_name, ', ' ORDER BY ac.category_name) AS categories
+            SELECT
+                string_agg(
+                    DISTINCT ac.category_name,
+                    ', '
+                    ORDER BY ac.category_name
+                ) AS categories,
+
+                string_agg(
+                    DISTINCT category_country.name,
+                    ', '
+                    ORDER BY category_country.name
+                ) AS category_countries,
+
+                jsonb_agg(
+                    DISTINCT jsonb_build_object(
+                        'id', ac.id,
+                        'name', ac.category_name,
+                        'is_active', ac.category_is_active,
+                        'country_id', ac.country_id,
+                        'country', category_country.name,
+                        'country_code', category_country.country_code
+                    )
+                ) AS category_details
+
             FROM public.base_awards_award_category x
-            JOIN public.base_awardcategory ac ON ac.id = x.awardcategory_id
+
+            JOIN public.base_awardcategory ac
+                ON ac.id = x.awardcategory_id
+
+            LEFT JOIN public.countries category_country
+                ON category_country.id = ac.country_id
+
             WHERE x.awards_id = a.id
-        ) cat ON TRUE
+        ) cat
+            ON TRUE
+
         WHERE a.id = ANY(%s)
-    """, (ids,))
+        """,
+        (ids,),
+    )
 
 
 def category_rows(cur, ids):
@@ -472,74 +1510,370 @@ FETCHERS = {
 
 
 def build_document(master: dict[str, Any], source: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    model = clean(master.get("entity_type") or "").lower() or "record"
+    model = clean(
+        master.get("entity_type")
+        or ""
+    ).lower() or "record"
+
     fields = [
-        ("Entity", master.get("entity_name") or model),
+        ("Entity Type", model),
         ("Title", master.get("title")),
-        ("Subtitle", master.get("subtitle")),
         ("Name", master.get("user_name")),
-        ("Company", master.get("company_name")),
         ("Category", master.get("category_text")),
-        ("Subcategory", master.get("subcategory_text")),
-        ("Country", master.get("country_text")),
-        ("City", master.get("city_text")),
         ("Location", master.get("location_text")),
         ("Keywords", master.get("ai_keywords")),
-        ("Summary", master.get("ai_summary")),
         ("Content", master.get("content")),
     ]
 
     relationship_meta: dict[str, Any] = {}
 
     if model == "professional":
+
+        supplier_account = is_supplier_account(source)
+
         relationship_meta = {
-            "job_role": source.get("job_role_name"),
+            "profile_type": "professional",
+
             "department": source.get("department_name"),
+            "job_role": source.get("job_role_name"),
             "job_level": source.get("job_level_name"),
-            "education_level": source.get("education_level_name"),
-            "current_company": source.get("current_company_name"),
+            "education_level": source.get(
+                "education_level_name"
+            ),
+
+            "current_company": source.get(
+                "current_company_name"
+            ),
+
+            "current_company_text": source.get(
+                "current_company_text"
+            ),
+
+            "currently_working": source.get(
+                "currently_working"
+            ),
+
             "skills": source.get("skills"),
             "languages": source.get("languages"),
+
             "industries": source.get("industries"),
+
+            "supplier": {
+                "is_supplier": supplier_account,
+                "industries": source.get(
+                    "supplier_industries"
+                ),
+                "categories": source.get(
+                    "supplier_categories"
+                ),
+            },
+
             "experience": source.get("experience"),
+
+            "country": {
+                "id": source.get(
+                    "current_country_id"
+                ),
+                "name": source.get(
+                    "current_country_name"
+                ),
+                "code": source.get(
+                    "current_country_code"
+                ),
+            },
+
+            "nationality": source.get(
+                "nationality_name"
+            ),
+
             "profile": source.get("about_us"),
             "tagline": source.get("tagline"),
             "city": source.get("city_town"),
+
+            "verified": source.get("verified"),
+            "pro": source.get("is_pro"),
+            "featured": source.get("is_featured"),
+
+            "package": {
+                "id": source.get("package_id"),
+                "reference_id": source.get(
+                    "package_reference_id"
+                ),
+                "type": source.get(
+                    "package_type_name"
+                ),
+            },
         }
+
         fields += [
+            ("Professional Name", source.get("full_name")),
+            ("Username", source.get("username")),
+
+            ("Resume Title", source.get("resume_title")),
+
             ("Job Role", source.get("job_role_name")),
             ("Department", source.get("department_name")),
             ("Job Level", source.get("job_level_name")),
-            ("Education", source.get("education_level_name")),
-            ("Current Company", source.get("current_company_name")),
+            ("Education", source.get(
+                "education_level_name"
+            )),
+
+            (
+                "Current Company",
+                source.get("current_company_name"),
+            ),
+
+            (
+                "Current Company",
+                source.get("current_company_text"),
+            ),
+
+            (
+                "Currently Working",
+                source.get("currently_working"),
+            ),
+
             ("Skills", source.get("skills")),
             ("Languages", source.get("languages")),
+
             ("Industries", source.get("industries")),
+
+            (
+                "Supplier Industries",
+                source.get("supplier_industries"),
+            ),
+
+            (
+                "Supplier Categories",
+                source.get("supplier_categories"),
+            ),
+
             ("Experience", source.get("experience")),
+
             ("Profile", source.get("about_us")),
             ("Tagline", source.get("tagline")),
+
             ("City", source.get("city_town")),
+            (
+                "Current Country",
+                source.get("current_country_name"),
+            ),
+            (
+                "Country Code",
+                source.get("current_country_code"),
+            ),
+
+            (
+                "Nationality",
+                source.get("nationality_name"),
+            ),
+
+            (
+                "Profile Type",
+                "Supplier Professional"
+                if supplier_account
+                else "Professional",
+            ),
+
+            (
+                "Verified",
+                "Yes"
+                if source.get("verified")
+                else "No",
+            ),
+
+            (
+                "Pro Member",
+                "Yes"
+                if source.get("is_pro")
+                else "No",
+            ),
+
+            (
+                "Featured",
+                "Yes"
+                if source.get("is_featured")
+                else "No",
+            ),
+
+            (
+                "Package Type",
+                source.get("package_type_name"),
+            ),
         ]
-        if source.get("current_country_id"):
-            relationship_meta["country_id"] = source["current_country_id"]
 
     elif model == "company":
+        supplier_account = is_supplier_account(source)
+
         relationship_meta = {
-            "company_name": source.get("name"),
+            "profile_type": (
+                "supplier"
+                if supplier_account
+                else "company"
+            ),
+
+            "company_name": source.get(
+                "company_name"
+            ),
+
             "about": source.get("about_us"),
+
             "tagline": source.get("tagline"),
-            "industries": source.get("industries"),
+
+            "designation": source.get(
+                "current_designation"
+            ),
+
+            "industries": source.get(
+                "industries"
+            ),
+
+            "supplier": {
+                "is_supplier": supplier_account,
+                "industries": source.get(
+                    "supplier_industries"
+                ),
+                "categories": source.get(
+                    "supplier_categories"
+                ),
+            },
+
             "city": source.get("city_town"),
-            "website": source.get("website_link"),
+
+            "country": {
+                "id": source.get(
+                    "current_country_id"
+                ),
+                "name": source.get(
+                    "current_country_name"
+                ),
+                "code": source.get(
+                    "current_country_code"
+                ),
+            },
+
+            "website": source.get(
+                "website_link"
+            ),
+
+            "verified": source.get("verified"),
+            "pro": source.get("is_pro"),
+            "featured": source.get("is_featured"),
+
+            "package": {
+                "id": source.get("package_id"),
+                "reference_id": source.get(
+                    "package_reference_id"
+                ),
+                "type": source.get(
+                    "package_type_name"
+                ),
+            },
         }
+
         fields += [
-            ("Company Name", source.get("name")),
-            ("About", source.get("about_us")),
-            ("Tagline", source.get("tagline")),
-            ("Industries", source.get("industries")),
-            ("City", source.get("city_town")),
-            ("Website", source.get("website_link")),
-            ("Designation", source.get("current_designation")),
+            (
+                "Company Name",
+                source.get("company_name"),
+            ),
+
+            (
+                "Account Name",
+                source.get("full_name"),
+            ),
+
+            (
+                "Username",
+                source.get("username"),
+            ),
+
+            (
+                "About",
+                source.get("about_us"),
+            ),
+
+            (
+                "Tagline",
+                source.get("tagline"),
+            ),
+
+            (
+                "Designation",
+                source.get("current_designation"),
+            ),
+
+            (
+                "Created By",
+                source.get("created_by"),
+            ),
+
+            (
+                "Industries",
+                source.get("industries"),
+            ),
+
+            (
+                "Supplier Industries",
+                source.get("supplier_industries"),
+            ),
+
+            (
+                "Supplier Categories",
+                source.get("supplier_categories"),
+            ),
+
+            (
+                "City",
+                source.get("city_town"),
+            ),
+
+            (
+                "Country",
+                source.get("current_country_name"),
+            ),
+
+            (
+                "Country Code",
+                source.get("current_country_code"),
+            ),
+
+            (
+                "Website",
+                source.get("website_link"),
+            ),
+
+            (
+                "Profile Type",
+                "Supplier"
+                if supplier_account
+                else "Company",
+            ),
+
+            (
+                "Verified",
+                "Yes"
+                if source.get("verified")
+                else "No",
+            ),
+
+            (
+                "Pro Member",
+                "Yes"
+                if source.get("is_pro")
+                else "No",
+            ),
+
+            (
+                "Featured",
+                "Yes"
+                if source.get("is_featured")
+                else "No",
+            ),
+
+            (
+                "Package Type",
+                source.get("package_type_name"),
+            ),
         ]
 
     elif model == "article":
@@ -555,32 +1889,323 @@ def build_document(master: dict[str, Any], source: dict[str, Any]) -> tuple[str,
         ]
 
     elif model == "job":
+
         relationship_meta = {
-            "company": source.get("company_name"),
-            "country": source.get("country_name"),
+            "company": {
+                "id": source.get("company_id"),
+                "name": source.get("company_name"),
+                "username": source.get("company_username"),
+                "city": source.get("company_city"),
+                "country": source.get("company_country_name"),
+                "country_code": source.get("company_country_code"),
+                "industries": source.get("company_industries"),
+                "supplier_industries": source.get(
+                    "company_supplier_industries"
+                ),
+                "supplier_categories": source.get(
+                    "company_supplier_categories"
+                ),
+                "user_type": source.get("company_user_type"),
+                "verified": source.get("company_verified"),
+                "pro": source.get("company_is_pro"),
+                "featured": source.get("company_is_featured"),
+            },
+
+            "country": {
+                "id": source.get("job_country_id"),
+                "name": source.get("country_name"),
+                "code": source.get("country_code"),
+                "short_code": source.get("country_code_short"),
+            },
+
             "roles": source.get("roles"),
+
             "departments": source.get("departments"),
+
             "levels": source.get("levels"),
+
             "industries": source.get("industries"),
-            "employment_type": source.get("employment_type"),
-            "job_type": source.get("job_type"),
-            "salary_range": source.get("salary_range"),
-            "currency": source.get("currency_name"),
+
+            "employment_type": source.get(
+                "employment_type"
+            ),
+
+            "job_type": source.get(
+                "job_type"
+            ),
+
+            "salary": {
+                "range": source.get("salary_range"),
+                "description": source.get("salary_description"),
+                "currency": source.get("currency_code"),
+                "currency_name": source.get("currency_name"),
+                "currency_symbol": source.get("currency_symbol"),
+            },
+
+            "package_type": {
+                "id": source.get("package_type_id"),
+                "name": source.get("package_type_name"),
+                "description": source.get("package_type_description"),
+                "payg": source.get("package_is_payg"),
+                "pop": source.get("package_is_pop"),
+                "cc": source.get("package_is_cc"),
+                "premium": source.get("package_is_premium"),
+                "sp": source.get("package_is_sp"),
+                "gp": source.get("package_is_gp"),
+                "ep": source.get("package_is_ep"),
+            },
+
+            "posted_by": {
+                "id": source.get("posted_by_user_id"),
+                "name": source.get("posted_by_name"),
+                "username": source.get("posted_by_username"),
+                "user_type": source.get("posted_by_user_type"),
+                "country": source.get("posted_by_country_name"),
+                "country_code": source.get("posted_by_country_code"),
+            },
+
+            "received_application_countries": source.get(
+                "received_application_countries"
+            ),
+
+            "status": source.get("job_status"),
+
+            "is_live": source.get("is_live"),
+
+            "is_deleted": source.get("is_deleted"),
+
+            "featured": source.get("is_featured"),
+
+            "premium": source.get("is_premium"),
+
+            "confidential": source.get("is_confidential"),
+
+            "walkin": {
+                "from": source.get("walkin_from_date"),
+                "to": source.get("walkin_to_date"),
+                "time": source.get("walkin_time"),
+                "venue": source.get("walkin_venue"),
+            },
         }
+
         fields += [
-            ("Job Role", source.get("roles")),
-            ("Department", source.get("departments")),
-            ("Job Level", source.get("levels")),
-            ("Industry", source.get("industries")),
-            ("Employment Type", source.get("employment_type")),
-            ("Job Type", source.get("job_type")),
-            ("Salary Range", source.get("salary_range")),
-            ("Currency", source.get("currency_name")),
+
+            # ------------------------------------------------------------
+            # Core Job
+            # ------------------------------------------------------------
+
+            ("Job Title", source.get("job_title")),
+
             ("Job Description", source.get("job_desc")),
-            ("Job City", source.get("job_city")),
-            ("Job Address", source.get("job_address")),
+
+            ("Job Status", source.get("job_status")),
+
+            # ------------------------------------------------------------
+            # Company
+            # ------------------------------------------------------------
+
             ("Company", source.get("company_name")),
+
+            ("Company Username", source.get("company_username")),
+
+            ("Company City", source.get("company_city")),
+
+            ("Company Country", source.get("company_country_name")),
+
+            ("Company Country Code", source.get(
+                "company_country_code"
+            )),
+
+            ("Company Industries", source.get(
+                "company_industries"
+            )),
+
+            (
+                "Company Supplier Industries",
+                source.get("company_supplier_industries"),
+            ),
+
+            (
+                "Company Supplier Categories",
+                source.get("company_supplier_categories"),
+            ),
+
+            # ------------------------------------------------------------
+            # Job Classification
+            # ------------------------------------------------------------
+
+            ("Industry", source.get("industries")),
+
+            ("Job Role", source.get("roles")),
+
+            ("Department", source.get("departments")),
+
+            ("Job Level", source.get("levels")),
+
+            ("Job Type", source.get("job_type")),
+
+            ("Employment Type", source.get(
+                "employment_type"
+            )),
+
+            # ------------------------------------------------------------
+            # Location
+            # ------------------------------------------------------------
+
             ("Country", source.get("country_name")),
+
+            ("Country Code", source.get("country_code")),
+
+            ("Job City", source.get("job_city")),
+
+            ("Job Address", source.get("job_address")),
+
+            # ------------------------------------------------------------
+            # Salary
+            # ------------------------------------------------------------
+
+            ("Salary Range", source.get("salary_range")),
+
+            ("Salary Description", source.get(
+                "salary_description"
+            )),
+
+            ("Currency", source.get("currency_name")),
+
+            ("Currency Code", source.get(
+                "currency_code"
+            )),
+
+            ("Currency Symbol", source.get(
+                "currency_symbol"
+            )),
+
+            # ------------------------------------------------------------
+            # Package
+            # ------------------------------------------------------------
+
+            ("Package Type", source.get(
+                "package_type_name"
+            )),
+
+            ("Package Description", source.get(
+                "package_type_description"
+            )),
+
+            # ------------------------------------------------------------
+            # Posting
+            # ------------------------------------------------------------
+
+            ("Posted By", source.get(
+                "posted_by_name"
+            )),
+
+            ("Posted By Username", source.get(
+                "posted_by_username"
+            )),
+
+            ("Posted By User Type", source.get(
+                "posted_by_user_type"
+            )),
+
+            # ------------------------------------------------------------
+            # Dates
+            # ------------------------------------------------------------
+
+            ("Job Start Date", source.get(
+                "job_start_date"
+            )),
+
+            ("Job End Date", source.get(
+                "job_end_date"
+            )),
+
+            # ------------------------------------------------------------
+            # Walk-in
+            # ------------------------------------------------------------
+
+            ("Walk-in From", source.get(
+                "walkin_from_date"
+            )),
+
+            ("Walk-in To", source.get(
+                "walkin_to_date"
+            )),
+
+            ("Walk-in Time", source.get(
+                "walkin_time"
+            )),
+
+            ("Walk-in Venue", source.get(
+                "walkin_venue"
+            )),
+
+            # ------------------------------------------------------------
+            # Application Countries
+            # ------------------------------------------------------------
+
+            (
+                "Application Countries",
+                source.get("received_application_countries"),
+            ),
+
+            # ------------------------------------------------------------
+            # Job Link / Reference
+            # ------------------------------------------------------------
+
+            ("Job Reference", source.get(
+                "reference"
+            )),
+
+            ("Job Slug", source.get(
+                "slug"
+            )),
+
+            # ------------------------------------------------------------
+            # Flags
+            # ------------------------------------------------------------
+
+            (
+                "Featured",
+                "Yes"
+                if source.get("is_featured")
+                else "No",
+            ),
+
+            (
+                "Premium",
+                "Yes"
+                if source.get("is_premium")
+                else "No",
+            ),
+
+            (
+                "Live",
+                "Yes"
+                if source.get("is_live")
+                else "No",
+            ),
+
+            (
+                "Confidential",
+                "Yes"
+                if source.get("is_confidential")
+                else "No",
+            ),
+
+            (
+                "Spider Job",
+                "Yes"
+                if source.get("is_spider_job")
+                else "No",
+            ),
+
+            (
+                "Auto Renew",
+                "Yes"
+                if source.get("is_auto_renew_enabled")
+                else "No",
+            ),
         ]
 
     elif model == "event":
@@ -600,23 +2225,145 @@ def build_document(master: dict[str, Any], source: dict[str, Any]) -> tuple[str,
         ]
 
     elif model == "product":
+
         relationship_meta = {
             "categories": source.get("categories"),
-            "country": source.get("country_name"),
-            "posted_by": source.get("posted_by"),
-            "city": source.get("prime_city"),
+            "product_type": source.get("p_type"),
             "condition": source.get("p_condition"),
+
+            "currency": {
+                "id": source.get("currency_id"),
+                "code": source.get("currency_code"),
+                "name": source.get("currency_name"),
+                "symbol": source.get("currency_symbol"),
+            },
+
+            "country": {
+                "id": source.get("country_id"),
+                "name": source.get("country_name"),
+                "code": source.get("country_code"),
+            },
+
+            "available_in_countries": source.get(
+                "available_countries"
+            ),
+
+            "posted_by": {
+                "id": source.get("posted_by_id"),
+                "username": source.get("posted_by_username"),
+                "name": source.get("posted_by_name"),
+                "user_type": source.get("posted_by_user_type"),
+            },
+
+            "package": {
+                "id": source.get("package_id"),
+                "reference_id": source.get("package_reference_id"),
+                "type": source.get("package_type_name"),
+            },
+
+            "location": {
+                "current_location": source.get("current_location"),
+                "prime_city": source.get("prime_city"),
+                "other_location": source.get("other_location"),
+            },
+
+            "pricing": {
+                "price": source.get("price"),
+                "price_setting": source.get("price_setting"),
+                "discount_percentage": source.get(
+                    "discount_percentage"
+                ),
+                "discounted_price": source.get(
+                    "discounted_price"
+                ),
+                "currency_code": source.get("currency_code"),
+                "currency_name": source.get("currency_name"),
+                "currency_symbol": source.get("currency_symbol"),
+            },
+
+            "availability": {
+                "start_date": source.get("start_date"),
+                "expiry_date": source.get("expiry_date"),
+            },
+
+            "featured": source.get("is_featured"),
+            "auto_renew": source.get("is_auto_renew_enabled"),
+            "status": source.get("status"),
         }
+
         fields += [
+            ("Product Type", source.get("p_type")),
+            ("Product Condition", source.get("p_condition")),
+
             ("Product Categories", source.get("categories")),
-            ("Description", source.get("description")),
-            ("Keywords", source.get("keywords")),
-            ("Current Location", source.get("current_location")),
-            ("Prime City", source.get("prime_city")),
-            ("Other Locations", source.get("other_location")),
+
+            ("Price", source.get("price")),
+            ("Price Setting", source.get("price_setting")),
+
+            ("Currency Code", source.get("currency_code")),
+            ("Currency Name", source.get("currency_name")),
+            ("Currency Symbol", source.get("currency_symbol")),
+
+            ("Discount Percentage", source.get(
+                "discount_percentage"
+            )),
+            ("Discounted Price", source.get(
+                "discounted_price"
+            )),
+
+            ("Current Location", source.get(
+                "current_location"
+            )),
+            ("Prime City", source.get(
+                "prime_city"
+            )),
+            ("Other Locations", source.get(
+                "other_location"
+            )),
+
             ("Country", source.get("country_name")),
-            ("Condition", source.get("p_condition")),
-            ("Posted By", source.get("posted_by")),
+            ("Country Code", source.get("country_code")),
+
+            (
+                "Available In Countries",
+                source.get("available_countries"),
+            ),
+
+            ("Keywords", source.get("keywords")),
+            ("Description", source.get("description")),
+
+            ("Posted By", source.get("posted_by_name")),
+            ("Posted By Username", source.get(
+                "posted_by_username"
+            )),
+            ("Posted By User Type", source.get(
+                "posted_by_user_type"
+            )),
+
+            ("Package Type", source.get(
+                "package_type_name"
+            )),
+
+            ("Status", source.get("status")),
+
+            ("Available From", source.get(
+                "start_date"
+            )),
+            ("Available Until", source.get(
+                "expiry_date"
+            )),
+
+            (
+                "Featured",
+                "Yes" if source.get("is_featured") else "No",
+            ),
+
+            (
+                "Auto Renew",
+                "Yes"
+                if source.get("is_auto_renew_enabled")
+                else "No",
+            ),
         ]
 
     elif model == "faq":
@@ -630,20 +2377,262 @@ def build_document(master: dict[str, Any], source: dict[str, Any]) -> tuple[str,
         ]
 
     elif model == "award":
+
         relationship_meta = {
-            "categories": source.get("categories"),
-            "country": source.get("country_name"),
+            "award": {
+                "id": master.get("object_id"),
+                "title": source.get("award_title"),
+                "short_title": source.get("award_short_title"),
+                "subtitle": source.get("award_subtitle"),
+                "code": source.get("code"),
+                "slug": source.get("slug"),
+                "sequence_number": source.get("sequence_number"),
+            },
+
+            "categories": {
+                "names": source.get("categories"),
+                "countries": source.get("category_countries"),
+                "details": source.get("category_details"),
+            },
+
+            "country": {
+                "id": source.get("country_id"),
+                "name": source.get("country_name"),
+                "code": source.get("country_code"),
+                "short_code": source.get("country_code_short"),
+            },
+
+            "location": {
+                "location": source.get("location"),
+                "latitude": source.get("latitude"),
+                "longitude": source.get("longitude"),
+            },
+
             "year": source.get("award_year"),
+
+            "dates": {
+                "award_on": source.get("award_on"),
+                "voting_start": source.get("voting_start_date"),
+                "voting_end": source.get("voting_end_date"),
+                "created_at": source.get("award_created_at"),
+            },
+
+            "status": {
+                "is_active": source.get("award_is_active"),
+                "is_voting_active": source.get("is_voting_active"),
+                "hide_country_from_url": source.get(
+                    "hide_country_from_url"
+                ),
+            },
+
+            "nomination": {
+                "enabled": source.get("show_nomination_button"),
+                "link": source.get("nomination_link"),
+            },
+
+            "voting": {
+                "enabled": source.get("show_vote_now_button"),
+                "link": source.get("vote_now_link"),
+            },
+
+            "personal_categories": {
+                "enabled": source.get(
+                    "show_personal_categories_button"
+                ),
+                "link": source.get(
+                    "personal_categories_link"
+                ),
+            },
+
+            "corporate_categories": {
+                "enabled": source.get(
+                    "show_corporate_categories_button"
+                ),
+                "link": source.get(
+                    "corporate_categories_link"
+                ),
+            },
+
+            "winners": {
+                "enabled": source.get(
+                    "show_award_winners_button"
+                ),
+                "link": source.get(
+                    "award_winners_link"
+                ),
+            },
+
+            "media": {
+                "youtube": source.get("youtube_link"),
+                "detail_url": source.get("award_detail_url"),
+            },
         }
+
         fields += [
-            ("Award", source.get("award_title")),
-            ("Award Subtitle", source.get("award_subtitle")),
-            ("Award Short Title", source.get("award_short_title")),
-            ("Description", source.get("award_description")),
-            ("Categories", source.get("categories")),
+
+            ("Award Title", source.get("award_title")),
+
+            ("Award Short Title", source.get(
+                "award_short_title"
+            )),
+
+            ("Award Subtitle", source.get(
+                "award_subtitle"
+            )),
+
+            ("Award Description", source.get(
+                "award_description"
+            )),
+
+            ("Award Code", source.get("code")),
+
+            ("Award Slug", source.get("slug")),
+
+            ("Sequence Number", source.get(
+                "sequence_number"
+            )),
+
+
+            ("Award Categories", source.get(
+                "categories"
+            )),
+
+            ("Category Countries", source.get(
+                "category_countries"
+            )),
+
+
             ("Country", source.get("country_name")),
+
+            ("Country Code", source.get(
+                "country_code"
+            )),
+
+            ("Country Short Code", source.get(
+                "country_code_short"
+            )),
+
             ("Location", source.get("location")),
-            ("Year", source.get("award_year")),
+
+            ("Latitude", source.get("latitude")),
+
+            ("Longitude", source.get("longitude")),
+
+
+            ("Award Year", source.get(
+                "award_year"
+            )),
+
+            ("Award Date", source.get(
+                "award_on"
+            )),
+
+            ("Voting Start Date", source.get(
+                "voting_start_date"
+            )),
+
+            ("Voting End Date", source.get(
+                "voting_end_date"
+            )),
+
+
+            (
+                "Voting Active",
+                "Yes"
+                if source.get("is_voting_active")
+                else "No",
+            ),
+
+            (
+                "Vote Now Available",
+                "Yes"
+                if source.get("show_vote_now_button")
+                else "No",
+            ),
+
+            (
+                "Vote Now Link",
+                source.get("vote_now_link"),
+            ),
+
+            (
+                "Nomination Available",
+                "Yes"
+                if source.get("show_nomination_button")
+                else "No",
+            ),
+
+            (
+                "Nomination Link",
+                source.get("nomination_link"),
+            ),
+
+            (
+                "Personal Categories Available",
+                "Yes"
+                if source.get(
+                    "show_personal_categories_button"
+                )
+                else "No",
+            ),
+
+            (
+                "Personal Categories Link",
+                source.get(
+                    "personal_categories_link"
+                ),
+            ),
+
+            (
+                "Corporate Categories Available",
+                "Yes"
+                if source.get(
+                    "show_corporate_categories_button"
+                )
+                else "No",
+            ),
+
+            (
+                "Corporate Categories Link",
+                source.get(
+                    "corporate_categories_link"
+                ),
+            ),
+
+
+            (
+                "Award Winners Available",
+                "Yes"
+                if source.get(
+                    "show_award_winners_button"
+                )
+                else "No",
+            ),
+
+            (
+                "Award Winners Link",
+                source.get(
+                    "award_winners_link"
+                ),
+            ),
+
+
+            (
+                "Award Active",
+                "Yes"
+                if source.get("award_is_active")
+                else "No",
+            ),
+
+            (
+                "Award Detail URL",
+                source.get("award_detail_url"),
+            ),
+
+            (
+                "YouTube",
+                source.get("youtube_link"),
+            ),
         ]
 
     elif model == "category":
@@ -677,22 +2666,37 @@ def build_document(master: dict[str, Any], source: dict[str, Any]) -> tuple[str,
     document = "\n".join(document_parts)[:24000]
 
     metadata = {
-        "schema_version": "v6.5",
+        "schema_version": "v6.6",
+
         "entity_type": model,
-        "content_type_id": master.get("content_type_id"),
-        "object_id": master.get("object_id"),
-        "entity_name": master.get("entity_name"),
-        "user_id": master.get("user_id"),
-        "company_id": master.get("company_id"),
-        "category_id": master.get("category_id"),
-        "subcategory_id": master.get("subcategory_id"),
-        "country_id": master.get("country_id"),
-        "city_id": master.get("city_id"),
-        "status": master.get("status"),
-        "is_live": master.get("is_live"),
-        "is_public": master.get("is_public"),
-        "is_searchable": master.get("is_searchable"),
-        "relationships": compact_metadata(relationship_meta),
+
+        "content_type_id": master.get(
+            "content_type_id"
+        ),
+
+        "object_id": master.get(
+            "object_id"
+        ),
+
+        "title": master.get(
+            "title"
+        ),
+
+        "is_live": master.get(
+            "is_live"
+        ),
+
+        "created_at": master.get(
+            "created_at"
+        ),
+
+        "expires_at": master.get(
+            "expires_at"
+        ),
+
+        "relationships": compact_metadata(
+            relationship_meta
+        ),
     }
     return document, compact_metadata(metadata)
 
@@ -801,12 +2805,14 @@ def main():
                 values = []
                 for master in masters:
                     source = source_rows.get(int(master["object_id"]), {})
+                    master["entity_type"] = model
                     document, metadata = build_document(master, source)
                     values.append((
                         int(master["id"]),
                         document,
                         Json(metadata),
                     ))
+                    
 
                 if values:
                     with conn.cursor() as cur:
@@ -814,10 +2820,14 @@ def main():
                             cur,
                             """
                             UPDATE public.master_search_mastersearchindex AS t
-                            SET ai_search_text = v.ai_search_text,
-                                metadata = v.metadata::jsonb,
-                                indexed_at = CURRENT_TIMESTAMP
-                            FROM (VALUES %s) AS v(id, ai_search_text, metadata)
+                            SET
+                                ai_search_text = v.ai_search_text,
+                                metadata = v.metadata::jsonb
+                            FROM (VALUES %s) AS v(
+                                id,
+                                ai_search_text,
+                                metadata
+                            )
                             WHERE t.id = v.id
                             """,
                             values,
