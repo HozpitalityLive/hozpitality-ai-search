@@ -2702,23 +2702,65 @@ def build_document(master: dict[str, Any], source: dict[str, Any]) -> tuple[str,
 
 
 def resolve_content_types(cur, model_filter: str | None):
+    """
+    Resolve Django content types that actually exist in the master index.
+
+    When multiple apps contain the same model name, prefer the `base`
+    application. The ordering is applied outside the DISTINCT query so
+    PostgreSQL does not reject the ORDER BY expression.
+    """
+
     if model_filter:
-        cur.execute("""
-            SELECT DISTINCT ct.id, ct.app_label, ct.model
-            FROM public.django_content_type ct
-            JOIN public.master_search_mastersearchindex si
-              ON si.content_type_id = ct.id
-            WHERE lower(ct.model) = lower(%s)
-            ORDER BY CASE WHEN lower(ct.app_label) = 'base' THEN 0 ELSE 1 END, ct.id
-        """, (model_filter,))
+        cur.execute(
+            """
+            SELECT
+                x.id,
+                x.app_label,
+                x.model
+            FROM (
+                SELECT DISTINCT
+                    ct.id,
+                    ct.app_label,
+                    ct.model
+                FROM public.django_content_type ct
+                JOIN public.master_search_mastersearchindex si
+                    ON si.content_type_id = ct.id
+                WHERE lower(ct.model) = lower(%s)
+            ) x
+            ORDER BY
+                CASE
+                    WHEN lower(x.app_label) = 'base' THEN 0
+                    ELSE 1
+                END,
+                x.id
+            """,
+            (model_filter,),
+        )
     else:
-        cur.execute("""
-            SELECT DISTINCT ct.id, ct.app_label, ct.model
-            FROM public.django_content_type ct
-            JOIN public.master_search_mastersearchindex si
-              ON si.content_type_id = ct.id
-            ORDER BY CASE WHEN lower(ct.app_label) = 'base' THEN 0 ELSE 1 END, ct.id
-        """)
+        cur.execute(
+            """
+            SELECT
+                x.id,
+                x.app_label,
+                x.model
+            FROM (
+                SELECT DISTINCT
+                    ct.id,
+                    ct.app_label,
+                    ct.model
+                FROM public.django_content_type ct
+                JOIN public.master_search_mastersearchindex si
+                    ON si.content_type_id = ct.id
+            ) x
+            ORDER BY
+                CASE
+                    WHEN lower(x.app_label) = 'base' THEN 0
+                    ELSE 1
+                END,
+                x.id
+            """
+        )
+
     return [dict(r) for r in cur.fetchall()]
 
 
