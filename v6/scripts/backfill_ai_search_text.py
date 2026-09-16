@@ -595,23 +595,132 @@ def company_rows(cur, ids):
 
 
 def article_rows(cur, ids):
-    return db_rows(cur, """
+    """
+    Fetch Article + searchable relationships.
+
+    Includes:
+        - Article title
+        - Subtitle
+        - Content
+        - Slug
+        - Company relationship
+        - Category relationship
+        - Article countries
+        - Article status
+        - Featured flag
+        - Article dates
+        - Media references
+    """
+
+    return db_rows(
+        cur,
+        """
         SELECT
+            /* ============================================================
+               ARTICLE CORE
+               ============================================================ */
+
             a.id AS object_id,
-            a.title, a.sub_title, a.content, a.slug,
-            a.company_id, a.category_id,
+            a.title,
+            a.sub_title,
+            a.content,
+            a.slug,
+
+            a.my_sql_article_id,
+
+            a.company_id,
+            a.category_id,
+
+            a.status,
+            a.is_auto_renew_enabled,
+
+            a.created_at,
+
+            a.views,
+            a.impressions,
+            a.share_count,
+
+            a."isFeatured" AS is_featured,
+
+            /* ============================================================
+               CATEGORY
+               ============================================================ */
+
             c.name AS category_name,
-            COALESCE(co.countries, '') AS countries
+
+            /* ============================================================
+               ARTICLE COUNTRIES
+               ============================================================ */
+
+            COALESCE(
+                article_countries.countries,
+                ''
+            ) AS countries,
+
+            /* ============================================================
+               COMPANY
+               ============================================================ */
+
+            company.name AS company_name,
+
+            company_user.username AS company_username,
+
+            concat_ws(
+                ' ',
+                NULLIF(company_user.first_name, ''),
+                NULLIF(company_user.last_name, '')
+            ) AS company_account_name,
+
+            company_user.city_town AS company_city,
+
+            company_country.name AS company_country_name,
+
+            company_country.country_code AS company_country_code
+
         FROM public.base_article a
-        LEFT JOIN public.base_category c ON c.id = a.category_id
+
+        /* ================================================================
+           CATEGORY
+           ================================================================= */
+
+        LEFT JOIN public.base_category c
+            ON c.id = a.category_id
+
+        /* ================================================================
+           COMPANY
+           ================================================================= */
+
+        LEFT JOIN public.companies company
+            ON company.useraccount_ptr_id = a.company_id
+
+        LEFT JOIN public.user_accounts company_user
+            ON company_user.id = company.useraccount_ptr_id
+
+        LEFT JOIN public.countries company_country
+            ON company_country.id = company_user.current_country_id
+
+        /* ================================================================
+           ARTICLE COUNTRIES
+           ================================================================= */
+
         LEFT JOIN LATERAL (
-            SELECT string_agg(DISTINCT co1.name, ', ' ORDER BY co1.name) AS countries
+            SELECT
+                string_agg(
+                    DISTINCT co1.name,
+                    ', '
+                    ORDER BY co1.name
+                ) AS countries
             FROM public.base_article_location al
-            JOIN public.countries co1 ON co1.id = al.country_id
+            JOIN public.countries co1
+                ON co1.id = al.country_id
             WHERE al.article_id = a.id
-        ) co ON TRUE
+        ) article_countries
+            ON TRUE
+
         WHERE a.id = ANY(%s)
-    """, (ids,))
+        """,
+        (ids,),
+    )
 
 
 def job_rows(cur, ids):
@@ -1101,18 +1210,296 @@ def job_rows(cur, ids):
 
 
 def event_rows(cur, ids):
-    return db_rows(cur, """
+    """
+    Fetch Event + all important searchable relationships.
+
+    Includes:
+        - Event title
+        - Event details
+        - Event type
+        - Event status
+        - Start / end datetime
+        - Address
+        - City
+        - Country
+        - Company
+        - Company UserAccount information
+        - Company country
+        - Company city
+        - Company industries
+        - Company supplier industries
+        - Company supplier categories
+        - Website / slug
+        - Event flags
+        - Views
+        - Package type
+        - Geographic coordinates
+    """
+
+    return db_rows(
+        cur,
+        """
         SELECT
-            e.id AS object_id, e.title, e.details, e.address, e.city,
-            e.event_type, e.website, e.status, e.start_datetime, e.end_datetime,
-            e.company_id, c.name AS company_name,
-            e.country_id, co.name AS country_name,
-            e.slug
+
+            /* ============================================================
+               EVENT CORE
+               ============================================================ */
+
+            e.id AS object_id,
+
+            e.title,
+            e.details,
+
+            e.start_datetime,
+            e.end_datetime,
+
+            e.address,
+            e.city,
+
+            e.event_type,
+            e.website,
+            e.status,
+
+            e.is_feature,
+            e.is_premium,
+            e.is_education,
+
+            e.views,
+
+            e.created_at,
+
+            e.slug,
+
+            e.payment_link,
+
+            e.latitude,
+            e.longitude,
+
+            e.my_sql_event_id,
+
+            /* ============================================================
+               EVENT COMPANY
+               ============================================================ */
+
+            e.company_id,
+
+            company.name AS company_name,
+
+            company.created_by AS company_created_by,
+
+            company.current_designation AS company_designation,
+
+            company.website_link AS company_website,
+
+            /* ============================================================
+               COMPANY USER ACCOUNT
+               ============================================================ */
+
+            company_user.username AS company_username,
+
+            concat_ws(
+                ' ',
+                NULLIF(company_user.first_name, ''),
+                NULLIF(company_user.last_name, '')
+            ) AS company_account_name,
+
+            company_user.company_name AS company_account_company_name,
+
+            company_user.about_us AS company_about,
+
+            company_user.tagline AS company_tagline,
+
+            company_user.city_town AS company_city,
+
+            company_user.address AS company_address,
+
+            company_user.user_type AS company_user_type,
+
+            company_user.verified AS company_verified,
+
+            company_user.is_pro AS company_is_pro,
+
+            company_user.is_featured AS company_is_featured,
+
+            /* ============================================================
+               COMPANY COUNTRY
+               ============================================================ */
+
+            company_user.current_country_id AS company_country_id,
+
+            company_country.name AS company_country_name,
+
+            company_country.country_code AS company_country_code,
+
+            company_country.code AS company_country_short_code,
+
+            /* ============================================================
+               EVENT COUNTRY
+               ============================================================ */
+
+            e.country_id,
+
+            event_country.name AS country_name,
+
+            event_country.country_code AS country_code,
+
+            event_country.code AS country_code_short,
+
+            /* ============================================================
+               PACKAGE TYPE
+               ============================================================ */
+
+            e.package_type_id,
+
+            package_type.name AS package_type_name,
+
+            package_type.description AS package_type_description,
+
+            package_type.is_PAYG AS package_is_payg,
+
+            package_type.is_POP AS package_is_pop,
+
+            package_type.is_CC AS package_is_cc,
+
+            package_type.is_PREMIUM AS package_is_premium,
+
+            package_type.is_SP AS package_is_sp,
+
+            package_type.is_GP AS package_is_gp,
+
+            package_type.is_EP AS package_is_ep,
+
+            /* ============================================================
+               COMPANY INDUSTRIES
+               ============================================================ */
+
+            COALESCE(
+                company_ind.industries,
+                ''
+            ) AS company_industries,
+
+            /* ============================================================
+               COMPANY SUPPLIER INDUSTRIES
+               ============================================================ */
+
+            COALESCE(
+                company_supplier_ind.industries,
+                ''
+            ) AS company_supplier_industries,
+
+            /* ============================================================
+               COMPANY SUPPLIER CATEGORIES
+               ============================================================ */
+
+            COALESCE(
+                company_supplier_cat.categories,
+                ''
+            ) AS company_supplier_categories
+
         FROM public.base_event e
-        LEFT JOIN public.companies c ON c.useraccount_ptr_id = e.company_id
-        LEFT JOIN public.countries co ON co.id = e.country_id
+
+        /* ================================================================
+           EVENT COMPANY
+           ================================================================= */
+
+        LEFT JOIN public.companies company
+            ON company.useraccount_ptr_id = e.company_id
+
+        LEFT JOIN public.user_accounts company_user
+            ON company_user.id = company.useraccount_ptr_id
+
+        /* ================================================================
+           COMPANY COUNTRY
+           ================================================================= */
+
+        LEFT JOIN public.countries company_country
+            ON company_country.id = company_user.current_country_id
+
+        /* ================================================================
+           EVENT COUNTRY
+           ================================================================= */
+
+        LEFT JOIN public.countries event_country
+            ON event_country.id = e.country_id
+
+        /* ================================================================
+           PACKAGE TYPE
+           ================================================================= */
+
+        LEFT JOIN public.base_packagetype package_type
+            ON package_type.id = e.package_type_id
+
+        /* ================================================================
+           COMPANY INDUSTRIES
+           ================================================================= */
+
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT i.name,
+                    ', '
+                    ORDER BY i.name
+                ) AS industries
+
+            FROM public.user_accounts_industry ui
+
+            JOIN public.industries i
+                ON i.id = ui.industry_id
+
+            WHERE ui.useraccount_id = e.company_id
+        ) company_ind
+            ON TRUE
+
+        /* ================================================================
+           COMPANY SUPPLIER INDUSTRIES
+
+           A company is considered a supplier when its industry has
+           context = 'supplier'.
+           ================================================================= */
+
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT i.name,
+                    ', '
+                    ORDER BY i.name
+                ) AS industries
+
+            FROM public.user_accounts_industry ui
+
+            JOIN public.industries i
+                ON i.id = ui.industry_id
+
+            WHERE ui.useraccount_id = e.company_id
+              AND LOWER(COALESCE(i.context, '')) = 'supplier'
+        ) company_supplier_ind
+            ON TRUE
+
+        /* ================================================================
+           COMPANY SUPPLIER CATEGORIES
+           ================================================================= */
+
+        LEFT JOIN LATERAL (
+            SELECT
+                string_agg(
+                    DISTINCT sc.name,
+                    ', '
+                    ORDER BY sc.name
+                ) AS categories
+
+            FROM public.user_accounts_supplier_category usc
+
+            JOIN public.supplier_category sc
+                ON sc.id = usc.suppliercategory_id
+
+            WHERE usc.useraccount_id = e.company_id
+        ) company_supplier_cat
+            ON TRUE
+
         WHERE e.id = ANY(%s)
-    """, (ids,))
+        """,
+        (ids,),
+    )
 
 
 def product_rows(cur, ids):
@@ -1878,14 +2265,81 @@ def build_document(master: dict[str, Any], source: dict[str, Any]) -> tuple[str,
 
     elif model == "article":
         relationship_meta = {
-            "category": source.get("category_name"),
+            "article": {
+                "id": master.get("object_id"),
+                "title": source.get("title"),
+                "subtitle": source.get("sub_title"),
+                "slug": source.get("slug"),
+                "mysql_article_id": source.get("my_sql_article_id"),
+            },
+
+            "category": {
+                "id": source.get("category_id"),
+                "name": source.get("category_name"),
+            },
+
+            "company": {
+                "id": source.get("company_id"),
+                "name": source.get("company_name"),
+                "username": source.get("company_username"),
+                "account_name": source.get("company_account_name"),
+                "city": source.get("company_city"),
+                "country": source.get("company_country_name"),
+                "country_code": source.get("company_country_code"),
+            },
+
             "countries": source.get("countries"),
-            "company_id": source.get("company_id"),
+
+            "status": source.get("status"),
+
+            "featured": source.get("is_featured"),
+
+            "auto_renew": source.get("is_auto_renew_enabled"),
+
+            "metrics": {
+                "views": source.get("views"),
+                "impressions": source.get("impressions"),
+                "shares": source.get("share_count"),
+            },
+
+            "created_at": source.get("created_at"),
         }
+
         fields += [
+            ("Article Title", source.get("title")),
+            ("Article Subtitle", source.get("sub_title")),
+
             ("Article Category", source.get("category_name")),
+
             ("Article Countries", source.get("countries")),
+
+            ("Article Company", source.get("company_name")),
+            ("Company Username", source.get("company_username")),
+            ("Company Account", source.get("company_account_name")),
+
+            ("Company City", source.get("company_city")),
+            ("Company Country", source.get("company_country_name")),
+            ("Company Country Code", source.get("company_country_code")),
+
+            ("Article Status", source.get("status")),
+
+            (
+                "Featured",
+                "Yes" if source.get("is_featured") else "No",
+            ),
+
+            (
+                "Auto Renew",
+                "Yes"
+                if source.get("is_auto_renew_enabled")
+                else "No",
+            ),
+
             ("Article Content", source.get("content")),
+
+            ("Article Slug", source.get("slug")),
+
+            ("Article Created At", source.get("created_at")),
         ]
 
     elif model == "job":
@@ -2209,19 +2663,190 @@ def build_document(master: dict[str, Any], source: dict[str, Any]) -> tuple[str,
         ]
 
     elif model == "event":
+
         relationship_meta = {
-            "company": source.get("company_name"),
-            "country": source.get("country_name"),
+            "event": {
+                "id": master.get("object_id"),
+                "title": source.get("title"),
+                "slug": source.get("slug"),
+                "my_sql_event_id": source.get("my_sql_event_id"),
+            },
+
+            "company": {
+                "id": source.get("company_id"),
+                "name": source.get("company_name"),
+                "created_by": source.get("company_created_by"),
+                "designation": source.get("company_designation"),
+                "website": source.get("company_website"),
+                "username": source.get("company_username"),
+                "account_name": source.get("company_account_name"),
+                "account_company_name": source.get(
+                    "company_account_company_name"
+                ),
+                "about": source.get("company_about"),
+                "tagline": source.get("company_tagline"),
+                "city": source.get("company_city"),
+                "country": source.get("company_country_name"),
+                "country_code": source.get("company_country_code"),
+                "industries": source.get("company_industries"),
+                "supplier_industries": source.get(
+                    "company_supplier_industries"
+                ),
+                "supplier_categories": source.get(
+                    "company_supplier_categories"
+                ),
+                "user_type": source.get("company_user_type"),
+                "verified": source.get("company_verified"),
+                "pro": source.get("company_is_pro"),
+                "featured": source.get("company_is_featured"),
+            },
+
+            "location": {
+                "address": source.get("address"),
+                "city": source.get("city"),
+                "country": source.get("country_name"),
+                "country_code": source.get("country_code"),
+                "country_short_code": source.get(
+                    "country_code_short"
+                ),
+                "latitude": source.get("latitude"),
+                "longitude": source.get("longitude"),
+            },
+
+            "schedule": {
+                "start": source.get("start_datetime"),
+                "end": source.get("end_datetime"),
+            },
+
             "event_type": source.get("event_type"),
-            "city": source.get("city"),
+
+            "status": source.get("status"),
+
+            "flags": {
+                "featured": source.get("is_feature"),
+                "premium": source.get("is_premium"),
+                "education": source.get("is_education"),
+            },
+
+            "package_type": {
+                "id": source.get("package_type_id"),
+                "name": source.get("package_type_name"),
+                "description": source.get(
+                    "package_type_description"
+                ),
+                "payg": source.get("package_is_payg"),
+                "pop": source.get("package_is_pop"),
+                "cc": source.get("package_is_cc"),
+                "premium": source.get("package_is_premium"),
+                "sp": source.get("package_is_sp"),
+                "gp": source.get("package_is_gp"),
+                "ep": source.get("package_is_ep"),
+            },
+
+            "website": source.get("website"),
+
+            "metrics": {
+                "views": source.get("views"),
+            },
+
+            "created_at": source.get("created_at"),
         }
+
         fields += [
+
+            ("Event Title", source.get("title")),
+            ("Event Details", source.get("details")),
+
             ("Event Type", source.get("event_type")),
-            ("Company", source.get("company_name")),
-            ("Country", source.get("country_name")),
-            ("City", source.get("city")),
-            ("Address", source.get("address")),
-            ("Details", source.get("details")),
+            ("Event Status", source.get("status")),
+
+            ("Event Start", source.get("start_datetime")),
+            ("Event End", source.get("end_datetime")),
+            ("Event Address", source.get("address")),
+            ("Event City", source.get("city")),
+            ("Event Country", source.get("country_name")),
+            ("Event Country Code", source.get("country_code")),
+
+            ("Event Company", source.get("company_name")),
+            ("Company Username", source.get("company_username")),
+            ("Company Account", source.get("company_account_name")),
+            (
+                "Company Account Company Name",
+                source.get("company_account_company_name"),
+            ),
+
+            ("Company About", source.get("company_about")),
+            ("Company Tagline", source.get("company_tagline")),
+
+            ("Company City", source.get("company_city")),
+            ("Company Country", source.get("company_country_name")),
+            (
+                "Company Country Code",
+                source.get("company_country_code"),
+            ),
+
+            ("Company Industries", source.get("company_industries")),
+
+            (
+                "Company Supplier Industries",
+                source.get("company_supplier_industries"),
+            ),
+
+            (
+                "Company Supplier Categories",
+                source.get("company_supplier_categories"),
+            ),
+
+
+            (
+                "Company Verified",
+                "Yes"
+                if source.get("company_verified")
+                else "No",
+            ),
+
+            (
+                "Company Pro",
+                "Yes"
+                if source.get("company_is_pro")
+                else "No",
+            ),
+
+            (
+                "Company Featured",
+                "Yes"
+                if source.get("company_is_featured")
+                else "No",
+            ),
+
+
+            (
+                "Featured Event",
+                "Yes"
+                if source.get("is_feature")
+                else "No",
+            ),
+
+            (
+                "Premium Event",
+                "Yes"
+                if source.get("is_premium")
+                else "No",
+            ),
+
+            (
+                "Education Event",
+                "Yes"
+                if source.get("is_education")
+                else "No",
+            ),
+
+            ("Package Type", source.get("package_type_name")),
+            ("Event Website", source.get("website")),
+            ("Event Details", source.get("details")),
+            ("Event Slug", source.get("slug")),
+            ("Event Views", source.get("views")),
+            ("Event Created At", source.get("created_at")),
         ]
 
     elif model == "product":
