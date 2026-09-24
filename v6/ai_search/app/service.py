@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .normalization import canonical_entity, tokens
 from .query_understanding import SearchPlan, clarification_for, understand
-from .llm import GeminiQueryInterpreter
+from .llm import OllamaQueryInterpreter
 from .vector import SemanticVectorIndex
 from .ranking import score_document
 from .repository import SearchDocumentsRepository
@@ -16,7 +16,7 @@ class SearchService:
         self.repository = repository
         self.fuzzy_threshold = fuzzy_threshold
         self._vocabulary: list[str] | None = None
-        self.llm = GeminiQueryInterpreter()
+        self.llm = OllamaQueryInterpreter()
         self.semantic = SemanticVectorIndex()
 
     def _get_vocabulary(self, query_tokens: list[str] | None = None) -> list[str]:
@@ -130,8 +130,8 @@ class SearchService:
         if country:
             plan.country = country
 
-        # The LLM is a fallback, not the default path. Simple/clear searches
-        # never need a Gemini request.
+        # Ollama is a fallback, not the default path. Simple/clear searches
+        # never need an LLM request.
         if plan.confidence < 0.65 or (plan.entity and not plan.keywords and not plan.category):
             plan = self.llm.interpret(original, plan)
 

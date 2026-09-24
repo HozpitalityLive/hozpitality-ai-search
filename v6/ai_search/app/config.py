@@ -69,8 +69,10 @@ class Settings:
         3,
     )
 
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    gemini_timeout_seconds: float = float(os.getenv("GEMINI_TIMEOUT_SECONDS", "4"))
+    ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    ollama_query_model: str = os.getenv("OLLAMA_QUERY_MODEL", "qwen3:14b")
+    ollama_chat_model: str = os.getenv("OLLAMA_CHAT_MODEL", "qwen3:14b")
+    ollama_timeout_seconds: float = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "20"))
     semantic_search_enabled: bool = os.getenv("SEMANTIC_SEARCH_ENABLED", "false").casefold() == "true"
     semantic_model: str = os.getenv("SEMANTIC_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 

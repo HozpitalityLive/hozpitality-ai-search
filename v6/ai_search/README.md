@@ -24,7 +24,7 @@ Deterministic query parser
         |
         +--> clear query ------------------+
         |                                  |
-        +--> ambiguous/low confidence --> optional Gemini fallback
+        +--> ambiguous/low confidence --> optional Ollama/Qwen3 fallback
                                            |
                                            v
                                   Structured SearchPlan
@@ -181,19 +181,20 @@ semantic
 
 Strong exact title/alias/keyword matches continue to outrank weak semantic similarity.
 
-## Optional Gemini fallback
+## Optional Ollama/Qwen3 fallback
 
-Gemini is NOT called for every query.
+Ollama/Qwen3 is NOT called for every query.
 
 Set:
 
 ```env
-GEMINI_API_KEY=
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_TIMEOUT_SECONDS=4
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_QUERY_MODEL=qwen3:14b
+OLLAMA_CHAT_MODEL=qwen3:14b
+OLLAMA_TIMEOUT_SECONDS=20
 ```
 
-The deterministic parser handles clear searches first. Gemini is used only when the parser considers the query ambiguous or incomplete. If no key is configured, the deterministic parser remains fully functional.
+The deterministic parser handles clear searches first. Ollama/Qwen3 is used only when the parser considers the query ambiguous or incomplete. If Ollama is unavailable, the deterministic parser remains fully functional.
 
 ## Optional semantic/vector search
 
@@ -276,9 +277,10 @@ SEARCH_MAX_RESULTS=5
 SEARCH_FUZZY_THRESHOLD=82
 SEARCH_FUZZY_MIN_TOKEN_LENGTH=3
 
-GEMINI_API_KEY=
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_TIMEOUT_SECONDS=4
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_QUERY_MODEL=qwen3:14b
+OLLAMA_CHAT_MODEL=qwen3:14b
+OLLAMA_TIMEOUT_SECONDS=20
 
 SEMANTIC_SEARCH_ENABLED=false
 SEMANTIC_MODEL=sentence-transformers/all-MiniLM-L6-v2
@@ -293,4 +295,4 @@ SEMANTIC_IDS_PATH=ai_search/data/search_ids.json
 - No second MongoDB text index is created.
 - Maximum API output remains 5.
 - Semantic retrieval is optional and does not replace MongoDB.
-- Gemini is optional and is not invoked for every request.
+- Ollama/Qwen3 is optional and is not invoked for every request.
