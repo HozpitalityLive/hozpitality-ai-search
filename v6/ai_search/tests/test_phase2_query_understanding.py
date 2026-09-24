@@ -85,3 +85,24 @@ def test_long_natural_language_removes_conversational_filler():
     assert "who" not in plan.keywords
     assert "executive" in plan.keywords
     assert "chef" in plan.keywords
+
+
+def test_unknown_explicit_location_does_not_trigger_clarification():
+    plan = understand("quantum chef jobs in Antarctica")
+    assert plan.entity == "job"
+    assert plan.explicit_location is True
+    assert "antarctica" in [k.casefold() for k in plan.keywords]
+    assert clarification_for(plan) is None
+
+
+def test_known_location_sets_explicit_location():
+    plan = understand("chef jobs in Dubai")
+    assert plan.explicit_location is True
+    assert plan.city == "Dubai"
+
+
+def test_executive_chef_is_structured_as_executive_level_when_spelled_correctly():
+    plan = understand("executive chef jobs in Dubai")
+    assert plan.entity == "job"
+    assert plan.level == "executive"
+    assert "chef" in plan.keywords

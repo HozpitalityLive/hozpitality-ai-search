@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from .normalization import canonical_entity, tokens
-from .query_understanding import SearchPlan, clarification_for, understand
+from .query_understanding import LEVELS, SearchPlan, clarification_for, understand
 from .llm import OllamaQueryInterpreter
 from .vector import SemanticVectorIndex
 from .ranking import score_document
@@ -297,6 +297,29 @@ class SearchService:
             vocabulary,
             threshold=self.fuzzy_threshold,
         )
+
+        # A typo-corrected level is a structured constraint, not just a
+        # keyword. Example: "excutive chef" -> level="executive".
+        level_values = {
+            level: {level, *(v.casefold() for v in values if " " not in v)}
+            for level, values in LEVELS.items()
+        }
+        for token in corrected_tokens:
+            token_low = token.casefold()
+            for level, values in level_values.items():
+                if token_low in values:
+                    plan.level = level
+                    break
+            if plan.level:
+                break
+
+        # Keep explicit level + role queries in natural order for retrieval.
+        # "excutive chef" should become "executive chef", not "chef executive".
+        if plan.level:
+            corrected_tokens = [
+                plan.level,
+                *[t for t in corrected_tokens if t.casefold() != plan.level],
+            ]
         corrected_query = " ".join(corrected_tokens).strip()
         effective_query = corrected_query or " ".join(search_tokens)
 
@@ -453,6 +476,28 @@ class SearchService:
                 matched.append("structured_filter")
                 score += 8
 
+            # Explicit role/level phrases are high-value ranking signals.
+            # If the user asks for "senior chef" or "executive chef", an exact
+            # title phrase should outrank a broader document that merely
+            # mentions the level and chef somewhere in its description.
+            if plan.level:
+                corrected_role_terms = [
+                    t.casefold()
+                    for t in corrected_tokens
+                    if t.casefold() != plan.level
+                ]
+                if corrected_role_terms:
+                    title_only = " ".join(
+                        str(v or "")
+                        for v in (doc.get("title"), doc.get("short_title"))
+                    ).casefold()
+                    # Check the most useful short role phrase first. This
+                    # handles "executive chef", "senior chef", etc.
+                    phrase = f"{plan.level} {' '.join(corrected_role_terms[:2])}"
+                    if phrase in title_only:
+                        score += 45
+                        matched.append("role_phrase_match")
+
             # Level relevance: "senior chef" should prioritize senior roles
             # over apprentices/junior roles even when both mention chef.
             if plan.level:
@@ -554,6 +599,8 @@ class SearchService:
         understanding["keywords"] = search_tokens
         understanding["corrected_keywords"] = corrected_tokens
         understanding["corrections"] = changes
+        understanding["level"] = plan.level
+        understanding["explicit_location"] = plan.explicit_location
 
         return {
             "query": original,

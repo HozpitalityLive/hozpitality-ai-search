@@ -27,6 +27,7 @@ class SearchPlan:
     clarification: str | None = None
     clarification_options: list[str] = field(default_factory=list)
     original_query: str = ""
+    explicit_location: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -48,6 +49,7 @@ class SearchPlan:
             "confidence": round(self.confidence, 3),
             "clarification": self.clarification,
             "clarification_options": self.clarification_options,
+            "explicit_location": self.explicit_location,
         }
 
 
@@ -266,11 +268,13 @@ def understand(query: str) -> SearchPlan:
             if alias == "dubai":
                 continue
             plan.country = canonical
+            plan.explicit_location = True
             break
 
     for alias, canonical in sorted(CITIES.items(), key=lambda x: len(x[0]), reverse=True):
         if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", low):
             plan.city = canonical
+            plan.explicit_location = True
             if canonical == "Dubai":
                 plan.country = "United Arab Emirates"
             break
@@ -280,6 +284,7 @@ def understand(query: str) -> SearchPlan:
     m = re.search(r"\bin\s+([A-Za-z][A-Za-z .'-]{1,50})(?=$|,|\s+with\b|\s+for\b|\s+and\b)", original, re.I)
     if m and not plan.city and not plan.country:
         candidate = normalize(m.group(1))
+        plan.explicit_location = True
         if candidate in CITIES:
             plan.city = CITIES[candidate]
         elif candidate in COUNTRIES:
@@ -346,22 +351,22 @@ def clarification_for(plan: SearchPlan) -> str | None:
     if plan.entity == "job":
         if not plan.keywords:
             return "What type of job are you looking for?"
-        if not plan.city and not plan.country:
+        if not plan.city and not plan.country and not plan.explicit_location:
             return "Which location would you prefer?"
     elif plan.entity == "professional":
         if not plan.keywords:
             return "What type of professional or skill are you looking for?"
-        if not plan.city and not plan.country:
+        if not plan.city and not plan.country and not plan.explicit_location:
             return "Which location would you prefer?"
     elif plan.entity == "company":
         if not plan.keywords:
             return "What type of company or hospitality business are you looking for?"
-        if not plan.city and not plan.country:
+        if not plan.city and not plan.country and not plan.explicit_location:
             return "Which location would you prefer?"
     elif plan.entity == "product":
         if not plan.keywords:
             return "What type of product or supplier are you looking for?"
-        if not plan.city and not plan.country:
+        if not plan.city and not plan.country and not plan.explicit_location:
             return "Which location would you prefer?"
     elif plan.entity == "article":
         if not plan.keywords and not plan.category:
@@ -369,12 +374,12 @@ def clarification_for(plan: SearchPlan) -> str | None:
     elif plan.entity == "event":
         if not plan.keywords and not plan.category:
             return "What type of event are you looking for?"
-        if not plan.city and not plan.country:
+        if not plan.city and not plan.country and not plan.explicit_location:
             return "Which location would you prefer?"
     elif plan.entity == "award":
         if not plan.keywords and not plan.category:
             return "What type of award are you looking for?"
-        if not plan.city and not plan.country:
+        if not plan.city and not plan.country and not plan.explicit_location:
             return "Which location would you prefer?"
     elif plan.entity == "faq":
         if not plan.keywords and not plan.category:
