@@ -95,3 +95,38 @@ def test_no_exact_location_returns_related_results_separately():
     assert result["message"]
     assert result["related_results"]
     assert result["related_results"][0]["matched_by"][-1] == "related_result"
+
+
+class UnknownLocationRepository(FakeRepository):
+    def search(self, query, **kwargs):
+        self.calls.append((query, kwargs))
+        return [{
+            "_id": "job:related",
+            "entity_type": "job",
+            "title": "Chef Job - Dubai",
+            "location": {"city": "Dubai", "country": {"name": "United Arab Emirates"}},
+            "source": {"object_id": 88},
+            "ai_search_text": "Chef job Dubai",
+        }]
+
+
+def test_unknown_explicit_location_never_becomes_exact_result():
+    repo = UnknownLocationRepository()
+    service = SearchService(repo)
+    result = service.search(query="quantum chef jobs in Antarctica")
+    assert result["total"] == 0
+    assert result["results"] == []
+    assert result["understanding"]["explicit_location"] is True
+    assert result["message"]
+    assert result["related_results"]
+    assert result["related_results"][0]["matched_by"][-1] == "related_result"
+
+
+def test_unknown_explicit_location_does_not_call_exact_search():
+    repo = UnknownLocationRepository()
+    service = SearchService(repo)
+    service.search(query="chef jobs in Antarctica")
+    assert all(
+        kwargs.get("city") is None and kwargs.get("country") is None
+        for _, kwargs in repo.calls
+    )

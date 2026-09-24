@@ -327,8 +327,11 @@ class SearchService:
         # This is important when the Mongo document stores these concepts in
         # ai_search_text but does not expose them through a uniform structured
         # field (job/professional schemas differ).
-        retrieval_terms = list(search_tokens)
-        for value in (plan.level, plan.department, plan.industry, plan.category):
+        retrieval_terms = list(corrected_tokens if changes else search_tokens)
+        # Level/experience are ranking signals rather than lexical query
+        # requirements. Department/industry/category can add useful context
+        # when those concepts are explicitly present in indexed text.
+        for value in (plan.department, plan.industry, plan.category):
             if value:
                 retrieval_terms.extend(tokens(str(value)))
         retrieval_terms = list(dict.fromkeys(retrieval_terms))
@@ -342,80 +345,35 @@ class SearchService:
         }:
             plan.entity = canonical_entity_name
 
+        # Only explicit filter expressions are hard retrieval constraints.
+        # Semantic concepts extracted from natural language (level, department,
+        # industry, experience, category) remain ranking signals so sparse or
+        # inconsistent Mongo schemas cannot hide otherwise relevant results.
+        # Entity and location are always hard constraints.
         structured = dict(plan.filters)
-        if plan.experience is not None:
-            structured["experience"] = plan.experience
-        if plan.level:
-            structured["level"] = plan.level
-        if plan.department:
-            structured["department"] = plan.department
-        if plan.industry:
-            structured["industry"] = plan.industry
-        if plan.category:
-            structured["category"] = plan.category
 
         limit = min(max(int(limit), 1), self.MAX_RESULTS)
-        docs = self.repository.search(
-            retrieval_query,
-            entity=plan.entity,
-            city=plan.city,
-            country=plan.country,
-            status=status,
-            is_live=is_live,
-            limit=100,
-            structured=structured,
-            date_from=plan.date_from,
-            date_to=plan.date_to,
+
+        # An explicit but unrecognized location is still a hard location
+        # constraint. We must never silently broaden it to a global search.
+        # Example: "chef jobs in Antarctica" must have zero exact results
+        # unless an indexed document actually carries Antarctica as its
+        # authoritative location. Since the deterministic parser only
+        # canonicalizes known cities/countries, an explicit_location with no
+        # canonical city/country means the requested place is unknown to our
+        # configured location vocabulary.
+        unknown_explicit_location = (
+            plan.explicit_location
+            and not plan.city
+            and not plan.country
         )
 
-        # Structured fields are not uniform across all search_documents
-        # entities. If a strict structured query produces no candidates, retry
-        # using the authoritative entity/location/status filters and let the
-        # lexical ranking terms above represent the softer concepts. This
-        # prevents a missing/non-standard job experience field from turning a
-        # valid natural-language search into zero results.
-        if not docs and structured:
+        docs: list[dict] = []
+        semantic_scores: dict[str, float] = {}
+
+        if not unknown_explicit_location:
             docs = self.repository.search(
                 retrieval_query,
-                entity=plan.entity,
-                city=plan.city,
-                country=plan.country,
-                status=status,
-                is_live=is_live,
-                limit=100,
-                structured={},
-                date_from=plan.date_from,
-                date_to=plan.date_to,
-            )
-
-        semantic_scores = {}
-        for doc_id, semantic_score in self.semantic.search(effective_query, limit=50):
-            semantic_scores[doc_id] = semantic_score
-        if semantic_scores:
-            semantic_docs = self.repository.fetch_by_ids(list(semantic_scores))
-            semantic_docs = [
-                d for d in semantic_docs
-                if self.repository._document_matches_filters(
-                    d,
-                    entity=plan.entity,
-                    city=plan.city,
-                    country=plan.country,
-                    status=status,
-                    is_live=is_live,
-                    structured=structured,
-                    date_from=plan.date_from,
-                    date_to=plan.date_to,
-                )
-            ]
-            seen = {str(d.get("_id")) for d in docs}
-            docs.extend(d for d in semantic_docs if str(d.get("_id")) not in seen)
-
-        # If a typo correction occurred, search the original keyword phrase too
-        # so correction can never hide an exact MongoDB match.
-        if changes and corrected_query != " ".join(search_tokens):
-            original_query = " ".join(search_tokens)
-            original_docs = self.repository.search(
-                original_query,
                 entity=plan.entity,
                 city=plan.city,
                 country=plan.country,
@@ -426,8 +384,64 @@ class SearchService:
                 date_from=plan.date_from,
                 date_to=plan.date_to,
             )
-            seen = {str(d.get("_id")) for d in docs}
-            docs.extend(d for d in original_docs if str(d.get("_id")) not in seen)
+
+            # Structured filters are intentionally soft for Phase 2 natural
+            # language queries. Keep this fallback for explicit API filters
+            # and any future hard structured filters.
+            if not docs and structured:
+                docs = self.repository.search(
+                    retrieval_query,
+                    entity=plan.entity,
+                    city=plan.city,
+                    country=plan.country,
+                    status=status,
+                    is_live=is_live,
+                    limit=100,
+                    structured={},
+                    date_from=plan.date_from,
+                    date_to=plan.date_to,
+                )
+
+            for doc_id, semantic_score in self.semantic.search(effective_query, limit=50):
+                semantic_scores[doc_id] = semantic_score
+
+            if semantic_scores:
+                semantic_docs = self.repository.fetch_by_ids(list(semantic_scores))
+                semantic_docs = [
+                    d for d in semantic_docs
+                    if self.repository._document_matches_filters(
+                        d,
+                        entity=plan.entity,
+                        city=plan.city,
+                        country=plan.country,
+                        status=status,
+                        is_live=is_live,
+                        structured=structured,
+                        date_from=plan.date_from,
+                        date_to=plan.date_to,
+                    )
+                ]
+                seen = {str(d.get("_id")) for d in docs}
+                docs.extend(d for d in semantic_docs if str(d.get("_id")) not in seen)
+
+            # If a typo correction occurred, search the original keyword phrase
+            # too so correction can never hide an exact MongoDB match.
+            if changes and corrected_query != " ".join(search_tokens):
+                original_query = " ".join(search_tokens)
+                original_docs = self.repository.search(
+                    original_query,
+                    entity=plan.entity,
+                    city=plan.city,
+                    country=plan.country,
+                    status=status,
+                    is_live=is_live,
+                    limit=100,
+                    structured=structured,
+                    date_from=plan.date_from,
+                    date_to=plan.date_to,
+                )
+                seen = {str(d.get("_id")) for d in docs}
+                docs.extend(d for d in original_docs if str(d.get("_id")) not in seen)
 
         # Final authoritative guard: every candidate source (lexical,
         # semantic, fallback) must satisfy the same hard constraints.
@@ -438,7 +452,7 @@ class SearchService:
         # Exact constraints are authoritative. If they produce no candidates,
         # do a separate relaxed search for helpful alternatives rather than
         # silently returning wrong-location documents as exact matches.
-        if not docs and (plan.city or plan.country or structured):
+        if not docs and (plan.city or plan.country or plan.explicit_location or structured):
             related_docs = self.repository.search(
                 effective_query,
                 entity=plan.entity,
@@ -501,38 +515,56 @@ class SearchService:
             # Level relevance: "senior chef" should prioritize senior roles
             # over apprentices/junior roles even when both mention chef.
             if plan.level:
-                level_text = " ".join(
+                # Prefer explicit level metadata/title signals. Do not scan
+                # the entire description for conflicts: a senior job often
+                # mentions junior, intern, executive, etc. as people it
+                # supervises, which must not make the job a "level conflict".
+                title_level_text = " ".join(
                     str(v or "")
-                    for v in (
-                        doc.get("title"),
-                        doc.get("short_title"),
-                        doc.get("description"),
-                        doc.get("ai_search_text"),
-                    )
+                    for v in (doc.get("title"), doc.get("short_title"))
                 ).casefold()
 
                 level_terms = {
                     "senior": ("senior", "sr ", "sr.", "lead", "principal"),
                     "junior": ("junior", "jr ", "jr.", "entry level", "entry-level"),
-                    "mid": ("mid level", "mid-level", "associate"),
+                    "mid": ("mid level", "mid-level", "midlevel", "associate"),
                     "manager": ("manager", "management", "head"),
                     "executive": ("executive", "director", "vp", "vice president"),
                     "intern": ("intern", "internship", "trainee", "graduate"),
                 }
                 wanted_terms = level_terms.get(plan.level, (plan.level,))
-                if any(term in level_text for term in wanted_terms):
-                    score += 28
-                    matched.append("level_match")
 
-                # Strongly reduce obvious level conflicts, without excluding
-                # the document: some profiles/jobs may have sparse metadata.
+                if any(term in title_level_text for term in wanted_terms):
+                    score += 32
+                    matched.append("level_match")
+                else:
+                    # If the title is generic, use structured metadata and
+                    # only then a bounded first-line signal rather than the
+                    # whole description.
+                    metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+                    metadata_level = str(metadata.get("job_level") or "").casefold()
+                    nested_level = str(
+                        ((doc.get("professional") or {}).get("job_level") or {}).get("name")
+                        if isinstance(doc.get("professional"), dict)
+                        and isinstance((doc.get("professional") or {}).get("job_level"), dict)
+                        else ""
+                    ).casefold()
+                    if any(term in metadata_level or term in nested_level for term in wanted_terms):
+                        score += 28
+                        matched.append("level_match")
+
+                # Penalize only a clear conflicting level in the title, not
+                # mentions elsewhere in the description.
                 conflicts = {
                     "senior": ("junior", "intern", "internship", "trainee", "apprentice"),
                     "junior": ("senior", "lead", "principal", "executive"),
+                    "mid": ("junior", "senior", "executive"),
+                    "manager": ("intern", "trainee", "apprentice"),
+                    "executive": ("junior", "intern", "trainee", "apprentice"),
                     "intern": ("senior", "lead", "principal", "manager", "executive"),
                 }
-                if any(term in level_text for term in conflicts.get(plan.level, ())):
-                    score -= 18
+                if any(term in title_level_text for term in conflicts.get(plan.level, ())):
+                    score -= 24
                     matched.append("level_conflict")
 
             # Experience is treated as a relevance signal when the source

@@ -67,6 +67,7 @@ class SearchUnderstanding(BaseModel):
     clarification_options: list[str] = Field(default_factory=list)
     corrected_keywords: list[str] = Field(default_factory=list)
     corrections: list[dict[str, Any]] = Field(default_factory=list)
+    explicit_location: bool = False
 
 
 class SearchResponse(BaseModel):
