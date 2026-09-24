@@ -69,5 +69,10 @@ class Settings:
         3,
     )
 
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    gemini_timeout_seconds: float = float(os.getenv("GEMINI_TIMEOUT_SECONDS", "4"))
+    semantic_search_enabled: bool = os.getenv("SEMANTIC_SEARCH_ENABLED", "false").casefold() == "true"
+    semantic_model: str = os.getenv("SEMANTIC_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+
 
 settings = Settings()

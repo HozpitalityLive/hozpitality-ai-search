@@ -49,8 +49,29 @@ class SearchResult(BaseModel):
     corrected_query: str | None = None
 
 
+class SearchUnderstanding(BaseModel):
+    intent: str = "search"
+    entity: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    city: str | None = None
+    country: str | None = None
+    experience: int | None = None
+    level: str | None = None
+    department: str | None = None
+    industry: str | None = None
+    category: str | None = None
+    date: dict[str, Any] = Field(default_factory=dict)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = 0.0
+    clarification: str | None = None
+    clarification_options: list[str] = Field(default_factory=list)
+    corrected_keywords: list[str] = Field(default_factory=list)
+    corrections: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class SearchResponse(BaseModel):
     query: str
     corrected_query: str | None = None
     total: int
     results: list[SearchResult]
+    understanding: SearchUnderstanding | None = None

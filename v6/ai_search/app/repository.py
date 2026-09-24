@@ -130,6 +130,9 @@ class SearchDocumentsRepository:
         country: str | None,
         status: str | None,
         is_live: bool | None,
+        structured: dict[str, Any] | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
     ) -> dict[str, Any]:
         """
         Build MongoDB filters.
@@ -307,6 +310,58 @@ class SearchDocumentsRepository:
             clauses.append({
                 "$or": country_clauses,
             })
+
+        structured = structured or {}
+
+        # Structured Phase 2 filters are expressed as ORs across the known
+        # document shapes. Missing fields are intentionally not treated as
+        # mismatches here; the defensive post-filter below applies only when
+        # a field is actually present.
+        field_aliases = {
+            "level": [
+                "professional.job_level.name", "job.level.name",
+                "job.job_level.name", "job_level.name", "metadata.job_level",
+            ],
+            "department": [
+                "professional.department.name", "job.department.name",
+                "department.name", "metadata.department",
+            ],
+            "industry": [
+                "professional.industries.name", "job.industry.name",
+                "industry.name", "company.industry.name", "metadata.industry",
+            ],
+            "category": [
+                "category.name", "category", "job.category.name",
+                "product.category.name", "metadata.category",
+            ],
+            "employment_type": [
+                "job.employment_type", "employment_type", "metadata.employment_type",
+            ],
+        }
+        for key, value in structured.items():
+            if value is None or key in {"salary_min", "salary_currency", "experience", "verified", "featured", "currently_working"}:
+                continue
+            paths = field_aliases.get(key, [])
+            if not paths:
+                continue
+            pattern = re.escape(normalize(str(value)))
+            clauses.append({
+                "$or": [
+                    {path: {"$regex": pattern, "$options": "i"}}
+                    for path in paths
+                ]
+            })
+
+        if date_from or date_to:
+            date_clauses = []
+            for path in ("created_at", "dates.start", "start_datetime", "award_date"):
+                condition: dict[str, Any] = {}
+                if date_from:
+                    condition["$gte"] = date_from
+                if date_to:
+                    condition["$lt"] = date_to
+                date_clauses.append({path: condition})
+            clauses.append({"$or": date_clauses})
 
         if not clauses:
             return {}
@@ -602,6 +657,9 @@ class SearchDocumentsRepository:
         country: str | None,
         status: str | None,
         is_live: bool | None,
+        structured: dict[str, Any] | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
     ) -> bool:
         """Defensive hard-filter check after MongoDB candidate retrieval."""
         if entity and str(doc.get("entity_type") or "").casefold() != entity.casefold():
@@ -650,7 +708,102 @@ class SearchDocumentsRepository:
             if not any(term in value or value in term for term in wanted_terms for value in normalized):
                 return False
 
+        structured = structured or {}
+
+        def nested_values(obj: Any, path: str) -> list[Any]:
+            current = [obj]
+            for part in path.split("."):
+                nxt = []
+                for item in current:
+                    if isinstance(item, dict):
+                        value = item.get(part)
+                        if isinstance(value, list):
+                            nxt.extend(value)
+                        else:
+                            nxt.append(value)
+                current = nxt
+            return [v for v in current if v is not None]
+
+        aliases = {
+            "level": ["professional.job_level.name", "job.level.name", "job.job_level.name", "job_level.name", "metadata.job_level"],
+            "department": ["professional.department.name", "job.department.name", "department.name", "metadata.department"],
+            "industry": ["professional.industries.name", "job.industry.name", "industry.name", "company.industry.name", "metadata.industry"],
+            "category": ["category.name", "category", "job.category.name", "product.category.name", "metadata.category"],
+            "employment_type": ["job.employment_type", "employment_type", "metadata.employment_type"],
+        }
+        for key, wanted in structured.items():
+            if key in {"salary_min", "salary_currency", "experience", "verified", "featured", "currently_working"}:
+                continue
+            present = []
+            for path in aliases.get(key, []):
+                present.extend(nested_values(doc, path))
+            if present and not any(normalize(str(wanted)) in normalize(str(v)) for v in present):
+                return False
+
+        def numeric_values(paths: tuple[str, ...]) -> list[float]:
+            out = []
+            for path in paths:
+                for value in nested_values(doc, path):
+                    if isinstance(value, (int, float)):
+                        out.append(float(value))
+                    elif isinstance(value, str):
+                        m = re.search(r"\d+(?:\.\d+)?", value)
+                        if m:
+                            out.append(float(m.group(0)))
+            return out
+
+        exp = structured.get("experience")
+        if exp is not None:
+            vals = numeric_values((
+                "professional.experience_years", "professional.years_experience",
+                "professional.experience", "job.experience_years", "job.years_experience",
+                "job.experience", "experience_years", "experience", "metadata.experience_years",
+                "metadata.experience",
+            ))
+            if vals and max(vals) < float(exp):
+                return False
+
+        for key, path in (
+            ("verified", "metadata.verified"),
+            ("featured", "metadata.is_featured"),
+            ("currently_working", "professional.currently_working"),
+        ):
+            if key in structured:
+                vals = nested_values(doc, path)
+                if vals and bool(structured[key]) not in [bool(v) for v in vals]:
+                    return False
+
+        if "salary_min" in structured:
+            vals = numeric_values((
+                "job.salary_min", "job.salary.min", "salary_min", "salary.min",
+                "metadata.salary_min", "metadata.salary.min"
+            ))
+            if vals and max(vals) < float(structured["salary_min"]):
+                return False
+
+        if date_from or date_to:
+            date_values = []
+            for path in ("created_at", "dates.start", "start_datetime", "award_date"):
+                date_values.extend(nested_values(doc, path))
+            date_values = [v for v in date_values if isinstance(v, datetime)]
+            if date_values:
+                chosen = max(date_values)
+                if date_from and chosen < date_from:
+                    return False
+                if date_to and chosen >= date_to:
+                    return False
+
         return True
+
+    def fetch_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
+        if not ids:
+            return []
+        docs = list(self.collection.find(
+            {"_id": {"$in": ids}},
+            self._projection(),
+        ))
+        by_id = {str(doc.get("_id")): doc for doc in docs}
+        return [by_id[value] for value in ids if value in by_id]
 
     def search(
         self,
@@ -662,6 +815,9 @@ class SearchDocumentsRepository:
         status: str | None,
         is_live: bool | None,
         limit: int,
+        structured: dict[str, Any] | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """
         Search MongoDB search_documents.
@@ -680,6 +836,9 @@ class SearchDocumentsRepository:
             country=country,
             status=status,
             is_live=is_live,
+            structured=structured,
+            date_from=date_from,
+            date_to=date_to,
         )
 
         if not tokens(query):
@@ -849,6 +1008,9 @@ class SearchDocumentsRepository:
                 country=country,
                 status=status,
                 is_live=is_live,
+                structured=structured,
+                date_from=date_from,
+                date_to=date_to,
             )
         ]
 

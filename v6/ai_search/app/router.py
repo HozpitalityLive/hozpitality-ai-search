@@ -7,6 +7,7 @@ from .db import get_collection, ping
 from .repository import SearchDocumentsRepository
 from .schemas import SearchRequest, SearchResponse
 from .service import SearchService
+from .query_understanding import understand, clarification_for
 
 
 repository = SearchDocumentsRepository(get_collection())
@@ -68,6 +69,13 @@ def search_post(request: SearchRequest) -> SearchResponse:
         ) from exc
 
 
+@router.get("/search/understand")
+def search_understand(q: str = Query(min_length=1, max_length=300)) -> dict:
+    plan = understand(q)
+    plan.clarification = clarification_for(plan)
+    return plan.as_dict()
+
+
 @router.get("/search/health")
 def search_health() -> dict:
     try:
@@ -75,10 +83,12 @@ def search_health() -> dict:
         count = repository.collection.count_documents({})
         return {
             "ok": True,
-            "service": "hozpitality-ai-search-phase1",
+            "service": "hozpitality-ai-search-phase2",
             "database": settings.mongodb_database,
             "collection": settings.mongodb_collection,
             "documents": count,
+            "semantic_search_enabled": service.semantic.enabled,
+            "llm_fallback_enabled": service.llm.enabled,
         }
     except Exception as exc:
         raise HTTPException(

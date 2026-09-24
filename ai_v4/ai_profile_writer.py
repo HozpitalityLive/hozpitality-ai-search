@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 OLLAMA_URL = f"{settings.OLLAMA_URL}/api/generate"
-MODEL = "llama3-hoz:latest"
+MODEL = "qwen3:14b"
 
 
 async def _generate(prompt: str) -> str:
