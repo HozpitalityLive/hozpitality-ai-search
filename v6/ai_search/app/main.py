@@ -6,20 +6,21 @@ from fastapi import FastAPI, HTTPException
 
 from .config import settings
 from .db import close_client, ping
-from .router import router, repository
+from .router import router, repository, conversation_repository
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     repository.ensure_indexes()
+    conversation_repository.ensure_indexes()
     yield
     close_client()
 
 
 app = FastAPI(
     title="Hozpitality AI Search",
-    version="1.0.0-phase1",
-    description="MongoDB-first Hozpitality search foundation.",
+    version="3.0.0-phase3",
+    description="Hozpitality conversational AI search with MongoDB retrieval and conversation memory.",
     lifespan=lifespan,
 )
 

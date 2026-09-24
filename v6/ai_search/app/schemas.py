@@ -78,3 +78,21 @@ class SearchResponse(BaseModel):
     message: str | None = None
     related_results: list[SearchResult] = Field(default_factory=list)
     understanding: SearchUnderstanding | None = None
+
+
+class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=2000)
+    conversation_id: str | None = Field(default=None, max_length=128)
+    limit: int = Field(default=5, ge=1, le=5)
+
+
+class ChatResponse(BaseModel):
+    conversation_id: str
+    action: Literal["search", "clarify", "more", "compare", "reset"]
+    answer: str
+    results: list[SearchResult] = Field(default_factory=list)
+    related_results: list[SearchResult] = Field(default_factory=list)
+    understanding: SearchUnderstanding | dict[str, Any] | None = None
+    state: dict[str, Any] = Field(default_factory=dict)

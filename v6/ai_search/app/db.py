@@ -23,8 +23,8 @@ def get_client() -> MongoClient:
     return _client
 
 
-def get_collection() -> Collection:
-    return get_client()[settings.mongodb_database][settings.mongodb_collection]
+def get_collection(name: str | None = None) -> Collection:
+    return get_client()[settings.mongodb_database][name or settings.mongodb_collection]
 
 
 def ping() -> bool:

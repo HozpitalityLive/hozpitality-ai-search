@@ -2,6 +2,159 @@
 
 Phase 2 adds natural-language query understanding on top of the Phase 1 MongoDB retrieval engine.
 
+
+# Phase 3 — AI Chat + Conversation Memory
+
+Phase 3 turns the Phase 2 search API into a conversational AI layer.
+
+## Chat orchestration
+
+```text
+User message
+     |
+     v
+Conversation state
+     |
+     v
+Query understanding
+     |
+     v
+MongoDB search
+     |
+     v
+Top 5 results
+     |
+     v
+Qwen3 8B
+     |
+     v
+Natural-language answer
+```
+
+MongoDB remains the source of truth for search results. Qwen3 generates the response only from the supplied state and retrieved records; it is not allowed to invent search results.
+
+## Conversation memory
+
+Conversation state is stored in MongoDB in `CHAT_COLLECTION` (default: `ai_search_conversations`).
+
+Example:
+
+```json
+{
+  "entity": "job",
+  "location": {
+    "city": "Dubai",
+    "country": "United Arab Emirates"
+  },
+  "keywords": ["chef"],
+  "filters": {
+    "level": "manager",
+    "accommodation": true
+  },
+  "last_results": [
+    "job:123",
+    "job:456"
+  ]
+}
+```
+
+The system supports follow-ups such as:
+
+```text
+Find chef jobs in Dubai
+-> search
+
+Only management positions
+-> inherits job + chef + Dubai, adds level=manager
+
+With accommodation
+-> inherits previous state, adds accommodation=true
+
+Show me more
+-> reruns the current search and excludes the previous result IDs
+
+Compare the first three
+-> compares the latest three result records using Qwen3 8B
+```
+
+## API
+
+### Start or continue a chat
+
+```bash
+curl -s -X POST 'http://127.0.0.1:8085/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Find chef jobs in Dubai"}' | python3 -m json.tool
+```
+
+The response returns a `conversation_id`. Reuse it for follow-ups:
+
+```bash
+curl -s -X POST 'http://127.0.0.1:8085/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{"conversation_id":"YOUR_CONVERSATION_ID","message":"Only management positions"}' | python3 -m json.tool
+```
+
+Then:
+
+```bash
+curl -s -X POST 'http://127.0.0.1:8085/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{"conversation_id":"YOUR_CONVERSATION_ID","message":"With accommodation"}' | python3 -m json.tool
+```
+
+More:
+
+```bash
+curl -s -X POST 'http://127.0.0.1:8085/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{"conversation_id":"YOUR_CONVERSATION_ID","message":"Show me more"}' | python3 -m json.tool
+```
+
+Compare:
+
+```bash
+curl -s -X POST 'http://127.0.0.1:8085/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{"conversation_id":"YOUR_CONVERSATION_ID","message":"Compare the first three"}' | python3 -m json.tool
+```
+
+Inspect conversation:
+
+```bash
+curl -s 'http://127.0.0.1:8085/chat/YOUR_CONVERSATION_ID' | python3 -m json.tool
+```
+
+Start over:
+
+```bash
+curl -s -X POST 'http://127.0.0.1:8085/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{"conversation_id":"YOUR_CONVERSATION_ID","message":"Start over"}' | python3 -m json.tool
+```
+
+## Safety and source-of-truth rules
+
+- MongoDB search results are authoritative.
+- Qwen3 8B does not decide which records exist.
+- Qwen3 is not allowed to invent facts not present in the supplied records.
+- Exact results and related results remain separate.
+- Conversation filters are inherited only when the user does not replace them.
+- `show me more` excludes the previously shown result IDs.
+- Maximum search output remains 5 records per turn.
+- Conversation history is capped to the latest 20 stored messages.
+
+## Environment
+
+Add:
+
+```env
+CHAT_COLLECTION=ai_search_conversations
+OLLAMA_CHAT_MODEL=qwen3:8b
+```
+
+The existing Phase 2 `OLLAMA_QUERY_MODEL` and `OLLAMA_CHAT_MODEL` can use the same Qwen3 8B model on the T4.
+
 ## Data source
 
 The search path remains MongoDB-only:

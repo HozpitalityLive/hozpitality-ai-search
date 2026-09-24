@@ -232,6 +232,15 @@ def _extract_filters(text: str, entity: str | None) -> dict[str, Any]:
     if re.search(r"\bcurrently working\b|\bworking professionals?\b", low):
         filters["currently_working"] = True
 
+    # Hospitality-specific job benefit filter used by conversational follow-ups
+    # such as "with accommodation" or "only jobs that provide accommodation".
+    if re.search(
+        r"\b(?:with|including|provides?|provide)\s+"
+        r"(?:staff\s+)?accommodation\b|\baccommodation\s+(?:provided|available|included)\b",
+        low,
+    ):
+        filters["accommodation"] = True
+
     return filters
 
 
@@ -307,12 +316,13 @@ def understand(query: str) -> SearchPlan:
     removals += DEPARTMENTS + INDUSTRIES
     removals += list(CITIES.keys()) + list(COUNTRIES.keys())
     removals += [
-        "find", "search", "show", "list", "get", "give", "me", "please", "need", "want",
+        "find", "search", "show", "list", "get", "give", "me", "please", "need", "want", "only",
         "looking", "look", "for", "in", "with", "of", "the", "a", "an", "and", "from", "at",
         "i", "am", "can", "could", "would", "should", "who", "that", "this", "there",
         "experienced", "experience", "manage", "managing",
         "minimum", "latest", "recent", "new", "today", "tomorrow", "week", "month", "year",
         "remote", "full", "time", "part", "contract", "temporary", "verified", "featured",
+        "accommodation", "provided", "available", "included",
     ]
 
     for phrase in sorted(set(removals), key=len, reverse=True):

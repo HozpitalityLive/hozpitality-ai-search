@@ -223,6 +223,8 @@ class SearchService:
         status: str | None = None,
         is_live: bool | None = None,
         limit: int = 5,
+        structured_filters: dict | None = None,
+        exclude_ids: list[str] | None = None,
     ) -> dict:
         original = " ".join(query.strip().split())
         if not original:
@@ -351,8 +353,14 @@ class SearchService:
         # inconsistent Mongo schemas cannot hide otherwise relevant results.
         # Entity and location are always hard constraints.
         structured = dict(plan.filters)
+        if structured_filters:
+            # Chat follow-ups may supply filters inherited from the
+            # conversation state. Explicit API filters take precedence.
+            structured.update(structured_filters)
+            plan.filters = dict(structured)
 
         limit = min(max(int(limit), 1), self.MAX_RESULTS)
+        excluded = {str(value) for value in (exclude_ids or []) if str(value).strip()}
 
         # An explicit but unrecognized location is still a hard location
         # constraint. We must never silently broaden it to a global search.
@@ -446,6 +454,11 @@ class SearchService:
         # Final authoritative guard: every candidate source (lexical,
         # semantic, fallback) must satisfy the same hard constraints.
         docs = self._hard_filter_docs(docs, plan, status, is_live, structured)
+        if excluded:
+            docs = [
+                doc for doc in docs
+                if str(doc.get("source", {}).get("object_id") or doc.get("_id") or "") not in excluded
+            ]
 
         related_docs: list[dict] = []
         related_label = None

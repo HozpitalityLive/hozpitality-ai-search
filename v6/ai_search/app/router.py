@@ -5,9 +5,11 @@ from fastapi import APIRouter, HTTPException, Query
 from .config import settings
 from .db import get_collection, ping
 from .repository import SearchDocumentsRepository
-from .schemas import SearchRequest, SearchResponse
+from .schemas import SearchRequest, SearchResponse, ChatRequest, ChatResponse
 from .service import SearchService
 from .query_understanding import understand, clarification_for
+from .conversation import ConversationRepository
+from .chat_service import ChatService
 
 
 repository = SearchDocumentsRepository(get_collection())
@@ -15,8 +17,10 @@ service = SearchService(
     repository,
     fuzzy_threshold=settings.fuzzy_threshold,
 )
+conversation_repository = ConversationRepository()
+chat_service = ChatService(service, conversation_repository)
 
-router = APIRouter(tags=["MongoDB Search"])
+router = APIRouter(tags=["MongoDB Search", "AI Chat"])
 
 
 @router.get("/search", response_model=SearchResponse)
@@ -76,6 +80,39 @@ def search_understand(q: str = Query(min_length=1, max_length=300)) -> dict:
     return plan.as_dict()
 
 
+
+
+@router.post("/chat", response_model=ChatResponse)
+def chat_post(request: ChatRequest) -> ChatResponse:
+    try:
+        return ChatResponse(
+            **chat_service.chat(
+                message=request.message,
+                conversation_id=request.conversation_id,
+                limit=min(request.limit, 5),
+            )
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI chat unavailable: {exc}",
+        ) from exc
+
+
+@router.get("/chat/{conversation_id}")
+def chat_get(conversation_id: str) -> dict:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    state = conversation.get("state") or {}
+    return {
+        "conversation_id": conversation_id,
+        "state": chat_service._public_state(state),
+        "messages": conversation.get("messages") or [],
+        "updated_at": conversation.get("updated_at"),
+    }
+
+
 @router.get("/search/health")
 def search_health() -> dict:
     try:
@@ -83,12 +120,14 @@ def search_health() -> dict:
         count = repository.collection.count_documents({})
         return {
             "ok": True,
-            "service": "hozpitality-ai-search-phase2",
+            "service": "hozpitality-ai-search-phase3",
             "database": settings.mongodb_database,
             "collection": settings.mongodb_collection,
+            "chat_collection": settings.chat_collection,
             "documents": count,
             "semantic_search_enabled": service.semantic.enabled,
             "llm_fallback_enabled": service.llm.enabled,
+            "chat_enabled": bool(chat_service.model and chat_service.base_url),
         }
     except Exception as exc:
         raise HTTPException(
@@ -102,7 +141,8 @@ def register_mongo_search_routes(app) -> None:
     app.include_router(router)
     try:
         repository.ensure_indexes()
+        conversation_repository.ensure_indexes()
     except Exception as exc:
         # Do not prevent the existing V6 API from booting if MongoDB is
         # temporarily unavailable. /search/health and /search will report it.
-        print(f"MongoDB Phase 1 index initialization skipped: {exc}")
+        print(f"MongoDB search/chat index initialization skipped: {exc}")

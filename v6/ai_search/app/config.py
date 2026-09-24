@@ -34,6 +34,11 @@ class Settings:
         "search_documents",
     )
 
+    chat_collection: str = os.getenv(
+        "CHAT_COLLECTION",
+        "ai_search_conversations",
+    )
+
     mongodb_max_pool_size: int = _int(
         "MONGODB_MAX_POOL_SIZE",
         100,

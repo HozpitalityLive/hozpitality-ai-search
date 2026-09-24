@@ -705,6 +705,11 @@ class SearchDocumentsRepository:
             "industry": ["professional.industries.name", "job.industry.name", "industry.name", "company.industry.name", "metadata.industry"],
             "category": ["category.name", "category", "job.category.name", "product.category.name", "metadata.category"],
             "employment_type": ["job.employment_type", "employment_type", "metadata.employment_type"],
+            "accommodation": [
+                "job.accommodation", "job.provides_accommodation",
+                "accommodation", "provides_accommodation",
+                "metadata.accommodation", "metadata.provides_accommodation",
+            ],
         }
         for key, wanted in structured.items():
             if key in {"salary_min", "salary_currency", "experience", "verified", "featured", "currently_working"}:
@@ -712,6 +717,14 @@ class SearchDocumentsRepository:
             present = []
             for path in aliases.get(key, []):
                 present.extend(nested_values(doc, path))
+            if key == "accommodation" and bool(wanted):
+                if present and not any(
+                    value is True
+                    or (isinstance(value, str) and normalize(value) in {"true", "yes", "provided", "available", "included"})
+                    for value in present
+                ):
+                    return False
+                continue
             if present and not any(normalize(str(wanted)) in normalize(str(v)) for v in present):
                 return False
 
