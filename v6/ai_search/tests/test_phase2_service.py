@@ -42,3 +42,30 @@ def test_service_corrects_typo_in_keyword_only():
     result = service.search(query="excutive chef jobs in Dubai")
     assert result["corrected_query"] == "executive chef"
     assert repo.calls[0][0] == "executive chef"
+
+
+def test_structured_filter_falls_back_to_soft_matching():
+    class RecordingRepository(FakeRepository):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def search(self, query, **kwargs):
+            self.calls.append((query, kwargs))
+            # Simulate a schema mismatch: strict structured retrieval finds
+            # nothing, while entity/location retrieval has a valid job.
+            if kwargs.get("structured"):
+                return []
+            return super().search(query, **kwargs)
+
+    repo = RecordingRepository()
+    service = SearchService(repo, fuzzy_threshold=80)
+    result = service.search(
+        query="I need a senior chef job in Dubai with 5 years experience",
+        limit=5,
+    )
+    assert result["understanding"]["entity"] == "job"
+    assert result["understanding"]["city"] == "Dubai"
+    assert result["understanding"]["experience"] == 5
+    assert result["understanding"]["level"] == "senior"
+    assert len(repo.calls) >= 2

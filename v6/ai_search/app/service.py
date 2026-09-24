@@ -169,6 +169,17 @@ class SearchService:
         corrected_query = " ".join(corrected_tokens).strip()
         effective_query = corrected_query or " ".join(search_tokens)
 
+        # Include extracted structured concepts in lexical retrieval as well.
+        # This is important when the Mongo document stores these concepts in
+        # ai_search_text but does not expose them through a uniform structured
+        # field (job/professional schemas differ).
+        retrieval_terms = list(search_tokens)
+        for value in (plan.level, plan.department, plan.industry, plan.category):
+            if value:
+                retrieval_terms.extend(tokens(str(value)))
+        retrieval_terms = list(dict.fromkeys(retrieval_terms))
+        retrieval_query = " ".join(retrieval_terms).strip() or effective_query
+
         # Explicit API filters override extracted natural-language filters.
         canonical_entity_name = canonical_entity(plan.entity)
         if canonical_entity_name in {
@@ -191,7 +202,7 @@ class SearchService:
 
         limit = min(max(int(limit), 1), self.MAX_RESULTS)
         docs = self.repository.search(
-            effective_query,
+            retrieval_query,
             entity=plan.entity,
             city=plan.city,
             country=plan.country,
@@ -203,11 +214,45 @@ class SearchService:
             date_to=plan.date_to,
         )
 
+        # Structured fields are not uniform across all search_documents
+        # entities. If a strict structured query produces no candidates, retry
+        # using the authoritative entity/location/status filters and let the
+        # lexical ranking terms above represent the softer concepts. This
+        # prevents a missing/non-standard job experience field from turning a
+        # valid natural-language search into zero results.
+        if not docs and structured:
+            docs = self.repository.search(
+                retrieval_query,
+                entity=plan.entity,
+                city=plan.city,
+                country=plan.country,
+                status=status,
+                is_live=is_live,
+                limit=100,
+                structured={},
+                date_from=plan.date_from,
+                date_to=plan.date_to,
+            )
+
         semantic_scores = {}
         for doc_id, semantic_score in self.semantic.search(effective_query, limit=50):
             semantic_scores[doc_id] = semantic_score
         if semantic_scores:
             semantic_docs = self.repository.fetch_by_ids(list(semantic_scores))
+            semantic_docs = [
+                d for d in semantic_docs
+                if self.repository._document_matches_filters(
+                    d,
+                    entity=plan.entity,
+                    city=plan.city,
+                    country=plan.country,
+                    status=status,
+                    is_live=is_live,
+                    structured=structured,
+                    date_from=plan.date_from,
+                    date_to=plan.date_to,
+                )
+            ]
             seen = {str(d.get("_id")) for d in docs}
             docs.extend(d for d in semantic_docs if str(d.get("_id")) not in seen)
 
@@ -234,7 +279,7 @@ class SearchService:
         for doc in docs:
             score, matched = score_document(
                 doc,
-                effective_query,
+                retrieval_query,
                 float(doc.get("text_score") or 0.0),
             )
             semantic_score = semantic_scores.get(str(doc.get("_id")))
