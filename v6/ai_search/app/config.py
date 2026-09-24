@@ -1,0 +1,31 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def _int(name: str, default: int) -> int:
+    return int(os.getenv(name, str(default)))
+
+
+@dataclass(frozen=True)
+class Settings:
+    mongodb_uri: str = os.getenv("MONGODB_URI", "mongodb://127.0.0.1:27017")
+    mongodb_database: str = os.getenv("MONGODB_DATABASE", "hozpitality")
+    mongodb_collection: str = os.getenv("MONGODB_COLLECTION", "search_documents")
+    mongodb_max_pool_size: int = _int("MONGODB_MAX_POOL_SIZE", 100)
+    mongodb_min_pool_size: int = _int("MONGODB_MIN_POOL_SIZE", 5)
+    mongodb_server_selection_timeout_ms: int = _int(
+        "MONGODB_SERVER_SELECTION_TIMEOUT_MS", 5000
+    )
+    mongodb_connect_timeout_ms: int = _int("MONGODB_CONNECT_TIMEOUT_MS", 5000)
+    max_results: int = min(_int("SEARCH_MAX_RESULTS", 5), 5)
+    fuzzy_threshold: int = _int("SEARCH_FUZZY_THRESHOLD", 82)
+    fuzzy_min_token_length: int = _int("SEARCH_FUZZY_MIN_TOKEN_LENGTH", 3)
+
+
+settings = Settings()

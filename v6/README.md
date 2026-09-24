@@ -186,3 +186,7 @@ python scripts/backfill_embeddings.py --limit 1000 --batch-size 64 --db-batch 25
 The V6 lexical index intentionally uses the existing GIN index on
 `search_vector_v6`; a large trigram index on `ai_search_text` is not created.
 This keeps disk/CPU costs bounded while FTS searches the complete document.
+
+## AI Search — MongoDB Phase 1
+
+See `ai_search/README.md` for the MongoDB-first Phase 1 search service.
