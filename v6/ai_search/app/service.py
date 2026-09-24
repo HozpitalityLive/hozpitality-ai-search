@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .normalization import canonical_entity, tokens
 from .query_understanding import SearchPlan, clarification_for, understand
 from .llm import OllamaQueryInterpreter
@@ -441,14 +443,80 @@ class SearchService:
                 score += max(0.0, semantic_score) * 35.0
                 matched.append("semantic")
             # Small, deterministic boosts for structured constraints. These
-            # never override exact lexical identity, but help tie-break natural
-            # language searches.
+            # never override exact lexical identity, but make explicit role
+            # constraints materially affect ranking.
             if plan.city or plan.country:
                 matched.append("location_filter")
                 score += 12
+
             if plan.level or plan.department or plan.industry or plan.experience is not None:
                 matched.append("structured_filter")
                 score += 8
+
+            # Level relevance: "senior chef" should prioritize senior roles
+            # over apprentices/junior roles even when both mention chef.
+            if plan.level:
+                level_text = " ".join(
+                    str(v or "")
+                    for v in (
+                        doc.get("title"),
+                        doc.get("short_title"),
+                        doc.get("description"),
+                        doc.get("ai_search_text"),
+                    )
+                ).casefold()
+
+                level_terms = {
+                    "senior": ("senior", "sr ", "sr.", "lead", "principal"),
+                    "junior": ("junior", "jr ", "jr.", "entry level", "entry-level"),
+                    "mid": ("mid level", "mid-level", "associate"),
+                    "manager": ("manager", "management", "head"),
+                    "executive": ("executive", "director", "vp", "vice president"),
+                    "intern": ("intern", "internship", "trainee", "graduate"),
+                }
+                wanted_terms = level_terms.get(plan.level, (plan.level,))
+                if any(term in level_text for term in wanted_terms):
+                    score += 28
+                    matched.append("level_match")
+
+                # Strongly reduce obvious level conflicts, without excluding
+                # the document: some profiles/jobs may have sparse metadata.
+                conflicts = {
+                    "senior": ("junior", "intern", "internship", "trainee", "apprentice"),
+                    "junior": ("senior", "lead", "principal", "executive"),
+                    "intern": ("senior", "lead", "principal", "manager", "executive"),
+                }
+                if any(term in level_text for term in conflicts.get(plan.level, ())):
+                    score -= 18
+                    matched.append("level_conflict")
+
+            # Experience is treated as a relevance signal when the source
+            # document exposes years in its searchable text. A document with
+            # explicit >= requested experience gets a modest boost; sparse
+            # documents remain eligible rather than being incorrectly removed.
+            if plan.experience is not None:
+                exp_matches = re.findall(
+                    r"\b(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?\s*\+?\s*(?:years?|yrs?)\b",
+                    " ".join(
+                        str(v or "")
+                        for v in (
+                            doc.get("description"),
+                            doc.get("ai_search_text"),
+                            doc.get("title"),
+                        )
+                    ).casefold(),
+                )
+                requested = float(plan.experience)
+                numeric_experience = []
+                for first, second in exp_matches:
+                    numeric_experience.append(float(second or first))
+                if numeric_experience:
+                    if max(numeric_experience) >= requested:
+                        score += 10
+                        matched.append("experience_match")
+                    else:
+                        score -= 10
+                        matched.append("experience_below_request")
             if plan.category:
                 matched.append("category_filter")
                 score += 5

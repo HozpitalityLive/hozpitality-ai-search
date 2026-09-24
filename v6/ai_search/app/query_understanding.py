@@ -69,9 +69,22 @@ PROFESSIONAL_ROLE_TERMS = [
     "sommelier", "steward", "stewards", "pastry chef", "executive chef",
 ]
 
+# Entity words are control/module nouns, not domain concepts.
+# Keep meaningful terms such as "hotel" in "hotel companies" so they remain
+# searchable keywords. The previous regex-derived implementation accidentally
+# treated "hotel" as an entity stop-word because it appears in "hotel groups?".
 ENTITY_WORDS = {
-    entity: set(re.findall(r"[a-z]+", pattern))
-    for entity, pattern in ENTITY_PATTERNS.items()
+    "job": {"job", "jobs", "vacancy", "vacancies", "position", "positions",
+            "career", "careers", "opening", "openings", "employment"},
+    "professional": {"professional", "professionals", "candidate", "candidates",
+                     "people", "person", "persons", "expert", "experts", "talent"},
+    "company": {"company", "companies", "employer", "employers", "business", "businesses"},
+    "product": {"product", "products", "supplier", "suppliers", "marketplace", "vendor", "vendors"},
+    "article": {"article", "articles", "story", "stories", "news", "blog", "blogs", "post", "posts"},
+    "event": {"event", "events", "conference", "conferences", "exhibition", "exhibitions",
+              "summit", "summits"},
+    "award": {"award", "awards", "honour", "honours", "honor", "honors", "recognition"},
+    "faq": {"faq", "faqs", "question", "questions"},
 }
 
 LEVELS = {
@@ -288,18 +301,32 @@ def understand(query: str) -> SearchPlan:
     removals += [v for v in LEVELS.get(plan.level, [])] if plan.level else []
     removals += DEPARTMENTS + INDUSTRIES
     removals += list(CITIES.keys()) + list(COUNTRIES.keys())
-    removals += ["find", "search", "show", "list", "get", "give", "me", "please", "need", "want",
-                 "looking", "for", "in", "with", "of", "the", "a", "an", "and", "from", "at",
-                 "minimum", "latest", "recent", "new", "today", "tomorrow", "this", "week", "month", "year",
-                 "remote", "full", "time", "part", "contract", "temporary", "verified", "featured"]
+    removals += [
+        "find", "search", "show", "list", "get", "give", "me", "please", "need", "want",
+        "looking", "look", "for", "in", "with", "of", "the", "a", "an", "and", "from", "at",
+        "i", "am", "can", "could", "would", "should", "who", "that", "this", "there",
+        "experienced", "experience", "manage", "managing",
+        "minimum", "latest", "recent", "new", "today", "tomorrow", "week", "month", "year",
+        "remote", "full", "time", "part", "contract", "temporary", "verified", "featured",
+    ]
 
     for phrase in sorted(set(removals), key=len, reverse=True):
         if phrase:
             keyword_text = re.sub(rf"(?<!\w){re.escape(phrase)}(?!\w)", " ", keyword_text, flags=re.I)
 
+    # Preserve explicit professional/job role phrases even when one of their
+    # words is also a normalized level. For example, "executive chef" must
+    # remain searchable; "executive" is both a level and part of the role.
+    role_keywords: list[str] = []
+    role_terms = sorted(set(PROFESSIONAL_ROLE_TERMS), key=len, reverse=True)
+    for role in role_terms:
+        if re.search(rf"(?<!\w){re.escape(role)}(?!\w)", low):
+            role_keywords.extend(tokens(role))
+
     # Remove salary/experience numbers and punctuation.
     keyword_text = re.sub(r"\b\d+(?:\.\d+)?\b", " ", keyword_text)
-    plan.keywords = tokens(keyword_text)[:12]
+    extracted_keywords = tokens(keyword_text)
+    plan.keywords = list(dict.fromkeys(role_keywords + extracted_keywords))[:12]
 
     confidence = 0.2
     if entity: confidence += 0.25

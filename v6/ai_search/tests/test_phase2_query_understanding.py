@@ -53,3 +53,35 @@ def test_professional_role_query_is_not_a_job():
 def test_no_unrequested_filters():
     plan = understand("Find me a job")
     assert plan.filters == {}
+
+
+def test_hotel_companies_keeps_hotel_as_keyword():
+    plan = understand("hotel companies in Dubai")
+    assert plan.entity == "company"
+    assert "hotel" in plan.keywords
+    assert plan.city == "Dubai"
+    assert plan.country == "United Arab Emirates"
+    assert clarification_for(plan) is None
+
+
+def test_long_natural_language_preserves_executive_chef_role():
+    plan = understand(
+        "I am looking for an experienced executive chef who can manage "
+        "a luxury hotel kitchen in Dubai"
+    )
+    assert plan.entity == "professional"
+    assert plan.city == "Dubai"
+    assert plan.country == "United Arab Emirates"
+    assert "executive" in plan.keywords
+    assert "chef" in plan.keywords
+
+def test_long_natural_language_removes_conversational_filler():
+    plan = understand(
+        "I am looking for an experienced executive chef who can manage "
+        "a luxury hotel kitchen in Dubai"
+    )
+    assert "am" not in plan.keywords
+    assert "experienced" not in plan.keywords
+    assert "who" not in plan.keywords
+    assert "executive" in plan.keywords
+    assert "chef" in plan.keywords
