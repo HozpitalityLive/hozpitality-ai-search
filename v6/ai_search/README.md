@@ -1,91 +1,74 @@
 # Hozpitality AI Search — Phase 1
 
-MongoDB-first search service for Hozpitality V6.
+MongoDB-first lexical search foundation for V6.
 
-## Scope
+## Data source
 
-Phase 1 provides:
+`master_search_mastersearchindex.ai_search_text` is the canonical flattened
+search document. Relationship-aware fields are already materialized by the V6
+backfill into `ai_search_text` and `metadata`.
 
-- FastAPI `/search` endpoint
-- MongoDB connection pooling through `pymongo.MongoClient`
-- `search_documents` collection
-- MongoDB text and filter indexes
-- Jobs, professionals, companies, products, articles, events, awards and FAQs
-- exact, phrase and keyword ranking
-- alias matching
-- location/entity/status filters
-- typo correction using `rapidfuzz`
-- strict maximum of 5 results
-- deterministic search; no LLM calls
+The MongoDB bootstrap is therefore model-agnostic. It does not re-query Jobs,
+Professionals, Companies, Products, Articles, Events, Awards and FAQs
+individually.
 
-## Run
+## Runtime
 
-From the `v6` directory:
+The preferred production integration is the existing V6 FastAPI service on
+port `8085`.
 
-```bash
-pip install -r ai_search/requirements.txt
-cp ai_search/.env.example ai_search/.env
-uvicorn ai_search.app.main:app --host 0.0.0.0 --port 8090 --reload
-```
+Routes added:
 
-Health:
+- `GET /search`
+- `POST /search`
+- `GET /search/health`
+
+A standalone FastAPI app is also available:
 
 ```bash
-curl http://127.0.0.1:8090/health
+uvicorn ai_search.app.main:app --host 127.0.0.1 --port 8090
 ```
 
-Search:
+## MongoDB
+
+Configure `ai_search/.env`:
+
+```env
+MONGODB_URI=mongodb://mongoAdmin:PASSWORD@HOST:27017/hozpitality?authSource=admin
+MONGODB_DATABASE=hozpitality
+MONGODB_COLLECTION=search_documents
+```
+
+## Indexes
 
 ```bash
-curl "http://127.0.0.1:8090/search?q=excutive%20chef&entity=job&city=Dubai"
+python -m ai_search.scripts.init_indexes
 ```
 
-## Document shape
+## Build Mongo documents from canonical V6 search documents
 
-The service expects one normalized MongoDB document per searchable entity:
-
-```json
-{
-  "entity_type": "job",
-  "entity_id": "123",
-  "title": "Executive Chef",
-  "description": "Leading hotel kitchen...",
-  "keywords": ["chef", "culinary", "hotel"],
-  "aliases": ["executive cook"],
-  "location": {
-    "city": "Dubai",
-    "country": "UAE"
-  },
-  "category": "Culinary",
-  "status": "active",
-  "is_live": true,
-  "url": "/jobs/executive-chef-123",
-  "image": null
-}
-```
-
-`search_text` is optional; the sync script creates it when loading from the existing V6 PostgreSQL master search index.
-
-## PostgreSQL -> MongoDB bootstrap
-
-The existing V6 project is PostgreSQL-first. This phase intentionally moves retrieval to MongoDB while preserving the canonical V6 `master_search_mastersearchindex` as a source for the initial index build.
+Do not run this until `ai_search_text` and `metadata` are populated:
 
 ```bash
-python ai_search/scripts/sync_from_postgres.py --confirm
+python -m ai_search.scripts.sync_from_master_index --confirm
 ```
 
-The sync reads only the searchable master-index fields and writes normalized `search_documents`. It does not copy passwords, emails, phone numbers or other sensitive account fields.
+Test with a small sample first:
 
-For incremental operation, run the script on a schedule or replace it later with source-event/change-stream ingestion.
+```bash
+python -m ai_search.scripts.sync_from_master_index --confirm --limit 100
+```
 
-## Search behavior
+## Search examples
 
-1. Normalize query.
-2. Remove stopwords.
-3. Correct likely misspellings against known vocabulary.
-4. Search exact/phrase/keyword matches in MongoDB.
-5. Apply hard entity/location/status filters.
-6. Rank exact title/phrase/alias/keyword/location matches above general content matches.
-7. Return no more than five results.
+```bash
+curl "http://127.0.0.1:8085/search?q=chef"
+curl "http://127.0.0.1:8085/search?q=excutive%20chef&entity=job&city=Dubai"
+curl "http://127.0.0.1:8085/search?q=hotel&entity=company"
+curl "http://127.0.0.1:8085/search/health"
+```
 
-No LLM is involved in Phase 1.
+The API never returns more than five results.
+
+Phase 1 does not use an LLM, vector search, conversation memory, or frontend
+rendering.

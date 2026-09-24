@@ -38,6 +38,7 @@ from vanna.servers.base import ChatHandler
 from vanna.servers.fastapi.routes import register_chat_routes
 from vanna.hozpitality.schema_intelligence import HozpitalitySchemaIntelligence
 from vanna.hozpitality.global_search import GlobalSearchService
+from ai_search.app.router import register_mongo_search_routes
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
@@ -385,6 +386,9 @@ class HozpitalityWorkflowHandler(WorkflowHandler):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Hozpitality AI Search V6", version="6.1.0")
+
+    # Phase 1 MongoDB search: canonical ai_search_text + structured metadata.
+    register_mongo_search_routes(app)
 
     app.add_middleware(
         CORSMiddleware,
