@@ -122,6 +122,95 @@ class SearchService:
             "corrected_query": corrected_query,
         }
 
+    def _hard_filter_docs(
+        cls,
+        docs: list[dict],
+        plan: SearchPlan,
+        status: str | None,
+        is_live: bool | None,
+        structured: dict,
+    ) -> list[dict]:
+        """
+        Final authoritative filter applied after every retrieval path.
+
+        This is intentionally performed after lexical, fallback and semantic
+        retrieval so no candidate can bypass explicit user constraints.
+        """
+        filtered = []
+
+        for doc in docs:
+            if not cls._document_matches_filters(
+                doc,
+                entity=plan.entity,
+                city=plan.city,
+                country=plan.country,
+                status=status,
+                is_live=is_live,
+                structured=structured,
+                date_from=plan.date_from,
+                date_to=plan.date_to,
+            ):
+                continue
+
+            filtered.append(doc)
+
+        return filtered
+
+    @classmethod
+    def _document_matches_filters(
+        cls,
+        doc: dict,
+        *,
+        entity: str | None,
+        city: str | None,
+        country: str | None,
+        status: str | None,
+        is_live: bool | None,
+        structured: dict | None = None,
+        date_from=None,
+        date_to=None,
+    ) -> bool:
+        """
+        Delegate the authoritative document-level filter to the repository.
+        """
+        return cls._repository_document_matches_filters(
+            doc,
+            entity=entity,
+            city=city,
+            country=country,
+            status=status,
+            is_live=is_live,
+            structured=structured,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+    @classmethod
+    def _repository_document_matches_filters(
+        cls,
+        doc: dict,
+        *,
+        entity: str | None,
+        city: str | None,
+        country: str | None,
+        status: str | None,
+        is_live: bool | None,
+        structured: dict | None = None,
+        date_from=None,
+        date_to=None,
+    ) -> bool:
+        return SearchDocumentsRepository._document_matches_filters(
+            doc,
+            entity=entity,
+            city=city,
+            country=country,
+            status=status,
+            is_live=is_live,
+            structured=structured,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
     def search(
         self,
         *,
