@@ -110,7 +110,7 @@ class SearchService:
         city: str | None = None,
         country: str | None = None,
         status: str | None = None,
-        is_live: bool | None = True,
+        is_live: bool | None = None,
         limit: int = 5,
     ) -> dict:
         original = " ".join(query.strip().split())

@@ -69,3 +69,23 @@ SEARCH_FUZZY_MIN_TOKEN_LENGTH=3
 ## Important
 
 Do not run the old PostgreSQL/master-index synchronization scripts for Phase 1. Do not create a second MongoDB text index on this collection; MongoDB supports one text index per collection and the production `idx_ai_search_text` index is already the Phase 1 text-search index.
+
+## Phase 1 finalization
+
+Phase 1 is finalized as a MongoDB-only retrieval foundation. It does not use PostgreSQL for search, does not synchronize from PostgreSQL/master-index data, and does not create a second MongoDB text index.
+
+Final safeguards include:
+
+- maximum 5 API results
+- exact/phrase/alias/keyword retrieval
+- existing MongoDB `ai_search_text` text index retrieval
+- typo correction from title/alias/keyword vocabulary
+- hard entity/city/country/status/live filtering
+- expiry protection when `is_live=true`
+- deterministic lexical ranking
+- fuzzy matching reported only when it is actually the fallback relevance signal
+- FAQs remain searchable when `is_live` is omitted
+
+### Phase 1 boundary
+
+The existing V6 application may still contain PostgreSQL/Vanna functionality for other application features. That does not participate in the Phase 1 `/search` retrieval path. Phase 1 search reads only MongoDB `mongoAdmin.search_documents`.

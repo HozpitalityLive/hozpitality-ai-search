@@ -12,3 +12,18 @@ def test_exact_title_wins_over_description():
     )
     assert exact > weak
     assert "exact_title" in exact_matches
+
+
+def test_exact_match_is_not_reported_as_fuzzy():
+    score, matches = score_document(
+        {
+            "title": "Chef",
+            "search_aliases": ["chef"],
+            "search_keywords": ["chef"],
+            "ai_search_text": "Chef",
+        },
+        "chef",
+    )
+    assert score > 0
+    assert "exact_title" in matches
+    assert "fuzzy" not in matches

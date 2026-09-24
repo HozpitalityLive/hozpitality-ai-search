@@ -52,3 +52,15 @@ def test_phase1_typo_and_top5():
     assert result["total"] == 2
     assert result["results"][0]["title"] == "Executive Chef"
     assert result["results"][0]["entity_id"] == "1"
+
+
+def test_default_search_does_not_force_live_filter():
+    class RecordingRepository(FakeRepository):
+        def search(self, query, **kwargs):
+            self.last_kwargs = kwargs
+            return super().search(query, **kwargs)
+
+    repo = RecordingRepository()
+    service = SearchService(repo, fuzzy_threshold=80)
+    service.search(query="chef", limit=5)
+    assert repo.last_kwargs["is_live"] is None

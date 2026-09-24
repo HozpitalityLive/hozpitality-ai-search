@@ -107,8 +107,23 @@ def score_document(doc: dict, query: str, mongo_score: float = 0.0) -> tuple[flo
 
     candidates = [title, *aliases, *keywords, category, company, user_name]
     candidates = [candidate for candidate in candidates if candidate]
-    if candidates and q:
-        fuzzy = max(fuzz.token_set_ratio(q, candidate) for candidate in candidates)
+
+    # Fuzzy similarity is a fallback relevance signal. Do not report fuzzy
+    # when the result already has a strong lexical identity match.
+    strong_identity_match = any(
+        label in matched
+        for label in (
+            "exact_title", "phrase_title", "exact_alias", "alias",
+            "exact_keyword", "keyword", "exact_category", "category",
+            "exact_company", "company", "exact_person",
+        )
+    )
+
+    if candidates and q and not strong_identity_match:
+        fuzzy = max(
+            fuzz.token_set_ratio(q, candidate)
+            for candidate in candidates
+        )
         if fuzzy >= 92:
             add(30, "fuzzy")
         elif fuzzy >= 84:

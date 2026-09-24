@@ -593,6 +593,65 @@ class SearchDocumentsRepository:
 
         return sorted(terms)
 
+    @staticmethod
+    def _document_matches_filters(
+        doc: dict[str, Any],
+        *,
+        entity: str | None,
+        city: str | None,
+        country: str | None,
+        status: str | None,
+        is_live: bool | None,
+    ) -> bool:
+        """Defensive hard-filter check after MongoDB candidate retrieval."""
+        if entity and str(doc.get("entity_type") or "").casefold() != entity.casefold():
+            return False
+
+        metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+
+        if is_live is not None:
+            live_values = [doc.get("is_live"), metadata.get("is_live")]
+            if not any(value is is_live for value in live_values):
+                return False
+            if is_live is True:
+                expiry = doc.get("expires_at")
+                if isinstance(expiry, datetime) and expiry < datetime.now(timezone.utc):
+                    return False
+
+        if status:
+            wanted = normalize(status)
+            values = [doc.get("status"), metadata.get("status"), metadata.get("job_status")]
+            if not any(isinstance(value, str) and normalize(value) == wanted for value in values):
+                return False
+
+        location = doc.get("location") if isinstance(doc.get("location"), dict) else {}
+
+        if city:
+            wanted = normalize(city)
+            company = doc.get("company") if isinstance(doc.get("company"), dict) else {}
+            author = doc.get("author") if isinstance(doc.get("author"), dict) else {}
+            values = [location.get("city"), location.get("current_location"), location.get("prime_city"), company.get("city"), author.get("city_town")]
+            if not any(isinstance(value, str) and wanted in normalize(value) for value in values):
+                return False
+
+        if country:
+            wanted_terms = [normalize(term) for term in SearchDocumentsRepository._country_terms(country)]
+            location_country = location.get("country") if isinstance(location.get("country"), dict) else {}
+            company = doc.get("company") if isinstance(doc.get("company"), dict) else {}
+            company_country = company.get("country") if isinstance(company.get("country"), dict) else {}
+            root_country = doc.get("country") if isinstance(doc.get("country"), dict) else {}
+            values = [location_country.get("name"), location_country.get("ac_name"), location_country.get("code"), root_country.get("name"), root_country.get("code"), company_country.get("name"), company_country.get("code")]
+            countries = location.get("countries")
+            if isinstance(countries, list):
+                for item in countries:
+                    if isinstance(item, dict):
+                        values.extend([item.get("name"), item.get("code")])
+            normalized = [normalize(value) for value in values if isinstance(value, str)]
+            if not any(term in value or value in term for term in wanted_terms for value in normalized):
+                return False
+
+        return True
+
     def search(
         self,
         query: str,
@@ -778,5 +837,19 @@ class SearchDocumentsRepository:
 
             except Exception:
                 pass
+
+        # Defensive hard-filter after retrieval.
+        docs = [
+            doc
+            for doc in docs
+            if self._document_matches_filters(
+                doc,
+                entity=entity,
+                city=city,
+                country=country,
+                status=status,
+                is_live=is_live,
+            )
+        ]
 
         return docs[:candidate_limit]
