@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from urllib import error as urlerror
 from urllib import request as urlrequest
+import re
 
 from .config import settings
 from .query_understanding import SearchPlan
@@ -194,12 +195,29 @@ Deterministic parser result:
                 if cleaned:
                     base.keywords = cleaned
 
+            # Never allow the LLM to invent filters. Deterministic parsing is
+            # authoritative for filters; model output is accepted only for
+            # fields that are explicitly represented in the user query.
+            # In particular, "Find me a job" must produce filters={}.
             filters = parsed.get("filters")
             if isinstance(filters, dict):
-                # LLM filters supplement deterministic filters. They do not
-                # overwrite values already extracted by deterministic rules.
+                query_low = query.casefold()
+                allowed_markers = {
+                    "salary_min": r"\\b(?:salary|pay|paying|compensation)\\b",
+                    "salary_currency": r"\\b(?:aed|usd|inr|gbp|eur|sar|qar)\\b",
+                    "employment_type": r"\\b(?:full[- ]time|part[- ]time|contract|temporary|remote)\\b",
+                    "verified": r"\\bverified\\b",
+                    "featured": r"\\bfeatured\\b",
+                    "currently_working": r"\\b(?:currently working|working professionals?)\\b",
+                }
                 for key, value in filters.items():
-                    if key not in base.filters and value is not None:
+                    marker = allowed_markers.get(key)
+                    if (
+                        key not in base.filters
+                        and value is not None
+                        and marker
+                        and re.search(marker, query_low)
+                    ):
                         base.filters[key] = value
 
             intent = parsed.get("intent")

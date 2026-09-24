@@ -62,6 +62,13 @@ ENTITY_PATTERNS = {
     "faq": r"\b(faqs?|questions?|frequently asked)\b",
 }
 
+PROFESSIONAL_ROLE_TERMS = [
+    "chef", "chefs", "cook", "cooks", "manager", "director", "engineer",
+    "recruiter", "developer", "waiter", "waiters", "bartender", "bartenders",
+    "housekeeper", "housekeepers", "receptionist", "receptionists",
+    "sommelier", "steward", "stewards", "pastry chef", "executive chef",
+]
+
 ENTITY_WORDS = {
     entity: set(re.findall(r"[a-z]+", pattern))
     for entity, pattern in ENTITY_PATTERNS.items()
@@ -220,12 +227,13 @@ def understand(query: str) -> SearchPlan:
 
     entity = _entity(original)
 
-    # A role such as "chef" is naturally a job/professional intent even without
-    # the word "job". Explicit module nouns always take precedence.
+    # Explicit module nouns always take precedence. A role by itself
+    # ("find senior chefs in Dubai") is a professional search; adding an
+    # explicit job noun ("chef jobs") switches it to jobs.
     if not entity:
-        if re.search(r"\b(?:hire|hiring|vacancy|vacancies|salary|paying)\b", low):
+        if re.search(r"\b(?:hire|hiring|vacancy|vacancies|salary|paying|opening|openings)\b", low):
             entity = "job"
-        elif re.search(r"\b(?:chef|manager|director|engineer|recruiter|developer|waiter|bartender|housekeeper|receptionist)\b", low):
+        elif any(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", low) for term in PROFESSIONAL_ROLE_TERMS):
             entity = "professional"
 
     plan.entity = entity

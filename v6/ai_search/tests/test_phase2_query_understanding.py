@@ -39,3 +39,17 @@ def test_all_entity_clarifications():
     }
     for query, expected in cases.items():
         assert clarification_for(understand(query)) == expected
+
+
+def test_professional_role_query_is_not_a_job():
+    plan = understand("find senior chefs in Dubai")
+    assert plan.entity == "professional"
+    assert plan.keywords == ["chefs"]
+    assert plan.city == "Dubai"
+    assert plan.country == "United Arab Emirates"
+    assert plan.level == "senior"
+
+
+def test_no_unrequested_filters():
+    plan = understand("Find me a job")
+    assert plan.filters == {}

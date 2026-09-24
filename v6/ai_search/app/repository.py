@@ -135,12 +135,27 @@ class SearchDocumentsRepository:
         entity = (entity or "").casefold()
         if entity in {"job", "professional", "event", "award", "faq", "article"}:
             if kind == "city":
-                return ["location.city", "location.current_location", "location.prime_city"]
-            return [
+                fields = [
+                    "location.city", "location.current_location", "location.prime_city",
+                ]
+                if entity == "professional":
+                    fields += [
+                        "professional.city", "professional.current_location",
+                        "professional.location.city",
+                    ]
+                return fields
+            fields = [
                 "location.country.name", "location.country.ac_name",
                 "location.country.code", "location.countries.name",
                 "location.countries.code",
             ]
+            if entity == "professional":
+                fields += [
+                    "professional.country.name", "professional.country.ac_name",
+                    "professional.country.code", "professional.location.country.name",
+                    "professional.location.country.ac_name", "professional.location.country.code",
+                ]
+            return fields
         if entity == "company":
             if kind == "city":
                 return ["location.city", "location.current_location", "company.city"]

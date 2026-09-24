@@ -148,8 +148,32 @@ class SearchService:
 
         # Ollama is a fallback, not the default path. Simple/clear searches
         # never need an LLM request.
+        deterministic_plan = understand(original)
+
         if plan.confidence < 0.65 or (plan.entity and not plan.keywords and not plan.category):
             plan = self.llm.interpret(original, plan)
+
+        # Deterministic entity/location/filter extraction is authoritative.
+        # The LLM may fill genuinely ambiguous fields but cannot erase a clear
+        # module/entity decision such as "find senior chefs in Dubai".
+        if deterministic_plan.entity:
+            plan.entity = deterministic_plan.entity
+        if deterministic_plan.city:
+            plan.city = deterministic_plan.city
+        if deterministic_plan.country:
+            plan.country = deterministic_plan.country
+        if deterministic_plan.experience is not None:
+            plan.experience = deterministic_plan.experience
+        if deterministic_plan.level:
+            plan.level = deterministic_plan.level
+        if deterministic_plan.department:
+            plan.department = deterministic_plan.department
+        if deterministic_plan.industry:
+            plan.industry = deterministic_plan.industry
+        if deterministic_plan.category:
+            plan.category = deterministic_plan.category
+        plan.filters = dict(deterministic_plan.filters)
+        plan.date_from, plan.date_to = deterministic_plan.date_from, deterministic_plan.date_to
 
         clarification = clarification_for(plan)
         understanding = plan.as_dict()
@@ -290,6 +314,10 @@ class SearchService:
             )
             seen = {str(d.get("_id")) for d in docs}
             docs.extend(d for d in original_docs if str(d.get("_id")) not in seen)
+
+        # Final authoritative guard: every candidate source (lexical,
+        # semantic, fallback) must satisfy the same hard constraints.
+        docs = self._hard_filter_docs(docs, plan, status, is_live, structured)
 
         related_docs: list[dict] = []
         related_label = None
