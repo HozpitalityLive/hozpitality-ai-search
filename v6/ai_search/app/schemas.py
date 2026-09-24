@@ -31,7 +31,7 @@ class SearchRequest(BaseModel):
     city: str | None = Field(default=None, max_length=120)
     country: str | None = Field(default=None, max_length=120)
     status: str | None = Field(default=None, max_length=80)
-    is_live: bool | None = True
+    is_live: bool | None = None
     limit: int = Field(default=5, ge=1, le=5)
 
 

@@ -1,63 +1,29 @@
 from __future__ import annotations
 
-from collections import Counter
-from typing import Iterable
-
-from rapidfuzz import process, fuzz
+from rapidfuzz import fuzz, process
 
 
-def correct_tokens(
-    query_tokens: list[str],
-    vocabulary: Iterable[str],
-    threshold: int = 82,
-    min_length: int = 3,
-) -> tuple[list[str], list[dict[str, object]]]:
-    vocab = sorted({v for v in vocabulary if len(v) >= min_length})
+def correct_tokens(query_tokens, vocabulary, threshold=82, min_length=3):
+    vocab = sorted({str(v).casefold() for v in vocabulary if isinstance(v, str) and len(v) >= min_length})
     if not vocab:
         return query_tokens, []
 
-    corrected: list[str] = []
-    changes: list[dict[str, object]] = []
-
+    corrected = []
+    changes = []
     for token in query_tokens:
-        if len(token) < min_length:
+        token = token.casefold()
+        if len(token) < min_length or token in vocab:
             corrected.append(token)
             continue
-
-        if token in vocab:
-            corrected.append(token)
-            continue
-
         match = process.extractOne(token, vocab, scorer=fuzz.WRatio)
-        if not match:
-            corrected.append(token)
-            continue
-
-        candidate, score, _ = match
-        if score >= threshold and candidate != token:
-            corrected.append(candidate)
-            changes.append({"from": token, "to": candidate, "score": round(score, 1)})
-        else:
-            corrected.append(token)
-
+        if match:
+            candidate, score, _ = match
+            # WRatio can be permissive for very short tokens. Require a
+            # stronger edit similarity for short words to avoid corruption.
+            required = threshold + (6 if len(token) <= 4 else 0)
+            if score >= required and candidate != token:
+                corrected.append(candidate)
+                changes.append({"from": token, "to": candidate, "score": round(score, 1)})
+                continue
+        corrected.append(token)
     return corrected, changes
-
-
-def build_vocabulary(documents: Iterable[dict]) -> list[str]:
-    counter: Counter[str] = Counter()
-    for doc in documents:
-        for field in ("title", "keywords", "aliases", "category"):
-            value = doc.get(field, [])
-            if isinstance(value, str):
-                values = [value]
-            elif isinstance(value, list):
-                values = value
-            else:
-                values = [value] if value else []
-            for item in values:
-                if isinstance(item, str):
-                    for token in item.casefold().split():
-                        token = "".join(ch for ch in token if ch.isalnum() or ch in "-&")
-                        if len(token) >= 3:
-                            counter[token] += 1
-    return [word for word, _ in counter.most_common(10000)]

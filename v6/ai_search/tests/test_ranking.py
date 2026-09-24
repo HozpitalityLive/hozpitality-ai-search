@@ -3,11 +3,11 @@ from ai_search.app.ranking import score_document
 
 def test_exact_title_wins_over_description():
     exact, exact_matches = score_document(
-        {"title": "Executive Chef", "keywords": ["chef"], "description": ""},
+        {"title": "Executive Chef", "search_keywords": ["chef"], "ai_search_text": ""},
         "executive chef",
     )
     weak, weak_matches = score_document(
-        {"title": "Hotel Manager", "keywords": [], "description": "Executive chef support"},
+        {"title": "Hotel Manager", "search_keywords": [], "ai_search_text": "Executive chef support"},
         "executive chef",
     )
     assert exact > weak

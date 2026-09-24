@@ -25,7 +25,7 @@ def search_get(
     city: str | None = None,
     country: str | None = None,
     status: str | None = None,
-    is_live: bool | None = True,
+    is_live: bool | None = None,
     limit: int = Query(default=5, ge=1, le=5),
 ) -> SearchResponse:
     try:

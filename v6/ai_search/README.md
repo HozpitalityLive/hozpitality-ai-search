@@ -1,74 +1,71 @@
 # Hozpitality AI Search — Phase 1
 
-MongoDB-first lexical search foundation for V6.
+MongoDB-first lexical search foundation integrated into the existing V6 FastAPI service on port `8085`.
 
-## Data source
+## Production data source
 
-`master_search_mastersearchindex.ai_search_text` is the canonical flattened
-search document. Relationship-aware fields are already materialized by the V6
-backfill into `ai_search_text` and `metadata`.
+Phase 1 searches the existing MongoDB collection:
 
-The MongoDB bootstrap is therefore model-agnostic. It does not re-query Jobs,
-Professionals, Companies, Products, Articles, Events, Awards and FAQs
-individually.
+- Database: `mongoAdmin`
+- Collection: `search_documents`
+- Documents: approximately `326,596`
+- Search corpus: `ai_search_text`
+- Existing text index: `idx_ai_search_text`
 
-## Runtime
+The collection already contains Jobs, Professionals, Companies, Products, Articles, Events, Awards and FAQs. No PostgreSQL synchronization or new search-document build is required for Phase 1.
 
-The preferred production integration is the existing V6 FastAPI service on
-port `8085`.
-
-Routes added:
+## Endpoints
 
 - `GET /search`
 - `POST /search`
 - `GET /search/health`
 
-A standalone FastAPI app is also available:
+The routes are registered into the existing V6 FastAPI app, so there is no separate Phase 1 server or port.
 
-```bash
-uvicorn ai_search.app.main:app --host 127.0.0.1 --port 8090
-```
-
-## MongoDB
-
-Configure `ai_search/.env`:
-
-```env
-MONGODB_URI=mongodb://mongoAdmin:PASSWORD@HOST:27017/hozpitality?authSource=admin
-MONGODB_DATABASE=hozpitality
-MONGODB_COLLECTION=search_documents
-```
-
-## Indexes
-
-```bash
-python -m ai_search.scripts.init_indexes
-```
-
-## Build Mongo documents from canonical V6 search documents
-
-Do not run this until `ai_search_text` and `metadata` are populated:
-
-```bash
-python -m ai_search.scripts.sync_from_master_index --confirm
-```
-
-Test with a small sample first:
-
-```bash
-python -m ai_search.scripts.sync_from_master_index --confirm --limit 100
-```
-
-## Search examples
+## Examples
 
 ```bash
 curl "http://127.0.0.1:8085/search?q=chef"
 curl "http://127.0.0.1:8085/search?q=excutive%20chef&entity=job&city=Dubai"
 curl "http://127.0.0.1:8085/search?q=hotel&entity=company"
+curl "http://127.0.0.1:8085/search?q=chef&country=UAE"
+curl "http://127.0.0.1:8085/search?q=chef&is_live=true"
 curl "http://127.0.0.1:8085/search/health"
 ```
 
-The API never returns more than five results.
+## Phase 1 capabilities
 
-Phase 1 does not use an LLM, vector search, conversation memory, or frontend
-rendering.
+- Keyword and phrase search
+- Exact title matching
+- Alias matching using `search_aliases`
+- Keyword matching using `search_keywords` / `keywords`
+- MongoDB `$text` retrieval from the existing `ai_search_text` index
+- Typo correction with RapidFuzz
+- Entity filtering
+- City filtering
+- Country filtering, including common aliases such as UAE/USA/UK
+- Live filtering and expiry protection
+- Status filtering across common document/status fields
+- Deterministic ranking after MongoDB retrieval
+- Maximum 5 API results
+
+## Environment
+
+Create `ai_search/.env` on the server and keep it out of Git:
+
+```env
+MONGODB_URI=mongodb://mongoAdmin:PASSWORD@10.5.140.74:27017/mongoAdmin?authSource=admin
+MONGODB_DATABASE=mongoAdmin
+MONGODB_COLLECTION=search_documents
+MONGODB_MAX_POOL_SIZE=100
+MONGODB_MIN_POOL_SIZE=5
+MONGODB_SERVER_SELECTION_TIMEOUT_MS=5000
+MONGODB_CONNECT_TIMEOUT_MS=5000
+SEARCH_MAX_RESULTS=5
+SEARCH_FUZZY_THRESHOLD=82
+SEARCH_FUZZY_MIN_TOKEN_LENGTH=3
+```
+
+## Important
+
+Do not run the old PostgreSQL/master-index synchronization scripts for Phase 1. Do not create a second MongoDB text index on this collection; MongoDB supports one text index per collection and the production `idx_ai_search_text` index is already the Phase 1 text-search index.

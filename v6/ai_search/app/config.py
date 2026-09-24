@@ -26,7 +26,7 @@ class Settings:
 
     mongodb_database: str = os.getenv(
         "MONGODB_DATABASE",
-        "hozpitality",
+        "mongoAdmin",
     )
 
     mongodb_collection: str = os.getenv(

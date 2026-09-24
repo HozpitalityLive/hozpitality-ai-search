@@ -10,132 +10,55 @@ from .normalization import normalize, tokens
 
 
 class SearchDocumentsRepository:
-    """MongoDB retrieval layer for the Phase 1 canonical search documents."""
+    """MongoDB retrieval layer over the existing search_documents collection."""
+
+    ENTITY_TYPES = {
+        "job", "professional", "company", "product",
+        "article", "event", "award", "faq",
+    }
 
     def __init__(self, collection: Collection):
         self.collection = collection
 
     def ensure_indexes(self) -> None:
-        # Phase 1 replaces the earlier bootstrap index definitions. MongoDB
-        # permits only one text index per collection, so remove the old V1
-        # text index before creating the V2 canonical index.
-        for legacy_name in (
-            "search_documents_text_v1",
-            "search_documents_entity_live_status_v1",
-            "search_documents_location_v1",
-            "search_documents_entity_id_v1",
-            "search_documents_aliases_v1",
-        ):
-            try:
-                self.collection.drop_index(legacy_name)
-            except Exception:
-                pass
+        """Keep the existing Mongo indexes intact.
 
-        # The canonical V6 ai_search_text is the primary searchable payload.
-        # Keep title/taxonomy fields separately weighted so exact identity
-        # signals outrank broad document matches.
-        self.collection.create_index(
-            [
-                ("title", "text"),
-                ("entity_name", "text"),
-                ("category", "text"),
-                ("company_name", "text"),
-                ("user_name", "text"),
-                ("ai_keywords", "text"),
-                ("city", "text"),
-                ("country", "text"),
-                ("ai_search_text", "text"),
-            ],
-            name="search_documents_text_v2",
-            weights={
-                "title": 12,
-                "entity_name": 10,
-                "category": 7,
-                "company_name": 6,
-                "user_name": 5,
-                "ai_keywords": 7,
-                "city": 5,
-                "country": 5,
-                "ai_search_text": 3,
-            },
-        )
-
-        self.collection.create_index(
-            [("entity_type", 1), ("is_live", 1), ("status_normalized", 1)],
-            name="search_documents_entity_live_status_v2",
-        )
-
-        self.collection.create_index(
-            [
-                ("city_normalized", 1),
-                ("country_normalized", 1),
-            ],
-            name="search_documents_location_v2",
-        )
-
-        self.collection.create_index(
-            [("entity_type", 1), ("entity_id", 1)],
-            name="search_documents_entity_id_v2",
-            unique=True,
-        )
-
-        self.collection.create_index(
-            [("aliases_normalized", 1)],
-            name="search_documents_aliases_v2",
-        )
-
-        self.collection.create_index(
-            [("expires_at", 1)],
-            name="search_documents_expiry_v2",
-        )
-
-    def vocabulary(self, limit: int = 50000) -> list[str]:
-        """Build a bounded typo vocabulary from compact searchable fields.
-
-        We intentionally do not tokenize the full ai_search_text collection
-        here; it can contain hundreds of thousands of large documents.
+        The production collection already has a MongoDB text index on
+        ``ai_search_text``. MongoDB permits only one text index per collection,
+        so Phase 1 must use that index rather than attempting to create a
+        second text index or dropping production indexes.
         """
-        projection = {
-            "_id": 0,
-            "title": 1,
-            "entity_name": 1,
-            "category": 1,
-            "company_name": 1,
-            "user_name": 1,
-            "ai_keywords": 1,
-            "aliases": 1,
-            "city": 1,
-            "country": 1,
+        required = {"_id_", "idx_ai_search_text"}
+        try:
+            names = {index["name"] for index in self.collection.list_indexes()}
+            missing = required - names
+            if missing:
+                raise RuntimeError(
+                    "Missing required MongoDB search index(es): "
+                    + ", ".join(sorted(missing))
+                )
+        except RuntimeError:
+            raise
+        except Exception:
+            # Connection errors are surfaced by the route/health endpoint.
+            raise
+
+    @staticmethod
+    def _regex(value: str) -> dict[str, Any]:
+        return {"$regex": re.escape(normalize(value)), "$options": "i"}
+
+    @staticmethod
+    def _country_terms(value: str) -> list[str]:
+        normalized = normalize(value)
+        aliases = {
+            "uae": ["United Arab Emirates", "AE", "UAE"],
+            "u.a.e": ["United Arab Emirates", "AE", "UAE"],
+            "usa": ["United States", "US", "USA"],
+            "us": ["United States", "US", "USA"],
+            "uk": ["United Kingdom", "GB", "UK"],
+            "ua": ["Ukraine", "UA"],
         }
-
-        values: set[str] = set()
-
-        for doc in self.collection.find({}, projection):
-            for field in projection:
-                if field == "_id":
-                    continue
-                value = doc.get(field, [])
-                if isinstance(value, str):
-                    value = [value]
-                elif not isinstance(value, list):
-                    value = [value]
-
-                for item in value:
-                    if not isinstance(item, str):
-                        continue
-                    values.update(
-                        token
-                        for token in re.findall(
-                            r"[a-z0-9][a-z0-9&-]*",
-                            item.casefold(),
-                        )
-                        if len(token) >= 3
-                    )
-
-            if len(values) >= limit:
-                break
-
-        return sorted(values)[:limit]
+        return aliases.get(normalized, [value])
 
     @staticmethod
     def _filter(
@@ -145,33 +68,191 @@ class SearchDocumentsRepository:
         status: str | None,
         is_live: bool | None,
     ) -> dict[str, Any]:
-        query: dict[str, Any] = {}
+        clauses: list[dict[str, Any]] = []
 
         if entity:
-            query["entity_type"] = entity
+            clauses.append({"entity_type": entity})
 
         if is_live is not None:
-            query["is_live"] = is_live
-
-            # Treat an expired document as not live even if a stale source row
-            # still has is_live=true.
-            if is_live is True:
-                query["$or"] = [
-                    {"expires_at": None},
-                    {"expires_at": {"$exists": False}},
-                    {"expires_at": {"$gte": datetime.now(timezone.utc)}},
+            clauses.append({
+                "$or": [
+                    {"is_live": is_live},
+                    {"metadata.is_live": is_live},
                 ]
+            })
+            if is_live is True:
+                # If an expiry exists, it must still be in the future.
+                clauses.append({
+                    "$or": [
+                        {"expires_at": {"$exists": False}},
+                        {"expires_at": None},
+                        {"expires_at": {"$gte": datetime.now(timezone.utc)}},
+                    ]
+                })
 
         if status:
-            query["status_normalized"] = normalize(status)
+            pattern = re.escape(normalize(status))
+            clauses.append({
+                "$or": [
+                    {"status": {"$regex": f"^{pattern}$", "$options": "i"}},
+                    {"metadata.status": {"$regex": f"^{pattern}$", "$options": "i"}},
+                    {"metadata.job_status": {"$regex": f"^{pattern}$", "$options": "i"}},
+                ]
+            })
 
         if city:
-            query["city_normalized"] = normalize(city)
+            pattern = re.escape(normalize(city))
+            clauses.append({
+                "$or": [
+                    {"location.city": {"$regex": pattern, "$options": "i"}},
+                    {"location.current_location": {"$regex": pattern, "$options": "i"}},
+                    {"location.prime_city": {"$regex": pattern, "$options": "i"}},
+                    {"company.city": {"$regex": pattern, "$options": "i"}},
+                    {"author.city_town": {"$regex": pattern, "$options": "i"}},
+                ]
+            })
 
         if country:
-            query["country_normalized"] = normalize(country)
+            country_clauses = []
+            for term in SearchDocumentsRepository._country_terms(country):
+                pattern = re.escape(normalize(term))
+                country_clauses.extend([
+                    {"location.country.name": {"$regex": pattern, "$options": "i"}},
+                    {"location.country.ac_name": {"$regex": pattern, "$options": "i"}},
+                    {"location.country.code": {"$regex": f"^{pattern}$", "$options": "i"}},
+                    {"location.countries.name": {"$regex": pattern, "$options": "i"}},
+                    {"location.countries.code": {"$regex": f"^{pattern}$", "$options": "i"}},
+                    {"country.name": {"$regex": pattern, "$options": "i"}},
+                    {"country.code": {"$regex": f"^{pattern}$", "$options": "i"}},
+                    {"company.country.name": {"$regex": pattern, "$options": "i"}},
+                ])
+            clauses.append({"$or": country_clauses})
 
-        return query
+        return {"$and": clauses} if clauses else {}
+
+    @staticmethod
+    def _projection() -> dict[str, Any]:
+        return {
+            "_id": 1,
+            "entity_type": 1,
+            "title": 1,
+            "short_title": 1,
+            "subtitle": 1,
+            "description": 1,
+            "question": 1,
+            "answer": 1,
+            "ai_search_text": 1,
+            "search_aliases": 1,
+            "search_keywords": 1,
+            "keywords": 1,
+            "location": 1,
+            "country": 1,
+            "category": 1,
+            "company": 1,
+            "author": 1,
+            "user": 1,
+            "professional": 1,
+            "job": 1,
+            "media": 1,
+            "profile_image": 1,
+            "cover_image": 1,
+            "slug": 1,
+            "links": 1,
+            "source": 1,
+            "status": 1,
+            "is_live": 1,
+            "metadata": 1,
+            "created_at": 1,
+            "dates": 1,
+            "start_datetime": 1,
+            "end_datetime": 1,
+            "award_date": 1,
+            "text_score": {"$meta": "textScore"},
+        }
+
+    def _exact_candidates(
+        self,
+        query: str,
+        filters: dict[str, Any],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Retrieve high-confidence title/alias/keyword phrase matches first."""
+        phrase = re.escape(normalize(query))
+        if not phrase:
+            return []
+
+        field_clauses = [
+            {"title": {"$regex": f"^{phrase}$", "$options": "i"}},
+            {"search_aliases": {"$regex": f"^{phrase}$", "$options": "i"}},
+            {"search_keywords": {"$regex": f"^{phrase}$", "$options": "i"}},
+        ]
+        query_filter = dict(filters)
+        query_filter["$or"] = field_clauses
+
+        return list(
+            self.collection.find(
+                query_filter,
+                self._projection(),
+            ).limit(limit)
+        )
+
+    def vocabulary(self, limit: int = 60000) -> list[str]:
+        """Build a bounded vocabulary from existing compact search fields.
+
+        This is lazy and cached by SearchService. It deliberately avoids
+        scanning the large ai_search_text field.
+        """
+        values: set[str] = set()
+        projection = {"_id": 0, "title": 1, "search_aliases": 1, "search_keywords": 1}
+
+        cursor = self.collection.find({}, projection, batch_size=5000)
+        for doc in cursor:
+            raw_values: list[Any] = [doc.get("title")]
+            raw_values.extend(doc.get("search_aliases") or [])
+            raw_values.extend(doc.get("search_keywords") or [])
+            for value in raw_values:
+                if not isinstance(value, str):
+                    continue
+                for token in re.findall(r"[a-z0-9][a-z0-9&'-]*", value.casefold()):
+                    if len(token) >= 3:
+                        values.add(token)
+                        if len(values) >= limit:
+                            return sorted(values)
+        return sorted(values)
+
+    def suggest_vocabulary(self, token: str, limit: int = 200) -> list[str]:
+        """Return likely vocabulary terms for one misspelled token.
+
+        This avoids building a 300k-document vocabulary on every process
+        start. Candidate strings come only from compact title/alias/keyword
+        fields, never the large ai_search_text payload.
+        """
+        normalized = normalize(token)
+        if len(normalized) < 3:
+            return []
+        prefix = re.escape(normalized[:2])
+        suffix = re.escape(normalized[-1])
+        pattern = f"^{prefix}.*{suffix}$"
+        projection = {"_id": 0, "title": 1, "search_aliases": 1, "search_keywords": 1}
+        query = {
+            "$or": [
+                {"title": {"$regex": pattern, "$options": "i"}},
+                {"search_aliases": {"$regex": pattern, "$options": "i"}},
+                {"search_keywords": {"$regex": pattern, "$options": "i"}},
+            ]
+        }
+        terms: set[str] = set()
+        try:
+            for doc in self.collection.find(query, projection).limit(limit):
+                values = [doc.get("title"), *(doc.get("search_aliases") or []), *(doc.get("search_keywords") or [])]
+                for value in values:
+                    if isinstance(value, str):
+                        for candidate in re.findall(r"[a-z0-9][a-z0-9&'-]*", value.casefold()):
+                            if len(candidate) >= 3:
+                                terms.add(candidate)
+        except Exception:
+            return []
+        return sorted(terms)
 
     def search(
         self,
@@ -185,73 +266,57 @@ class SearchDocumentsRepository:
         limit: int,
     ) -> list[dict[str, Any]]:
         filters = self._filter(entity, city, country, status, is_live)
-        q_tokens = tokens(query)
-
-        if not q_tokens:
+        if not tokens(query):
             return []
 
-        # Candidate pool is intentionally larger than the API limit so the
-        # application ranking layer can apply exact/phrase/alias signals.
         candidate_limit = 100
-
+        projection = self._projection()
         docs: list[dict[str, Any]] = []
 
-        # MongoDB text search is the primary lexical retrieval mechanism.
-        # Phrase quotes are used only when the query contains multiple tokens;
-        # this preserves normal keyword behavior for ordinary searches.
-        text_query = query.strip()
-        mongo_query: dict[str, Any] = {
-            "$text": {"$search": text_query},
-            **filters,
-        }
+        # 1. Exact title/alias/keyword phrase matches.
+        docs.extend(self._exact_candidates(query, filters, candidate_limit))
+        seen = {str(doc.get("_id")) for doc in docs}
 
-        projection = {
-            "text_score": {"$meta": "textScore"},
-        }
-
+        # 2. MongoDB's existing ai_search_text text index.
         try:
-            docs = list(
+            text_docs = list(
                 self.collection.find(
-                    mongo_query,
+                    {"$text": {"$search": query.strip()}, **filters},
                     projection,
                 )
                 .sort([("text_score", {"$meta": "textScore"})])
                 .limit(candidate_limit)
             )
+            docs.extend(doc for doc in text_docs if str(doc.get("_id")) not in seen)
+            seen.update(str(doc.get("_id")) for doc in text_docs)
         except Exception:
-            # A malformed text query should not take the API down.
-            docs = []
+            # Exact matching still works if MongoDB rejects an unusual text
+            # expression. The service will not fail solely because of it.
+            pass
 
-        # Alias / normalized field fallback. This is especially useful after
-        # typo correction when MongoDB's tokenizer does not find the original.
-        fallback_terms = []
-        for token in q_tokens:
-            if len(token) >= 3:
-                fallback_terms.append(
-                    {
-                        "$or": [
-                            {"aliases_normalized": {"$regex": re.escape(token)}},
-                            {"title_normalized": {"$regex": re.escape(token)}},
-                            {"ai_keywords_normalized": {"$regex": re.escape(token)}},
-                        ]
-                    }
+        # 3. For a multi-token phrase, retrieve documents containing all query
+        # tokens in the existing searchable aliases/keywords/title fields.
+        q_tokens = [t for t in tokens(query) if len(t) >= 3]
+        if q_tokens and len(docs) < candidate_limit:
+            token_clauses = []
+            for token in q_tokens[:8]:
+                pattern = re.escape(token)
+                token_clauses.append({
+                    "$or": [
+                        {"title": {"$regex": pattern, "$options": "i"}},
+                        {"search_aliases": {"$regex": pattern, "$options": "i"}},
+                        {"search_keywords": {"$regex": pattern, "$options": "i"}},
+                    ]
+                })
+            fallback_filter = {"$and": token_clauses}
+            if filters:
+                fallback_filter = {"$and": [filters, fallback_filter]}
+            try:
+                fallback_docs = list(
+                    self.collection.find(fallback_filter, projection).limit(candidate_limit)
                 )
-
-        if fallback_terms:
-            fallback_query = {
-                **filters,
-                "$and": fallback_terms,
-            }
-            fallback = list(
-                self.collection.find(
-                    fallback_query,
-                    projection,
-                ).limit(candidate_limit)
-            )
-            seen = {str(d.get("_id")) for d in docs}
-            docs.extend(
-                d for d in fallback
-                if str(d.get("_id")) not in seen
-            )
+                docs.extend(doc for doc in fallback_docs if str(doc.get("_id")) not in seen)
+            except Exception:
+                pass
 
         return docs[:candidate_limit]
