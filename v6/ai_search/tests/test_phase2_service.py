@@ -69,3 +69,29 @@ def test_structured_filter_falls_back_to_soft_matching():
     assert result["understanding"]["experience"] == 5
     assert result["understanding"]["level"] == "senior"
     assert len(repo.calls) >= 2
+
+
+class StrictLocationRepository(FakeRepository):
+    def search(self, query, **kwargs):
+        self.calls.append((query, kwargs))
+        if kwargs.get("city") == "Dubai":
+            return []
+        return [{
+            "_id": "job:related",
+            "entity_type": "job",
+            "title": "Chef Job - Abu Dhabi",
+            "location": {"city": "Abu Dhabi", "country": {"name": "United Arab Emirates"}},
+            "source": {"object_id": 99},
+            "ai_search_text": "Chef job Abu Dhabi",
+        }]
+
+
+def test_no_exact_location_returns_related_results_separately():
+    repo = StrictLocationRepository()
+    service = SearchService(repo)
+    result = service.search(query="chef jobs in Dubai")
+    assert result["total"] == 0
+    assert result["results"] == []
+    assert result["message"]
+    assert result["related_results"]
+    assert result["related_results"][0]["matched_by"][-1] == "related_result"

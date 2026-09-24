@@ -74,4 +74,6 @@ class SearchResponse(BaseModel):
     corrected_query: str | None = None
     total: int
     results: list[SearchResult]
+    message: str | None = None
+    related_results: list[SearchResult] = Field(default_factory=list)
     understanding: SearchUnderstanding | None = None

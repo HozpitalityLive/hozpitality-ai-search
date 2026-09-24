@@ -122,10 +122,13 @@ Deterministic parser result:
         payload = {
             "model": self.model,
             "stream": False,
+            "think": False,
+            "keep_alive": "5m",
             "format": self._schema(),
             "options": {
                 "temperature": 0,
-                "num_predict": 500,
+                "num_predict": 300,
+                "num_ctx": 4096,
             },
             "messages": [
                 {

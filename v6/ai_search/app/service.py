@@ -106,6 +106,22 @@ class SearchService:
                 return value.strip()
         return None
 
+    @staticmethod
+    def _result_payload(doc: dict, score: float, matched: list[str], corrected_query: str | None = None) -> dict:
+        return {
+            "entity_type": str(doc.get("entity_type") or ""),
+            "entity_id": str(doc.get("source", {}).get("object_id") or doc.get("_id") or ""),
+            "title": str(doc.get("title") or doc.get("question") or doc.get("short_title") or "Untitled result"),
+            "description": SearchService._description(doc),
+            "location": SearchService._location(doc),
+            "category": SearchService._category(doc),
+            "url": SearchService._url(doc),
+            "image": SearchService._image(doc),
+            "score": round(score, 4),
+            "matched_by": list(dict.fromkeys(matched)),
+            "corrected_query": corrected_query,
+        }
+
     def search(
         self,
         *,
@@ -275,6 +291,27 @@ class SearchService:
             seen = {str(d.get("_id")) for d in docs}
             docs.extend(d for d in original_docs if str(d.get("_id")) not in seen)
 
+        related_docs: list[dict] = []
+        related_label = None
+        # Exact constraints are authoritative. If they produce no candidates,
+        # do a separate relaxed search for helpful alternatives rather than
+        # silently returning wrong-location documents as exact matches.
+        if not docs and (plan.city or plan.country or structured):
+            related_docs = self.repository.search(
+                effective_query,
+                entity=plan.entity,
+                city=None,
+                country=None,
+                status=status,
+                is_live=is_live,
+                limit=50,
+                structured={},
+                date_from=plan.date_from,
+                date_to=plan.date_to,
+            )
+            if related_docs:
+                related_label = "We couldn't find an exact match for your requested filters. Here are related results you can check below."
+
         ranked = []
         for doc in docs:
             score, matched = score_document(
@@ -305,21 +342,29 @@ class SearchService:
 
         ranked.sort(key=lambda item: (-item[0], str(item[1].get("_id"))))
 
-        results = []
-        for score, doc, matched in ranked[:limit]:
-            results.append({
-                "entity_type": str(doc.get("entity_type") or ""),
-                "entity_id": str(doc.get("source", {}).get("object_id") or doc.get("_id") or ""),
-                "title": str(doc.get("title") or doc.get("question") or doc.get("short_title") or "Untitled result"),
-                "description": self._description(doc),
-                "location": self._location(doc),
-                "category": self._category(doc),
-                "url": self._url(doc),
-                "image": self._image(doc),
-                "score": round(score, 4),
-                "matched_by": list(dict.fromkeys(matched)),
-                "corrected_query": corrected_query if changes else None,
-            })
+        results = [
+            self._result_payload(doc, score, matched, corrected_query if changes else None)
+            for score, doc, matched in ranked[:limit]
+        ]
+
+        related_results = []
+        if not results and related_docs:
+            related_ranked = []
+            for doc in related_docs:
+                score, matched = score_document(
+                    doc,
+                    retrieval_query,
+                    float(doc.get("text_score") or 0.0),
+                )
+                # Related results are explicitly marked as such; their score
+                # must never leak into the exact-result ranking.
+                matched = list(dict.fromkeys(matched + ["related_result"]))
+                related_ranked.append((score, doc, matched))
+            related_ranked.sort(key=lambda item: (-item[0], str(item[1].get("_id"))))
+            related_results = [
+                self._result_payload(doc, score, matched, corrected_query if changes else None)
+                for score, doc, matched in related_ranked[:limit]
+            ]
 
         understanding["keywords"] = search_tokens
         understanding["corrected_keywords"] = corrected_tokens
@@ -330,6 +375,8 @@ class SearchService:
             "corrected_query": corrected_query if changes else None,
             "total": len(results),
             "results": results,
+            "message": related_label,
+            "related_results": related_results,
             "understanding": understanding,
         }
 

@@ -35,15 +35,16 @@ def test_ollama_interpreter_parses_structured_response(monkeypatch):
     def fake_urlopen(req, timeout):
         assert "/api/chat" in req.full_url
         payload = json.loads(req.data.decode())
-        assert payload["model"] == "qwen3:14b"
+        assert payload["model"] == "qwen3:8b"
         assert payload["stream"] is False
+        assert payload["think"] is False
         assert payload["format"]["type"] == "object"
         return FakeResponse()
 
     monkeypatch.setattr("ai_search.app.llm.urlrequest.urlopen", fake_urlopen)
     monkeypatch.setattr("ai_search.app.llm.settings", SimpleNamespace(
         ollama_base_url="http://127.0.0.1:11434",
-        ollama_query_model="qwen3:14b",
+        ollama_query_model="qwen3:8b",
         ollama_timeout_seconds=20,
     ))
 

@@ -124,6 +124,57 @@ class SearchDocumentsRepository:
         return aliases.get(normalized, [value])
 
     @staticmethod
+    def _location_fields(entity: str | None, kind: str) -> list[str]:
+        """Return authoritative location fields for an entity type.
+
+        For jobs/professionals, the document's own location is authoritative.
+        A company's or author's location must not make a job appear to be in
+        that city. Other entities may expose a root location, while companies
+        may also keep location under company.*.
+        """
+        entity = (entity or "").casefold()
+        if entity in {"job", "professional", "event", "award", "faq", "article"}:
+            if kind == "city":
+                return ["location.city", "location.current_location", "location.prime_city"]
+            return [
+                "location.country.name", "location.country.ac_name",
+                "location.country.code", "location.countries.name",
+                "location.countries.code",
+            ]
+        if entity == "company":
+            if kind == "city":
+                return ["location.city", "location.current_location", "company.city"]
+            return [
+                "location.country.name", "location.country.ac_name",
+                "location.country.code", "company.country.name",
+                "company.country.ac_name", "company.country.code",
+            ]
+        # Products can be associated with a supplier/company, so allow both.
+        if kind == "city":
+            return ["location.city", "location.current_location", "location.prime_city", "company.city"]
+        return [
+            "location.country.name", "location.country.ac_name",
+            "location.country.code", "location.countries.name",
+            "location.countries.code", "company.country.name",
+            "company.country.ac_name", "company.country.code",
+        ]
+
+    @staticmethod
+    def _nested_values(doc: dict[str, Any], path: str) -> list[Any]:
+        current: list[Any] = [doc]
+        for part in path.split("."):
+            nxt: list[Any] = []
+            for item in current:
+                if isinstance(item, dict):
+                    value = item.get(part)
+                    if isinstance(value, list):
+                        nxt.extend(value)
+                    elif value is not None:
+                        nxt.append(value)
+            current = nxt
+        return current
+
+    @staticmethod
     def _filter(
         entity: str | None,
         city: str | None,
@@ -207,109 +258,23 @@ class SearchDocumentsRepository:
             })
 
         if city:
-            pattern = re.escape(
-                normalize(city)
-            )
-
+            pattern = re.escape(normalize(city))
             clauses.append({
                 "$or": [
-                    {
-                        "location.city": {
-                            "$regex": pattern,
-                            "$options": "i",
-                        }
-                    },
-                    {
-                        "location.current_location": {
-                            "$regex": pattern,
-                            "$options": "i",
-                        }
-                    },
-                    {
-                        "location.prime_city": {
-                            "$regex": pattern,
-                            "$options": "i",
-                        }
-                    },
-                    {
-                        "company.city": {
-                            "$regex": pattern,
-                            "$options": "i",
-                        }
-                    },
-                    {
-                        "author.city_town": {
-                            "$regex": pattern,
-                            "$options": "i",
-                        }
-                    },
+                    {path: {"$regex": pattern, "$options": "i"}}
+                    for path in SearchDocumentsRepository._location_fields(entity, "city")
                 ]
             })
 
         if country:
             country_clauses: list[dict[str, Any]] = []
-
-            for term in SearchDocumentsRepository._country_terms(
-                country
-            ):
-                pattern = re.escape(
-                    normalize(term)
+            for term in SearchDocumentsRepository._country_terms(country):
+                pattern = re.escape(normalize(term))
+                country_clauses.extend(
+                    {path: {"$regex": pattern, "$options": "i"}}
+                    for path in SearchDocumentsRepository._location_fields(entity, "country")
                 )
-
-                country_clauses.extend([
-                    {
-                        "location.country.name": {
-                            "$regex": pattern,
-                            "$options": "i",
-                        }
-                    },
-                    {
-                        "location.country.ac_name": {
-                            "$regex": pattern,
-                            "$options": "i",
-                        }
-                    },
-                    {
-                        "location.country.code": {
-                            "$regex": f"^{pattern}$",
-                            "$options": "i",
-                        }
-                    },
-                    {
-                        "location.countries.name": {
-                            "$regex": pattern,
-                            "$options": "i",
-                        }
-                    },
-                    {
-                        "location.countries.code": {
-                            "$regex": f"^{pattern}$",
-                            "$options": "i",
-                        }
-                    },
-                    {
-                        "country.name": {
-                            "$regex": pattern,
-                            "$options": "i",
-                        }
-                    },
-                    {
-                        "country.code": {
-                            "$regex": f"^{pattern}$",
-                            "$options": "i",
-                        }
-                    },
-                    {
-                        "company.country.name": {
-                            "$regex": pattern,
-                            "$options": "i",
-                        }
-                    },
-                ])
-
-            clauses.append({
-                "$or": country_clauses,
-            })
+            clauses.append({"$or": country_clauses})
 
         structured = structured or {}
 
@@ -682,30 +647,25 @@ class SearchDocumentsRepository:
             if not any(isinstance(value, str) and normalize(value) == wanted for value in values):
                 return False
 
-        location = doc.get("location") if isinstance(doc.get("location"), dict) else {}
-
         if city:
             wanted = normalize(city)
-            company = doc.get("company") if isinstance(doc.get("company"), dict) else {}
-            author = doc.get("author") if isinstance(doc.get("author"), dict) else {}
-            values = [location.get("city"), location.get("current_location"), location.get("prime_city"), company.get("city"), author.get("city_town")]
+            values: list[Any] = []
+            for path in SearchDocumentsRepository._location_fields(entity, "city"):
+                values.extend(SearchDocumentsRepository._nested_values(doc, path))
             if not any(isinstance(value, str) and wanted in normalize(value) for value in values):
                 return False
 
         if country:
             wanted_terms = [normalize(term) for term in SearchDocumentsRepository._country_terms(country)]
-            location_country = location.get("country") if isinstance(location.get("country"), dict) else {}
-            company = doc.get("company") if isinstance(doc.get("company"), dict) else {}
-            company_country = company.get("country") if isinstance(company.get("country"), dict) else {}
-            root_country = doc.get("country") if isinstance(doc.get("country"), dict) else {}
-            values = [location_country.get("name"), location_country.get("ac_name"), location_country.get("code"), root_country.get("name"), root_country.get("code"), company_country.get("name"), company_country.get("code")]
-            countries = location.get("countries")
-            if isinstance(countries, list):
-                for item in countries:
-                    if isinstance(item, dict):
-                        values.extend([item.get("name"), item.get("code")])
-            normalized = [normalize(value) for value in values if isinstance(value, str)]
-            if not any(term in value or value in term for term in wanted_terms for value in normalized):
+            values: list[Any] = []
+            for path in SearchDocumentsRepository._location_fields(entity, "country"):
+                values.extend(SearchDocumentsRepository._nested_values(doc, path))
+            normalized_values = [normalize(value) for value in values if isinstance(value, str)]
+            if not any(
+                term == value or term in value or value in term
+                for term in wanted_terms
+                for value in normalized_values
+            ):
                 return False
 
         structured = structured or {}
