@@ -63,6 +63,25 @@ def container(mongo_db):
     set_container(None)
 
 
+TEST_URL_TEMPLATES = {
+    # Test configuration only: real route patterns are deployment config
+    # (PUBLIC_URL_TEMPLATES) because the migration stores slugs, not routes.
+    "job": "https://www.hozpitality.com/test-jobs/{slug}",
+    "company": "https://www.hozpitality.com/test-companies/{slug}",
+    "professional": "https://www.hozpitality.com/test-profiles/{slug}",
+}
+
+
+@pytest.fixture()
+def url_templates():
+    from ai_search.app.config import settings
+
+    original = settings.url_templates
+    object.__setattr__(settings, "url_templates", dict(TEST_URL_TEMPLATES))
+    yield TEST_URL_TEMPLATES
+    object.__setattr__(settings, "url_templates", original)
+
+
 @pytest.fixture()
 def chat(container):
     return container.chat

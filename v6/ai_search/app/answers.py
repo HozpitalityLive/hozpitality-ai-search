@@ -71,7 +71,17 @@ def location_text(state: dict[str, Any]) -> str | None:
 def describe_search(state: dict[str, Any], count: int = 2) -> str:
     keywords = " ".join(state.get("keywords") or [])
     entity = state.get("entity")
+    filters = state.get("filters") or {}
     noun = entity_label(entity, count)
+    if entity == "company" and filters.get("is_supplier"):
+        noun = "supplier" if count == 1 else "suppliers"
+    elif entity == "company" and filters.get("industry_context") == "supplier":
+        noun = ("company" if count == 1 else "companies") + " in supplier industries"
+    if state.get("related") == "companies_hiring":
+        noun = (
+            "company" if count == 1 else "companies"
+        ) + f" hiring {state.get('related_role') or ''}".rstrip()
+        keywords = ""
     subject = f"{keywords} {noun}".strip() if keywords else noun
     if entity == "professional" and keywords:
         subject = f"{keywords} professional{'s' if count != 1 else ''}"
@@ -107,6 +117,8 @@ def describe_filters(filters: dict[str, Any]) -> str:
         parts.append("verified")
     if filters.get("featured"):
         parts.append("featured")
+    if filters.get("supplier_category"):
+        parts.append(f"supplier category: {filters['supplier_category']}")
     return ", ".join(parts)
 
 

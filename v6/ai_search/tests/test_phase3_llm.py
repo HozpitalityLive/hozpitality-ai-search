@@ -143,12 +143,13 @@ def test_hallucinated_count_is_rejected(container):
     assert r["llm"]["fallback_reason"] == "invalid_output"
 
 
-def test_unknown_urls_are_stripped_from_answers(container):
+def test_unknown_urls_are_stripped_from_answers(container, url_templates):
     def handler(request):
         return httpx.Response(
             200,
             json=ollama_reply(
-                "See https://evil.example/phish and https://www.hozpitality.com/jobs/101 for details."
+                "See https://evil.example/phish and "
+                "https://www.hozpitality.com/test-jobs/sous-chef-102 for details."
             ),
         )
 
@@ -156,7 +157,7 @@ def test_unknown_urls_are_stripped_from_answers(container):
         message="Find chef jobs in Dubai", conversation_id=CID
     )
     assert "evil.example" not in r["answer"]
-    assert "https://www.hozpitality.com/jobs/101" in r["answer"]
+    assert "https://www.hozpitality.com/test-jobs/sous-chef-102" in r["answer"]
 
 
 def test_think_blocks_are_removed(container):

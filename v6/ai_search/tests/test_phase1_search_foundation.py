@@ -34,17 +34,21 @@ def test_hotel_jobs_mumbai(container):
 def test_hr_manager_uae(container):
     result = container.search.search(query="HR manager UAE")
     assert result["results"], result
-    assert any("HR Manager" in t for t in _titles(result))
+    # Professionals' titles are names (migrate_professionals); the role is metadata.
+    assert any(r["metadata"].get("role") == "HR Manager" for r in result["results"])
     assert all(
         r["location"]["country"] == "United Arab Emirates" for r in result["results"]
     )
 
 
 def test_restaurant_suppliers(container):
+    # Per migrate_companies.py suppliers are companies with company.is_supplier;
+    # marketplace products are a different module.
     result = container.search.search(query="restaurant suppliers")
     assert result["understanding"]["clarification"] is None
-    assert _types(result) == {"product"}
-    assert "Restaurant POS System" in _titles(result)
+    assert _types(result) == {"company"}
+    assert _titles(result) == ["KitchenPro Supplies"]
+    assert all(r["metadata"]["is_supplier"] for r in result["results"])
 
 
 def test_hospitality_companies(container):
@@ -57,7 +61,8 @@ def test_hospitality_companies(container):
 def test_events_dubai_browse(container):
     result = container.search.search(query="events Dubai")
     assert result["understanding"]["browse"] is True
-    assert _titles(result) == ["The Hotel Show Dubai 2026"]
+    assert set(_titles(result)) == {"The Hotel Show Dubai 2026", "Chef Culinary Expo"}
+    assert all(r["location"]["city"] == "Dubai" for r in result["results"])
 
 
 def test_hospitality_articles(container):
@@ -68,7 +73,8 @@ def test_hospitality_articles(container):
 
 def test_awards(container):
     result = container.search.search(query="hospitality awards")
-    assert _titles(result) == ["Hospitality Excellence Awards 2026"]
+    assert _types(result) == {"award"}
+    assert _titles(result)[0] == "Hospitality Excellence Awards 2026"
     # Entity filtering alone at the repository level.
     docs = container.repository.browse(
         entity="award", city=None, country=None, status=None, is_live=None
@@ -111,8 +117,9 @@ def test_country_filter_is_hard(container):
 
 
 def test_live_filter(container, mongo_db):
+    # migrate_jobs writes liveness twice (is_live and metadata.is_live).
     mongo_db["search_documents"].update_one(
-        {"_id": "job:102"}, {"$set": {"is_live": False}}
+        {"_id": "job:102"}, {"$set": {"is_live": False, "metadata.is_live": False}}
     )
     result = container.search.search(
         query="sous chef", entity="job", city="Dubai", is_live=True
@@ -133,10 +140,39 @@ def test_typo_correction(container):
     assert result["results"][0]["title"] == "Executive Chef"
 
 
-def test_result_urls_come_from_records(container):
+def test_no_url_is_fabricated_without_a_route_template(container):
+    # Jobs have a slug but no URL in the migration: without a configured route
+    # template the backend must return url=None (never a guessed URL).
+    result = container.search.search(query="chef jobs in Dubai")
+    assert result["results"]
+    for item in result["results"]:
+        assert item["url"] is None and item["url_source"] is None
+        assert item["slug"]
+
+
+def test_urls_are_built_from_configured_templates_and_real_slugs(
+    container, url_templates
+):
     result = container.search.search(query="chef jobs in Dubai")
     for item in result["results"]:
-        assert item["url"] == f"https://www.hozpitality.com/jobs/{item['entity_id']}"
+        assert item["url"] == f"https://www.hozpitality.com/test-jobs/{item['slug']}"
+        assert item["url_source"] == "template"
+        company = item["company_ref"]
+        assert (
+            company["url"]
+            == f"https://www.hozpitality.com/test-companies/{company['slug']}"
+        )
+
+
+def test_award_url_comes_from_the_record(container):
+    from ai_search.tests.fixtures_data import AWARD_URL
+
+    result = container.search.search(query="hospitality excellence awards")
+    top = result["results"][0]
+    assert top["url"] == AWARD_URL and top["url_source"] == "record"
+    no_url = container.search.search(query="chef of the year awards")["results"][0]
+    assert no_url["title"] == "Chef of the Year Awards"
+    assert no_url["url"] is None  # award_detail_url is NULL for this award
 
 
 def test_slug_is_never_returned_as_url():
@@ -148,11 +184,15 @@ def test_slug_is_never_returned_as_url():
     assert payload["url"] is None
 
 
-def test_fetch_by_ids_supports_object_ids(container):
-    from ai_search.tests.fixtures_data import INJECTION_OID
+def test_fetch_by_ids_supports_object_ids(container, mongo_db):
+    from bson import ObjectId
 
-    docs = container.repository.fetch_by_ids([str(INJECTION_OID), "job:101"])
-    assert [str(d["_id"]) for d in docs] == [str(INJECTION_OID), "job:101"]
+    oid = ObjectId("65f000000000000000000001")
+    mongo_db["search_documents"].insert_one(
+        {"_id": oid, "entity_type": "job", "title": "Legacy"}
+    )
+    docs = container.repository.fetch_by_ids([str(oid), "job:101"])
+    assert [str(d["_id"]) for d in docs] == [str(oid), "job:101"]
 
 
 @pytest.mark.parametrize(

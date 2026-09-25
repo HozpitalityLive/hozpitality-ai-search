@@ -30,10 +30,14 @@ import json
 from typing import Any
 
 from .config import settings
-from .dialogue import FILTER_ENTITIES, TurnIntent
+from .dialogue import TurnIntent
+from .schema_map import filter_applies
 from .query_understanding import SearchPlan
 
 REPO_FILTER_KEYS = {
+    "is_supplier",
+    "industry_context",
+    "supplier_category",
     "salary_min",
     "salary_currency",
     "employment_type",
@@ -49,6 +53,9 @@ def empty_state() -> dict[str, Any]:
     return {
         "entity": None,
         "entity_source": None,
+        "related": None,
+        "related_role": None,
+        "last_transition": None,
         "location": {"city": None, "country": None, "raw": None},
         "location_asked": False,
         "location_any": False,
@@ -145,30 +152,95 @@ def has_location(state: dict[str, Any]) -> bool:
     return bool(location.get("city") or location.get("country") or location.get("raw"))
 
 
+# Search-state fields (a conversation can hold several independent searches;
+# these belong to the CURRENT one). Result history is conversation-level.
+SEARCH_FIELDS = (
+    "entity",
+    "entity_source",
+    "keywords",
+    "location",
+    "location_any",
+    "location_asked",
+    "filters",
+    "strict_filters",
+    "pending",
+    "related",
+    "related_role",
+)
+# Keywords describing people/positions transfer between jobs and
+# professionals ("chef jobs" <-> "chef professionals") but not to companies,
+# products, articles, events, awards or FAQs.
+PEOPLE_ENTITIES = {"job", "professional"}
+
+
+def _describe(state: dict[str, Any]) -> dict[str, Any]:
+    location = state.get("location") or {}
+    return {
+        "entity": state.get("entity"),
+        "keywords": list(state.get("keywords") or []),
+        "location": {k: v for k, v in location.items() if v},
+        "filters": dict(state.get("filters") or {}),
+    }
+
+
 def apply_intent(state: dict[str, Any], intent: TurnIntent) -> dict[str, Any]:
-    """Merge the explicit changes of one message into the state (pure)."""
+    """Apply one message to the search state (pure) according to its transition.
+
+    new_search     explicit new request or new domain: nothing is inherited
+    entity_switch  "show professionals instead": location and compatible
+                   keywords/filters are kept, incompatible ones discarded
+    modification   refinements ("only management", "with accommodation",
+                   "actually Abu Dhabi", "remove the location")
+    clarification_answer / continuation: fill or keep the current search
+    """
     new = copy.deepcopy(state)
+    before = _describe(state)
+    transition = intent.transition or ("new_search" if intent.fresh else "modification")
+    inherited: list[str] = []
+    discarded: list[str] = []
+
+    if transition == "new_search":
+        fresh = empty_state()
+        for key in SEARCH_FIELDS:
+            new[key] = copy.deepcopy(fresh.get(key))
+        discarded = [
+            key
+            for key, value in before.items()
+            if value
+            and key != "entity"
+            and (not isinstance(value, dict) or any(value.values()))
+        ]
+        if before["entity"] and before["entity"] != intent.set_entity:
+            discarded.append("entity")
     filters: dict[str, Any] = dict(new.get("filters") or {})
     strict: list[str] = list(new.get("strict_filters") or [])
-
-    if intent.fresh or intent.clear_filters:
+    if intent.clear_filters:
         filters, strict = {}, []
-    if intent.fresh:
-        new["location_asked"] = False
 
     if intent.set_entity and intent.set_entity != new.get("entity"):
         previous = new.get("entity")
         new["entity"] = intent.set_entity
-        if previous:
-            # Keep context that applies to the new entity; drop the rest.
-            filters = {
-                key: value
-                for key, value in filters.items()
-                if intent.set_entity in FILTER_ENTITIES.get(key, {intent.set_entity})
+        new["related"] = new["related_role"] = None
+        if previous and transition == "entity_switch":
+            # Filter lifetime: keep only filters that exist for the new entity.
+            kept = {
+                k: v for k, v in filters.items() if filter_applies(intent.set_entity, k)
             }
-            # A restriction such as "only management positions" described
-            # the previous entity; it becomes a ranking preference.
+            discarded += [f"filters.{k}" for k in filters if k not in kept]
+            filters = kept
+            # "only management positions" restricted the previous entity; it
+            # becomes a preference for the new one.
             strict = []
+            if not (
+                previous in PEOPLE_ENTITIES and intent.set_entity in PEOPLE_ENTITIES
+            ):
+                if new.get("keywords"):
+                    discarded.append("keywords")
+                new["keywords"] = []
+            inherited += [k for k in ("keywords", "location") if before.get(k)]
+            inherited += [f"filters.{k}" for k in filters]
+            new["pending"] = None
+            new["location_asked"] = False
 
     if intent.remove_location:
         new["location"] = {"city": None, "country": None, "raw": None}
@@ -215,6 +287,30 @@ def apply_intent(state: dict[str, Any], intent: TurnIntent) -> dict[str, Any]:
     ):
         new["pending"] = None
 
+    if transition in {"modification", "clarification_answer", "continuation"}:
+        after = _describe(new)
+        inherited = [
+            k
+            for k in ("entity", "keywords", "location", "filters")
+            if before.get(k) and before[k] == after[k]
+        ]
+    if intent.plan is not None and intent.plan.related and transition == "new_search":
+        new["related"], new["related_role"] = (
+            intent.plan.related,
+            intent.plan.related_role,
+        )
+
+    new["last_transition"] = {
+        "transition": transition,
+        "reason": intent.transition_reason,
+        "is_new_search": transition == "new_search",
+        "is_context_continuation": transition
+        in {"modification", "continuation", "clarification_answer"},
+        "inherited": inherited,
+        "discarded": discarded,
+        "previous": before,
+    }
+
     topic = topic_signature(new)
     if topic != new.get("topic"):
         new["topic"] = topic
@@ -247,6 +343,8 @@ def to_plan(state: dict[str, Any]) -> SearchPlan:
         location_text=location.get("raw"),
         strict_filters=[k for k in (state.get("strict_filters") or []) if k in filters],
     )
+    plan.related = state.get("related")
+    plan.related_role = state.get("related_role")
     plan.original_query = " ".join(plan.keywords)
     return plan
 

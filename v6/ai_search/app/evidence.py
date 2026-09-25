@@ -1,7 +1,7 @@
 """Field extraction and constraint evidence over real search_documents records.
 
-Everything here reads values that exist on the MongoDB document. Nothing is
-inferred or invented: a missing field is reported as missing (None).
+Every path here is written by the migration scripts (see schema_map.py).
+Nothing is inferred or invented: a missing field is reported as missing.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from .normalization import normalize
+from .schema_map import schema
 
 
 def nested(doc: Any, *path: str) -> Any:
@@ -48,13 +49,23 @@ def all_values(doc: Any, path: str) -> list[Any]:
     return current
 
 
+def all_texts(doc: Any, *paths: str) -> list[str]:
+    out: list[str] = []
+    for path in paths:
+        for value in all_values(doc, path):
+            text = first_text(value)
+            if text and text not in out:
+                out.append(text)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Level evidence
 # ---------------------------------------------------------------------------
 
-# Terms that evidence a level in a title or a structured level field.
-# "manager" (management) deliberately includes more senior leadership roles:
-# an Executive Chef or Chef de Cuisine is a management position.
+# Terms that evidence a level in a title, level or role name. "manager"
+# (management) includes more senior leadership: an Executive Chef or Chef de
+# Cuisine is a management position.
 LEVEL_EVIDENCE: dict[str, tuple[str, ...]] = {
     "senior": ("senior", "sr", "lead", "principal", "head"),
     "junior": ("junior", "jr", "entry level", "entry-level", "commis", "assistant"),
@@ -76,14 +87,10 @@ LEVEL_EVIDENCE: dict[str, tuple[str, ...]] = {
     "intern": ("intern", "internship", "trainee", "graduate", "apprentice"),
 }
 
-LEVEL_FIELDS = (
-    "metadata.job_level",
-    "job.level.name",
-    "job.job_level.name",
-    "job_level.name",
-    "professional.job_level.name",
-    "level",
-)
+# migrate_jobs: job.levels[] / job.roles[]; migrate_professionals:
+# professional.job_level / professional.job_role.
+LEVEL_FIELDS = ("job.levels.name", "professional.job_level.name")
+ROLE_FIELDS = ("job.roles.name", "professional.job_role.name")
 
 
 def _has_term(text: str, term: str) -> bool:
@@ -91,23 +98,17 @@ def _has_term(text: str, term: str) -> bool:
 
 
 def level_values(doc: dict[str, Any]) -> list[str]:
-    values: list[str] = []
-    for path in LEVEL_FIELDS:
-        for value in all_values(doc, path):
-            text = first_text(value)
-            if text:
-                values.append(text)
-    return values
+    return all_texts(doc, *LEVEL_FIELDS)
 
 
 def level_evidence(doc: dict[str, Any], level: str) -> bool:
     terms = LEVEL_EVIDENCE.get(level, (level,))
-    title = normalize(" ".join(str(doc.get(k) or "") for k in ("title", "short_title")))
-    if any(_has_term(title, term) for term in terms):
-        return True
+    # Professionals' titles are person names, so only jobs use the title.
+    candidates = [*level_values(doc), *all_texts(doc, *ROLE_FIELDS)]
+    if doc.get("entity_type") != "professional":
+        candidates.append(str(doc.get("title") or ""))
     return any(
-        any(_has_term(normalize(value), term) for term in terms)
-        for value in level_values(doc)
+        _has_term(normalize(value), term) for value in candidates for term in terms
     )
 
 
@@ -115,18 +116,8 @@ def level_evidence(doc: dict[str, Any], level: str) -> bool:
 # Accommodation evidence
 # ---------------------------------------------------------------------------
 
-ACCOMMODATION_FIELDS = (
-    "job.accommodation",
-    "job.provides_accommodation",
-    "accommodation",
-    "provides_accommodation",
-    "metadata.accommodation",
-    "metadata.provides_accommodation",
-    "benefits",
-    "job.benefits",
-    "metadata.benefits",
-)
-
+# The migration has no structured accommodation field: evidence can only come
+# from the job's own text (title, description) and tags.
 _ACCOMMODATION_POSITIVE = re.compile(
     r"\b(?:accommodation|housing|lodging|staff\s+quarters|living\s+quarters)\b"
     r"(?!\s+(?:is\s+)?not\s+(?:provided|available|included|offered))",
@@ -137,38 +128,22 @@ _ACCOMMODATION_NEGATIVE = re.compile(
     r"|\b(?:accommodation|housing|lodging)\s+(?:is\s+)?not\s+(?:provided|available|included|offered)\b",
     re.I,
 )
-_TRUE_STRINGS = {
-    "true",
-    "yes",
-    "y",
-    "1",
-    "provided",
-    "available",
-    "included",
-    "offered",
-}
-_FALSE_STRINGS = {"false", "no", "n", "0", "not provided", "not available", "none"}
 
 
 def accommodation_status(doc: dict[str, Any]) -> bool | None:
-    """True/False from structured data or explicit text, None when unknown."""
-    for path in ACCOMMODATION_FIELDS:
-        for value in all_values(doc, path):
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                norm = normalize(value)
-                if norm in _TRUE_STRINGS:
-                    return True
-                if norm in _FALSE_STRINGS:
-                    return False
-                if _ACCOMMODATION_NEGATIVE.search(value):
-                    return False
-                if _ACCOMMODATION_POSITIVE.search(value):
-                    return True
+    """True/False when the record's own text says so, None when unknown.
+
+    ai_search_text is deliberately not used: for jobs it also contains the
+    COMPANY description, which is not evidence about the job.
+    """
     text = " ".join(
         str(v)
-        for v in (doc.get("title"), doc.get("description"), doc.get("ai_search_text"))
+        for v in (
+            doc.get("title"),
+            doc.get("summary"),
+            nested(doc, "job", "description"),
+            *all_values(doc, "job.tags"),
+        )
         if isinstance(v, str)
     )
     if _ACCOMMODATION_NEGATIVE.search(text):
@@ -198,7 +173,7 @@ def satisfies_strict(
 
 
 # ---------------------------------------------------------------------------
-# Record fields (used by results, comparison and detail views)
+# Record fields (results, comparison and detail views)
 # ---------------------------------------------------------------------------
 
 _YEARS_RE = re.compile(
@@ -208,31 +183,19 @@ _YEARS_RE = re.compile(
 
 
 def experience_value(doc: dict[str, Any]) -> tuple[str | None, str | None]:
-    """Return (value, source) where source is "field" or "description"."""
-    for path in (
-        "job.experience",
-        "job.experience_years",
-        "job.years_experience",
-        "metadata.experience",
-        "metadata.experience_years",
-        "professional.experience_years",
-        "professional.years_experience",
-        "professional.experience",
-        "experience",
-        "experience_years",
-    ):
-        for value in all_values(doc, path):
-            text = first_text(value)
-            if text:
-                if re.fullmatch(r"\d+(?:\.\d+)?", text):
-                    text = f"{text} years"
-                return text, "field"
-    description = " ".join(
+    """Return (value, source). There is no numeric experience field in the
+    migration; years are only mentioned in the record's own text."""
+    text = " ".join(
         str(v)
-        for v in (doc.get("description"), nested(doc, "job", "description"))
+        for v in (
+            doc.get("summary"),
+            nested(doc, "job", "description"),
+            doc.get("description"),
+            nested(doc, "professional", "resume_title"),
+        )
         if isinstance(v, str)
     )
-    m = _YEARS_RE.search(description)
+    m = _YEARS_RE.search(text)
     if m:
         return m.group(0).strip(), "description"
     return None, None
@@ -247,73 +210,70 @@ def experience_years(doc: dict[str, Any]) -> float | None:
 
 
 def salary_value(doc: dict[str, Any]) -> str | None:
-    for path in (
-        "job.salary",
-        "salary",
-        "metadata.salary",
-        "job.salary_range",
-        "metadata.salary_range",
-    ):
-        for value in all_values(doc, path):
-            if isinstance(value, dict):
-                low = value.get("min") or value.get("from")
-                high = value.get("max") or value.get("to")
-                currency = value.get("currency") or ""
-                if low or high:
-                    span = f"{low}–{high}" if low and high else str(low or high)
-                    return f"{currency} {span}".strip()
-                continue
-            text = first_text(value)
-            if text:
-                return text
-    low = first_text(
-        nested(doc, "job", "salary_min"),
-        doc.get("salary_min"),
-        nested(doc, "metadata", "salary_min"),
-    )
-    high = first_text(
-        nested(doc, "job", "salary_max"),
-        doc.get("salary_max"),
-        nested(doc, "metadata", "salary_max"),
-    )
-    currency = (
-        first_text(
-            nested(doc, "job", "salary_currency"),
-            nested(doc, "metadata", "salary_currency"),
-        )
-        or ""
-    )
-    if low or high:
-        span = f"{low}–{high}" if low and high else str(low or high)
-        return f"{currency} {span}".strip()
+    """job.salary.{description, range.name, currency.code}; product pricing."""
+    description = first_text(nested(doc, "job", "salary", "description"))
+    if description:
+        return description
+    range_name = first_text(nested(doc, "job", "salary", "range", "name"))
+    currency = first_text(nested(doc, "job", "salary", "currency", "code")) or ""
+    if range_name:
+        return f"{currency} {range_name}".strip()
+    price = nested(doc, "pricing", "price")
+    if isinstance(price, (int, float)) and not isinstance(price, bool):
+        code = first_text(nested(doc, "pricing", "currency", "code")) or ""
+        return f"{code} {price:g}".strip()
     return None
 
 
 def company_name(doc: dict[str, Any]) -> str | None:
-    return first_text(
-        nested(doc, "company", "name"),
-        nested(doc, "job", "company", "name"),
-        nested(doc, "metadata", "company"),
-        nested(doc, "metadata", "company_name"),
-        nested(doc, "professional", "current_company"),
-        nested(doc, "professional", "current_company", "name"),
-        doc.get("company_name"),
-    )
+    """The organisation a record belongs to (never the record itself)."""
+    entity = doc.get("entity_type")
+    if entity == "company":
+        return None
+    if entity == "professional":
+        return first_text(
+            nested(doc, "professional", "current_company", "name"),
+            nested(doc, "professional", "current_company_text"),
+        )
+    if entity == "product":
+        return first_text(
+            nested(doc, "seller", "company_name"), nested(doc, "seller", "name")
+        )
+    if entity == "article":
+        return first_text(nested(doc, "author", "name"))
+    return first_text(nested(doc, "company", "name"))
 
 
 def location_parts(doc: dict[str, Any]) -> dict[str, str | None]:
-    location = doc.get("location") if isinstance(doc.get("location"), dict) else {}
+    """City/country from each module's own location fields."""
+    raw = doc.get("location")
+    if isinstance(raw, str):  # awards: location string + top-level country
+        country = doc.get("country") if isinstance(doc.get("country"), dict) else {}
+        return {
+            "city": first_text(raw),
+            "country": first_text(country.get("name")),
+            "address": None,
+        }
+    location = raw if isinstance(raw, dict) else {}
     country = (
         location.get("country") if isinstance(location.get("country"), dict) else {}
     )
     country_name = country.get("name") or country.get("ac_name") or country.get("code")
-    if not country_name and isinstance(location.get("country"), str):
-        country_name = location.get("country")
+    if not country_name:
+        for key in ("countries", "available_in_countries"):  # articles, products
+            names = [
+                c.get("name")
+                for c in location.get(key) or []
+                if isinstance(c, dict) and c.get("name")
+            ]
+            if names:
+                country_name = ", ".join(names[:3])
+                break
     return {
         "city": first_text(
             location.get("city"),
-            location.get("current_location"),
             location.get("prime_city"),
+            location.get("current_location"),
         ),
         "country": first_text(country_name),
         "address": first_text(location.get("address")),
@@ -321,35 +281,31 @@ def location_parts(doc: dict[str, Any]) -> dict[str, str | None]:
 
 
 def posted_date(doc: dict[str, Any]) -> str | None:
-    for key in ("created_at", "start_datetime", "award_date"):
-        value = doc.get(key)
-        if isinstance(value, datetime):
-            return value.date().isoformat()
-        if isinstance(value, str) and value.strip():
-            return value.strip()[:10]
-    start = nested(doc, "dates", "start")
-    if isinstance(start, datetime):
-        return start.date().isoformat()
+    item = schema(doc.get("entity_type"))
+    for path in item.created if item else ("created_at",):
+        for value in all_values(doc, path):
+            if isinstance(value, datetime):
+                return value.date().isoformat()
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:10]
     return None
 
 
 def employment_type(doc: dict[str, Any]) -> str | None:
     return first_text(
-        nested(doc, "job", "employment_type"),
-        doc.get("employment_type"),
-        nested(doc, "metadata", "employment_type"),
-        nested(doc, "job", "job_type"),
-        nested(doc, "metadata", "job_type"),
+        nested(doc, "job", "employment_type", "name"),
+        nested(doc, "job", "job_type", "name"),
     )
 
 
 def level_text(doc: dict[str, Any]) -> str | None:
     values = level_values(doc)
-    return values[0] if values else None
+    return ", ".join(values) if values else None
 
 
 def category_name(doc: dict[str, Any]) -> str | None:
-    category = doc.get("category")
-    if isinstance(category, dict):
-        return first_text(category.get("name"))
-    return first_text(category, nested(doc, "metadata", "category"))
+    item = schema(doc.get("entity_type"))
+    names = all_texts(
+        doc, *(item.category if item else ("category.name", "categories.name"))
+    )
+    return ", ".join(names[:3]) if names else None

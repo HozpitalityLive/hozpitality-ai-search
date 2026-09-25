@@ -54,6 +54,15 @@ from .state import (
 )
 from .security import valid_conversation_id
 
+CONCEPT_FILTERS = {"is_supplier", "industry_context", "supplier_category"}
+
+
+def _present(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(v for v in value.values())
+    return bool(value)
+
+
 ORDINAL_WORDS = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth"}
 LOCATION_REQUIRED = {"job", "professional"}
 
@@ -202,10 +211,28 @@ class ChatService:
             "compare": self._compare,
             "detail": self._detail,
             "related_entity": self._related_entity,
+            "faq": self._faq,
+            "facet": self._facet,
         }.get(intent.action, self._search)
 
         new_state = copy.deepcopy(state)
         new_state["turn"] = int(new_state.get("turn") or 0) + 1
+        if intent.action in {"more", "compare", "detail", "related_entity"}:
+            # These act on the current search without changing it.
+            intent.transition = "continuation"
+            intent.transition_reason = f"'{intent.action}' on the current {state.get('entity') or 'search'} results"
+            new_state["last_transition"] = {
+                "transition": "continuation",
+                "reason": intent.transition_reason,
+                "is_new_search": False,
+                "is_context_continuation": True,
+                "inherited": [
+                    k
+                    for k in ("entity", "keywords", "location", "filters")
+                    if _present(state.get(k))
+                ],
+                "discarded": [],
+            }
         turn = PreparedTurn(
             conversation_id=cid,
             version=version if isinstance(version, int) else 0,
@@ -218,7 +245,9 @@ class ChatService:
         handler(turn, intent, state, history, limit)
         turn.response.setdefault("results", [])
         turn.response.setdefault("related_results", [])
-        turn.response.setdefault("understanding", {"turn": intent.as_dict()})
+        turn.response.setdefault(
+            "understanding", self._understanding(intent, turn.state, {})
+        )
         turn.response["action"] = turn.action
         turn.response["conversation_id"] = cid
         turn.response["state"] = public_state(turn.state)
@@ -313,11 +342,15 @@ class ChatService:
             or filters.get("industry")
             or filters.get("category")
         )
+        topic = (
+            topic or bool(CONCEPT_FILTERS & set(filters)) or bool(state.get("related"))
+        )
         if not has_search(state):
             return None, None
-        if entity and not topic:
-            if entity in LOCATION_REQUIRED or not has_location(state):
-                return TYPE_QUESTIONS.get(entity), "keywords"
+        if entity and not topic and not has_location(state):
+            # "Find me a job" is too vague; "Find professionals in Dubai" is a
+            # valid browse request and is searched directly.
+            return TYPE_QUESTIONS.get(entity), "keywords"
         if (
             entity in LOCATION_REQUIRED
             and not has_location(state)
@@ -347,11 +380,24 @@ class ChatService:
             new_state["pending"] = {"field": pending}
             if pending == "location":
                 new_state["location_asked"] = True
+                previous = (
+                    (new_state.get("last_transition") or {}).get("previous") or {}
+                ).get("location") or {}
+                city = (
+                    previous.get("city")
+                    or previous.get("raw")
+                    or previous.get("country")
+                )
+                turn.response["suggestions"] = [
+                    s for s in (city, "Dubai", "Abu Dhabi", "Anywhere") if s
+                ][:4]
+                turn.response["suggestions"] = list(
+                    dict.fromkeys(turn.response["suggestions"])
+                )
             turn.fallback_answer = question
-            turn.response["understanding"] = {
-                "turn": intent.as_dict(),
-                "clarification": question,
-            }
+            turn.response["understanding"] = self._understanding(
+                intent, new_state, {"clarification": question}
+            )
             return
 
         plan = to_plan(new_state)
@@ -415,10 +461,9 @@ class ChatService:
                 "results": results,
                 "related_results": related,
                 "message": result.get("message"),
-                "understanding": {
-                    **(result.get("understanding") or {}),
-                    "turn": intent.as_dict(),
-                },
+                "understanding": self._understanding(
+                    intent, state, result.get("understanding") or {}
+                ),
             }
         )
         shown = results or related
@@ -633,6 +678,160 @@ class ChatService:
             answer = f"The latest results are from {listed}. I couldn't find company profiles for them."
         turn.response.update({"results": results})
         turn.fallback_answer = answer
+
+    def _faq(
+        self, turn: PreparedTurn, intent: TurnIntent, state, history, limit
+    ) -> None:
+        """Information question: answered only from FAQ records in MongoDB."""
+        plan = intent.plan
+        new_state = empty_state()
+        for key in (
+            "result_history",
+            "current_list",
+            "last_results",
+            "focus",
+            "previous_focus",
+            "turn",
+        ):
+            new_state[key] = copy.deepcopy(turn.state.get(key))
+        new_state.update(
+            {
+                "entity": "faq",
+                "entity_source": "faq",
+                "keywords": list(plan.keywords if plan else []),
+            }
+        )
+        new_state["last_transition"] = {
+            "transition": "faq",
+            "reason": intent.transition_reason,
+            "is_new_search": True,
+            "is_context_continuation": False,
+            "inherited": [],
+            "discarded": [
+                k
+                for k in ("entity", "keywords", "location", "filters")
+                if _present(state.get(k))
+            ],
+            "previous": {
+                "entity": state.get("entity"),
+                "keywords": state.get("keywords") or [],
+            },
+        }
+        new_state["topic"] = None
+        turn.state = new_state
+        result = self.search.execute_plan(
+            to_plan(new_state),
+            original=plan.original_query if plan else "",
+            limit=limit,
+            clarify=False,
+        )
+        results = result.get("results") or []
+        related = result.get("related_results") or []
+        entries = record_results(new_state, results or related, related=not results)
+        numbers = {entry["key"]: entry["position"] for entry in entries}
+        for item in (*results, *related):
+            item["number"] = numbers.get(
+                f"{item.get('entity_type')}:{item.get('entity_id')}"
+            )
+        if results:
+            top = results[0]
+            answer = top["metadata"].get("answer") or top.get("description") or ""
+            turn.fallback_answer = f"{top['title']}\n{answer}".strip()
+            if len(results) > 1:
+                turn.fallback_answer += "\n\nOther FAQs that may help are listed below."
+        elif related:
+            turn.fallback_answer = "I couldn't find an FAQ that answers exactly that. These FAQs may be related."
+        else:
+            turn.fallback_answer = (
+                "I couldn't find an answer to that in the Hozpitality FAQs. "
+                "Try rephrasing the question or ask about a specific topic."
+            )
+        turn.response.update(
+            {
+                "results": results,
+                "related_results": related,
+                "understanding": self._understanding(
+                    intent, new_state, result.get("understanding") or {}
+                ),
+            }
+        )
+        # FAQ answers are returned verbatim from the database; no LLM call.
+
+    def _facet(
+        self, turn: PreparedTurn, intent: TurnIntent, state, history, limit
+    ) -> None:
+        """List a concept stored inside documents (e.g. supplier categories)."""
+        plan = intent.plan
+        new_state = apply_intent(
+            turn.state,
+            TurnIntent(
+                action="search",
+                transition="new_search",
+                transition_reason=intent.transition_reason,
+                set_entity=plan.entity if plan else None,
+                set_filters={
+                    k: v
+                    for k, v in (plan.filters if plan else {}).items()
+                    if k in CONCEPT_FILTERS
+                },
+                set_location=(
+                    {"city": plan.city, "country": plan.country, "raw": None}
+                    if plan and (plan.city or plan.country)
+                    else None
+                ),
+                plan=plan,
+            ),
+        )
+        new_state["entity_source"] = "concept"
+        turn.state = new_state
+        result = (
+            self.search.execute_plan(plan, original=plan.original_query, clarify=False)
+            if plan
+            else {}
+        )
+        values = result.get("facets") or []
+        from .schema_map import FACET_LABELS
+
+        label = FACET_LABELS.get(plan.facet if plan else "", "values")
+        if values:
+            listed = ", ".join(f"{v['name']} ({v['count']})" for v in values[:15])
+            turn.fallback_answer = f"These are the {label} on Hozpitality: {listed}."
+            if plan and plan.facet == "supplier_category":
+                turn.response["suggestions"] = [
+                    f"Find suppliers in supplier category {v['name']}"
+                    for v in values[:3]
+                ]
+        else:
+            turn.fallback_answer = (
+                f"I couldn't find any {label} in the Hozpitality data."
+            )
+        turn.response.update(
+            {
+                "facets": values,
+                "understanding": self._understanding(
+                    intent, new_state, result.get("understanding") or {}
+                ),
+            }
+        )
+
+    @staticmethod
+    def _understanding(
+        intent: TurnIntent, state: dict[str, Any], extra: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Debuggable account of the turn: entity choice, transition, filters."""
+        plan = intent.plan
+        context = dict(state.get("last_transition") or {})
+        context.pop("previous", None)
+        return {
+            **extra,
+            "turn": intent.as_dict(),
+            "entity": state.get("entity"),
+            "entity_reason": plan.entity_reason if plan else None,
+            "is_faq": intent.action == "faq",
+            "is_new_search": bool(context.get("is_new_search")),
+            "is_context_continuation": bool(context.get("is_context_continuation")),
+            "context": context,
+        }
 
     # ------------------------------------------------------------------
     # Presentation helpers

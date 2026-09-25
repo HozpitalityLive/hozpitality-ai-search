@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from rapidfuzz import fuzz
 
+from .evidence import all_values
 from .normalization import normalize, tokens
+from .schema_map import search_fields
 
 
 def _values(doc: dict, *fields: str) -> list[str]:
@@ -34,9 +36,17 @@ def score_document(doc: dict, query: str, mongo_score: float = 0.0) -> tuple[flo
     """
     q = normalize(query)
     qt = tokens(query)
-    title = normalize(str(doc.get("title") or doc.get("short_title") or ""))
+    # FAQs have a question instead of a title (migrate_faqs.py).
+    title = normalize(str(doc.get("title") or doc.get("short_title") or doc.get("question") or ""))
     aliases = [normalize(v) for v in _values(doc, "search_aliases")]
     keywords = [normalize(v) for v in _values(doc, "search_keywords", "keywords")]
+    # Module fields that act as keywords: professionals have no keywords but
+    # a job role, resume title and skills; jobs have roles/tags; products and
+    # awards have categories (schema_map.search_fields).
+    for path in search_fields(str(doc.get("entity_type") or "")):
+        if path in {"title", "search_aliases", "search_keywords", "question", "answer"}:
+            continue
+        keywords.extend(normalize(str(v)) for v in all_values(doc, path) if isinstance(v, str))
     category = normalize(_nested_name(doc, "category", "name"))
     company = normalize(_nested_name(doc, "company", "name"))
     user_name = normalize(_nested_name(doc, "user", "name"))

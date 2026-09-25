@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from .intent import classify
 from .normalization import canonical_entity, normalize, tokens
 
 
@@ -39,6 +40,16 @@ class SearchPlan:
     # Filters the user explicitly required ("only management positions").
     # Evidence-checked by the search service instead of ranking-only.
     strict_filters: list[str] = field(default_factory=list)
+    # Deterministic classification (intent.py): why this entity was chosen,
+    # facet requests, and relationship queries ("companies hiring chefs").
+    entity_reason: str = ""
+    facet: str | None = None
+    related: str | None = None
+    related_role: str | None = None
+
+    @property
+    def is_faq(self) -> bool:
+        return self.intent == "faq"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -64,6 +75,10 @@ class SearchPlan:
             "entity_source": self.entity_source,
             "location_text": self.location_text,
             "strict_filters": list(self.strict_filters),
+            "entity_reason": self.entity_reason,
+            "is_faq": self.is_faq,
+            "facet": self.facet,
+            "related": self.related,
         }
 
 
@@ -71,11 +86,11 @@ ENTITY_PATTERNS = {
     "job": r"\b(jobs?|vacanc(?:y|ies)|positions?|careers?|openings?|employment)\b",
     "professional": r"\b(professionals?|candidates?|people|persons?|experts?|talent)\b",
     "company": r"\b(companies|company|employers?|hotel groups?|businesses?)\b",
-    "product": r"\b(products?|suppliers?|marketplace|vendors?)\b",
+    "product": r"\b(products?|marketplace)\b",
     "article": r"\b(articles?|stories?|news|blogs?|blog posts?)\b",
     "event": r"\b(events?|conferences?|exhibitions?|summits?)\b",
     "award": r"\b(awards?|honou?rs?|recognition)\b",
-    "faq": r"\b(faqs?|questions?|frequently asked)\b",
+    "faq": r"\b(faqs?|frequently asked)\b",
 }
 
 PROFESSIONAL_ROLE_TERMS = [
@@ -288,25 +303,53 @@ def understand(query: str) -> SearchPlan:
     low = original.casefold()
     plan = SearchPlan(original_query=original)
 
-    entity, entity_term = _entity_match(original)
-    entity_source = "text" if entity else None
+    # Deterministic classification first (intent.py). Explicit module nouns
+    # outrank role words: "chef jobs" is a job search, "chef professionals" a
+    # professional search, "how do I apply for a job?" an FAQ question.
+    classification = classify(original)
+    entity = classification.entity
+    entity_term = classification.term
+    entity_source = {
+        "explicit": "text", "concept": "concept", "weak": "weak", "intent": "intent", "faq": "faq",
+    }.get(classification.strength or "")
+    plan.entity_reason = classification.reason
+    if classification.kind == "faq":
+        plan.intent = "faq"
+    elif classification.kind == "facet":
+        plan.intent = "facet"
+        plan.facet = classification.facet
+    plan.related = classification.related
+    plan.related_role = classification.related_role
+    # Phrases the classifier consumed ("supplier industry", "supplier category
+    # Kitchen Equipment") are schema concepts: they must not also be read as a
+    # place, a department or an industry.
+    concept_free = original
+    for phrase in classification.consumed:
+        concept_free = re.sub(
+            rf"(?<!\w)(?:in\s+(?:the\s+)?)?{re.escape(phrase)}(?!\w)", " ", concept_free, flags=re.I
+        )
+    concept_free = " ".join(concept_free.split())
+    concept_low = concept_free.casefold()
 
-    # Explicit module nouns always take precedence. A role by itself
-    # ("find senior chefs in Dubai") is a professional search; adding an
-    # explicit job noun ("chef jobs") switches it to jobs.
+    # A role by itself ("find senior chefs in Dubai") is inferred as a
+    # professional search; this is the weakest signal and never overrides an
+    # explicit entity or conversation context.
     if not entity:
-        intent = re.search(r"\b(?:hire|hiring|vacancy|vacancies|salary|paying|opening|openings)\b", low)
-        if intent:
-            entity, entity_term, entity_source = "job", intent.group(0), "intent"
-        else:
-            for term in PROFESSIONAL_ROLE_TERMS:
-                if re.search(rf"(?<!\w){re.escape(term)}(?!\w)", low):
-                    entity, entity_term, entity_source = "professional", term, "role"
-                    break
+        for term in PROFESSIONAL_ROLE_TERMS:
+            if re.search(rf"(?<!\w){re.escape(term)}(?!\w)", low):
+                entity, entity_term, entity_source = "professional", term, "role"
+                plan.entity_reason = f"role word '{term}' (inferred, weakest signal)"
+                break
 
     plan.entity = entity
     plan.entity_term = entity_term
     plan.entity_source = entity_source
+
+    if plan.intent == "faq":
+        # Information questions: FAQ records carry no location or filters.
+        plan.keywords = faq_keywords(original)
+        plan.confidence = 0.9 if plan.keywords else 0.5
+        return plan
     plan.experience = _experience(original)
 
     for level, values in LEVELS.items():
@@ -314,8 +357,8 @@ def understand(query: str) -> SearchPlan:
             plan.level = level
             break
 
-    plan.department = _phrase_in(low, DEPARTMENTS)
-    plan.industry = _phrase_in(low, INDUSTRIES)
+    plan.department = _phrase_in(concept_low, DEPARTMENTS)
+    plan.industry = _phrase_in(concept_low, INDUSTRIES)
 
     # Explicit country first. "Dubai" is both a city and a UAE location.
     for alias, canonical in sorted(COUNTRIES.items(), key=lambda x: len(x[0]), reverse=True):
@@ -335,8 +378,10 @@ def understand(query: str) -> SearchPlan:
             break
 
     # "in <place>" catches configured cities/countries while avoiding
-    # accidental extraction of job-role phrases.
-    m = re.search(r"\bin\s+([A-Za-z][A-Za-z .'-]{1,50})(?=$|,|\s+with\b|\s+for\b|\s+and\b)", original, re.I)
+    # accidental extraction of job-role phrases. Phrases the classifier
+    # already consumed ("in supplier industry", "in supplier category X") are
+    # schema concepts, never places.
+    m = re.search(r"\bin\s+([A-Za-z][A-Za-z .'-]{1,50})(?=$|,|\s+with\b|\s+for\b|\s+and\b)", concept_free, re.I)
     if m and not plan.city and not plan.country:
         candidate = normalize(m.group(1))
         plan.explicit_location = True
@@ -346,15 +391,24 @@ def understand(query: str) -> SearchPlan:
         elif candidate in COUNTRIES:
             plan.country = COUNTRIES[candidate]
 
-    cm = re.search(CATEGORY_MARKERS, original, re.I)
-    if cm:
+    cm = re.search(CATEGORY_MARKERS, concept_free, re.I)
+    if cm and not classification.consumed:
         plan.category = cm.group(1).strip(" .,-")
 
     plan.filters = _extract_filters(original, entity)
+    # Schema concepts: suppliers -> company.is_supplier, supplier industry ->
+    # company.industries.context, supplier category -> supplier_categories.
+    plan.filters.update(classification.filters)
     plan.date_from, plan.date_to = _date_range(original)
 
     # Remove control words and extracted filter phrases to form search keywords.
     keyword_text = original
+    for phrase in classification.consumed:
+        keyword_text = re.sub(rf"(?<!\w){re.escape(phrase)}(?!\w)", " ", keyword_text, flags=re.I)
+    if classification.filters or plan.intent == "facet":
+        keyword_text = re.sub(
+            r"\b(?:suppliers?|vendors?|industr(?:y|ies)|categor(?:y|ies)|types?)\b", " ", keyword_text, flags=re.I
+        )
     removals = list(ENTITY_WORDS.get(entity, set())) if entity else []
     if entity and entity in ENTITY_PATTERNS:
         keyword_text = re.sub(ENTITY_PATTERNS[entity], " ", keyword_text, flags=re.I)
@@ -427,9 +481,29 @@ def has_location(plan: SearchPlan) -> bool:
     return bool(plan.city or plan.country or plan.explicit_location)
 
 
+SCHEMA_TOPIC_FILTERS = {"is_supplier", "industry_context", "supplier_category"}
+
+
 def has_topic(plan: SearchPlan) -> bool:
     """A searchable subject beyond the entity noun itself."""
-    return bool(plan.keywords or plan.category or plan.department or plan.industry)
+    return bool(
+        plan.keywords or plan.category or plan.department or plan.industry
+        or SCHEMA_TOPIC_FILTERS & set(plan.filters or {})
+    )
+
+
+FAQ_FILLER = {
+    "does", "this", "that", "these", "those", "are", "was", "were", "be", "it", "there", "im", "i'm",
+    "we", "you", "your", "our", "why", "when", "should", "would", "could", "will", "possible", "am",
+    "able", "anyone", "someone", "please", "help", "tell", "explain", "about", "way", "ways", "one",
+    "work", "works", "cant", "can't", "cannot", "dont", "don't", "doesn't", "not", "use",
+}
+
+
+def faq_keywords(text: str) -> list[str]:
+    """Content words of an information question (entity nouns kept: 'apply for a job')."""
+    words = [t for t in tokens(text) if t not in FAQ_FILLER]
+    return list(dict.fromkeys(words))[:10]
 
 
 def clarification_for(plan: SearchPlan) -> str | None:
@@ -453,7 +527,9 @@ def clarification_for(plan: SearchPlan) -> str | None:
         return None
 
     if plan.entity in LOCATION_REQUIRED_ENTITIES:
-        if not has_topic(plan):
+        # "Find professionals in Dubai" is a valid records request (browse);
+        # only a request with neither a topic nor a location is too vague.
+        if not has_topic(plan) and not has_location(plan):
             return question
     elif not has_topic(plan) and not has_location(plan) and not (plan.date_from or plan.date_to):
         return question

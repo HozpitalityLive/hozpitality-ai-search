@@ -6,14 +6,22 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Any
 
-from .evidence import company_name, satisfies_strict
+from . import schema_map
+from .evidence import all_values, satisfies_strict
 from .llm import OllamaQueryInterpreter
 from .normalization import canonical_entity, tokens
 from .observability import timed
-from .query_understanding import LEVELS, SearchPlan, clarification_for, understand
+from .query_understanding import (
+    CITY_COUNTRY,
+    LEVELS,
+    SearchPlan,
+    clarification_for,
+    understand,
+)
 from .ranking import score_document
-from .repository import SearchDocumentsRepository
-from .security import clean_untrusted_text, safe_url
+from .repository import HARD_CONCEPT_KEYS, SearchDocumentsRepository
+from .repository import _parse_date as parse_date
+from .results import result_payload
 from .typo import correct_tokens
 from .vector import SemanticVectorIndex
 
@@ -103,85 +111,8 @@ class SearchService:
         self._full_vocabulary = None
 
     # ------------------------------------------------------------------
-    # Result payload
+    # Result payload (normalized contract: results.py)
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _nested(doc: dict, *path: str):
-        value = doc
-        for key in path:
-            if not isinstance(value, dict):
-                return None
-            value = value.get(key)
-        return value
-
-    @classmethod
-    def _description(cls, doc: dict) -> str | None:
-        for value in (
-            doc.get("description"),
-            doc.get("subtitle"),
-            doc.get("sub_title"),
-            doc.get("question"),
-            doc.get("answer"),
-            cls._nested(doc, "job", "description"),
-            cls._nested(doc, "content", "text"),
-        ):
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return None
-
-    @classmethod
-    def _location(cls, doc: dict) -> dict:
-        location = doc.get("location") if isinstance(doc.get("location"), dict) else {}
-        country = (
-            location.get("country") if isinstance(location.get("country"), dict) else {}
-        )
-        return {
-            "city": location.get("city")
-            or location.get("current_location")
-            or location.get("prime_city"),
-            "country": country.get("name")
-            or country.get("ac_name")
-            or country.get("code"),
-            "address": location.get("address"),
-        }
-
-    @classmethod
-    def _category(cls, doc: dict) -> str | None:
-        category = doc.get("category")
-        if isinstance(category, dict):
-            return category.get("name")
-        if isinstance(category, str):
-            return category
-        return None
-
-    @classmethod
-    def _url(cls, doc: dict) -> str | None:
-        # Only real URLs from the record. A slug is not a URL; guessing a path
-        # from it would invent links.
-        for value in (doc.get("url"), cls._nested(doc, "links", "detail")):
-            url = safe_url(value)
-            if url:
-                return url
-        return None
-
-    @classmethod
-    def _image(cls, doc: dict) -> str | None:
-        for value in (
-            doc.get("profile_image"),
-            doc.get("cover_image"),
-            cls._nested(doc, "media", "image"),
-            cls._nested(doc, "media", "main_image", "path"),
-            cls._nested(doc, "media", "banner"),
-            cls._nested(doc, "media", "avatar"),
-            cls._nested(doc, "user", "profile_image"),
-            cls._nested(doc, "company", "avatar"),
-            cls._nested(doc, "author", "avatar"),
-        ):
-            url = safe_url(value)
-            if url:
-                return url
-        return None
 
     @staticmethod
     def doc_entity_id(doc: dict) -> str:
@@ -200,28 +131,7 @@ class SearchService:
     def _result_payload(
         doc: dict, score: float, matched: list[str], corrected_query: str | None = None
     ) -> dict:
-        description = SearchService._description(doc)
-        return {
-            "entity_type": str(doc.get("entity_type") or ""),
-            "entity_id": SearchService.doc_entity_id(doc),
-            "doc_id": str(doc.get("_id") or ""),
-            "title": str(
-                doc.get("title")
-                or doc.get("question")
-                or doc.get("short_title")
-                or "Untitled result"
-            ),
-            "description": description,
-            "snippet": clean_untrusted_text(description, max_chars=240),
-            "company": company_name(doc),
-            "location": SearchService._location(doc),
-            "category": SearchService._category(doc),
-            "url": SearchService._url(doc),
-            "image": SearchService._image(doc),
-            "score": round(score, 4),
-            "matched_by": list(dict.fromkeys(matched)),
-            "corrected_query": corrected_query,
-        }
+        return result_payload(doc, score, matched, corrected_query)
 
     # ------------------------------------------------------------------
     # Hard filters
@@ -456,6 +366,34 @@ class SearchService:
         if clarification:
             return empty
 
+        notes: list[str] = []
+        if plan.intent == "facet" and plan.facet:
+            return self._facet(plan, understanding)
+        if plan.related == "companies_hiring":
+            return self._companies_hiring(
+                plan, understanding, status=status, is_live=is_live, limit=limit
+            )
+        if plan.entity == "faq" and (
+            plan.city or plan.country or plan.explicit_location
+        ):
+            # FAQ records carry no location (migrate_faqs.py).
+            plan.city = plan.country = plan.location_text = None
+            plan.explicit_location = False
+            notes.append("FAQs have no location; location ignored")
+        elif (
+            plan.city
+            and plan.entity
+            and not schema_map.location_paths(plan.entity, "city")
+        ):
+            # Articles store countries only: use the city's country.
+            country = CITY_COUNTRY.get(plan.city)
+            notes.append(
+                f"{plan.entity} records have no city field; searched by country {country}"
+                if country
+                else f"{plan.entity} records have no city field; city ignored"
+            )
+            plan.city, plan.country = None, country or plan.country
+
         # Search terms: user keywords, else the extracted topic (department /
         # industry / category, e.g. "restaurant suppliers"), else - when the
         # request is purely structural ("events in Dubai") - browse by filters.
@@ -598,13 +536,18 @@ class SearchService:
                 structured_=structured,
             )
 
-            # Structured filters stay soft when the schema cannot express them.
-            if not docs and structured:
+            # Descriptive structured filters stay soft when the schema cannot
+            # express them; schema concepts (supplier, supplier industry,
+            # supplier category) define WHAT is searched and are never dropped.
+            concept_filters = {
+                k: v for k, v in structured.items() if k in HARD_CONCEPT_KEYS
+            }
+            if not docs and set(structured) - set(concept_filters):
                 docs = repo_search(
                     retrieval_query,
                     city=plan.city,
                     country=plan.country,
-                    structured_={},
+                    structured_=concept_filters,
                 )
 
             if not browse_mode:
@@ -663,6 +606,10 @@ class SearchService:
         for item in ranked:
             if strict and not satisfies_strict(item[1], evidence_filters, strict):
                 unverified.append(item)
+            elif plan.entity == "faq" and not self._faq_answers(item[1], search_tokens):
+                # An FAQ is an exact answer only when its question covers the
+                # user's question; otherwise it is merely related.
+                unverified.append(item)
             else:
                 exact.append(item)
 
@@ -687,7 +634,13 @@ class SearchService:
                 # search for helpful alternatives rather than silently
                 # returning wrong-location documents as exact matches.
                 relaxed = repo_search(
-                    effective_query, city=None, country=None, structured_={}, limit_=50
+                    effective_query,
+                    city=None,
+                    country=None,
+                    structured_={
+                        k: v for k, v in structured.items() if k in HARD_CONCEPT_KEYS
+                    },
+                    limit_=50,
                 )
                 relaxed = [doc for doc in relaxed if not is_excluded(doc)]
                 for doc in relaxed:
@@ -717,6 +670,7 @@ class SearchService:
         understanding["explicit_location"] = plan.explicit_location
         understanding["strict_filters"] = sorted(strict)
         understanding["browse"] = browse_mode
+        understanding["notes"] = notes
 
         return {
             "query": original,
@@ -727,6 +681,121 @@ class SearchService:
             "related_results": related_results,
             "understanding": understanding,
             "exhausted": len(exact) <= limit,
+        }
+
+    # ------------------------------------------------------------------
+    # FAQ, facets and relationship queries
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _faq_answers(doc: dict, query_tokens: list[str]) -> bool:
+        """True when the FAQ question/aliases/keywords cover the question."""
+        from .dialogue import singular
+
+        wanted = {singular(t) for t in query_tokens if len(t) > 2}
+        if not wanted:
+            return False
+        text = " ".join(
+            str(v)
+            for v in [
+                doc.get("question"),
+                *(doc.get("search_aliases") or []),
+                *(doc.get("search_keywords") or []),
+            ]
+            if isinstance(v, str)
+        )
+        have = {singular(t) for t in tokens(text)}
+        covered = len(wanted & have) / len(wanted)
+        return covered >= 0.6
+
+    def _facet(self, plan: SearchPlan, understanding: dict) -> dict:
+        """Distinct values of a concept stored inside documents (DB-backed)."""
+        entity, path, match = schema_map.FACETS[plan.facet]
+        extra: dict = dict(match)
+        for key, value in (plan.filters or {}).items():
+            if key in HARD_CONCEPT_KEYS and key != "supplier_category":
+                for fpath in schema_map.filter_paths(entity, key):
+                    extra[fpath] = value
+        values = self.repository.facet_values(
+            entity=entity,
+            path=path,
+            extra=extra,
+            city=plan.city,
+            country=plan.country,
+            limit=25,
+        )
+        understanding["facet"] = plan.facet
+        understanding["facet_path"] = path
+        return {
+            "query": plan.original_query,
+            "corrected_query": None,
+            "total": 0,
+            "results": [],
+            "related_results": [],
+            "facets": values,
+            "message": None,
+            "understanding": understanding,
+            "exhausted": True,
+        }
+
+    def _companies_hiring(
+        self, plan: SearchPlan, understanding: dict, *, status, is_live, limit: int
+    ) -> dict:
+        """Companies behind jobs matching a role: job.company.id -> company:<id>."""
+        from .dialogue import normalize_keywords
+
+        role_tokens = normalize_keywords([plan.related_role or ""]) or list(
+            plan.keywords
+        )
+        docs = self.repository.search(
+            " ".join(role_tokens),
+            entity="job",
+            city=plan.city,
+            country=plan.country,
+            status=status,
+            is_live=is_live,
+            limit=100,
+            structured={},
+        )
+        job_plan = SearchPlan(
+            entity="job", keywords=role_tokens, city=plan.city, country=plan.country
+        )
+        docs = self._hard_filter_docs(docs, job_plan, status, is_live, {})
+        ranked = self._rank(
+            docs, job_plan, " ".join(role_tokens), role_tokens, {}, False
+        )
+        hiring: dict[str, list[str]] = {}
+        names: dict[str, str] = {}
+        for _, doc, _ in ranked:
+            company = doc.get("company") if isinstance(doc.get("company"), dict) else {}
+            if company.get("id") is None:
+                continue
+            key = f"company:{company['id']}"
+            hiring.setdefault(key, []).append(str(doc.get("title") or ""))
+            names.setdefault(key, str(company.get("name") or ""))
+        profiles = self.repository.fetch_by_ids(list(hiring)[:50])
+        results = []
+        for doc in profiles[: min(max(int(limit), 1), self.MAX_RESULTS)]:
+            payload = self._result_payload(doc, 0.0, ["hiring_match"])
+            payload["metadata"]["hiring_for"] = hiring[str(doc["_id"])][:5]
+            results.append(payload)
+        missing = [
+            names[k]
+            for k in hiring
+            if k not in {str(d["_id"]) for d in profiles} and names.get(k)
+        ]
+        understanding["related"] = "companies_hiring"
+        understanding["related_role"] = role_tokens
+        understanding["hiring_companies_without_profile"] = missing[:10]
+        return {
+            "query": plan.original_query,
+            "corrected_query": None,
+            "total": len(results),
+            "results": results,
+            "related_results": [],
+            "message": None,
+            "understanding": understanding,
+            "exhausted": True,
         }
 
     # ------------------------------------------------------------------
@@ -882,8 +951,14 @@ class SearchService:
             ranked.append((score, doc, matched))
 
         def recency(doc: dict) -> float:
-            value = doc.get("created_at")
-            return value.timestamp() if isinstance(value, datetime) else 0.0
+            # Module date fields differ (jobs/articles: ISO strings in metadata).
+            item = schema_map.schema(str(doc.get("entity_type") or ""))
+            for path in item.created if item else ("created_at",):
+                for value in all_values(doc, path):
+                    parsed = parse_date(value)
+                    if parsed:
+                        return parsed.timestamp()
+            return 0.0
 
         # Equal relevance: newer records first, then a stable id order.
         ranked.sort(

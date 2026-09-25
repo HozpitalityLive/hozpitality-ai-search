@@ -77,6 +77,8 @@ Separate from the Vanna SQL stack: MongoDB `search_documents` retrieval + conver
 
 - Deterministic layers are authoritative: `dialogue.py` (turn interpretation) + `state.py` (merge, numbered result history, reference resolution). The LLM (`answers.py`, `ollama_client.py`) only phrases answers from retrieved records.
 - Chat searches run `SearchService.execute_plan()` on a plan built from state — never re-parse text (that caused job→professional entity flips).
+- Schema truth is `migrations script/migrate_*.py` → mirrored in `ai_search/app/schema_map.py` (field paths, locations, filters, URLs). Suppliers are companies with `company.is_supplier` (no supplier module). Only awards store a page URL; other modules need `PUBLIC_URL_TEMPLATES` — never build URLs from slugs by guessing.
+- `intent.py` classifies FAQ/information questions and schema concepts first; `dialogue.py` assigns a transition (new_search / entity_switch / modification / clarification_answer / continuation) that `state.apply_intent` enforces.
 - Tests: `python -m pytest ai_search/tests -q` (mongomock + mocked Ollama; no external services). Dev API with seeded in-memory data: `python -m ai_search.scripts.dev_server`.
 - Lint/type: `ruff check ai_search`, `mypy ai_search/app --ignore-missing-imports`.
 

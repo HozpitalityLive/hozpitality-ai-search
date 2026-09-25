@@ -47,7 +47,8 @@ from .security import (
     trusted_user_id,
     valid_conversation_id,
 )
-from .state import empty_state, normalize_state, public_state
+from .dialogue import interpret
+from .state import apply_intent, empty_state, normalize_state, public_state
 
 router = APIRouter(tags=["MongoDB Search", "AI Chat"])
 
@@ -168,13 +169,49 @@ def search_post(
 def search_understand(
     request: Request,
     q: str = Query(min_length=1, max_length=300),
+    conversation_id: str | None = Query(default=None, max_length=128),
     x_api_key: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
 ) -> dict:
-    _guard(request, "search", x_api_key, x_user_id)
+    owner = _guard(request, "search", x_api_key, x_user_id)
     plan = understand(q)
     plan.clarification = clarification_for(plan)
-    return plan.as_dict()
+    data = plan.as_dict()
+    data["location"] = {
+        "city": plan.city,
+        "country": plan.country,
+        "raw": plan.location_text,
+    }
+    data["is_new_search"] = True
+    data["is_context_continuation"] = False
+    if conversation_id:
+        # Dry run against a conversation: how would this message change the
+        # current search state? Nothing is saved.
+        conversation = _conversation_or_404(conversation_id, owner)
+        state = normalize_state(conversation.get("state") or {})
+        intent = interpret(q, state)
+        data["turn"] = intent.as_dict()
+        if intent.action == "search":
+            preview = apply_intent(state, intent)
+            context = dict(preview.get("last_transition") or {})
+            data["resulting_state"] = public_state(preview)
+        else:
+            context = {
+                "transition": intent.transition or "continuation",
+                "reason": intent.transition_reason,
+            }
+        data["context"] = context
+        data["is_new_search"] = context.get("transition") in {
+            "new_search",
+            "faq",
+            "facet",
+        }
+        data["is_context_continuation"] = context.get("transition") in {
+            "modification",
+            "continuation",
+            "clarification_answer",
+        }
+    return data
 
 
 @router.get("/search/health")

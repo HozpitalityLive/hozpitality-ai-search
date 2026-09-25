@@ -9,6 +9,7 @@ from pymongo.collection import Collection
 from .config import settings
 from .normalization import normalize, tokens
 from .observability import timed
+from . import schema_map
 
 
 def _singular(token: str) -> str:
@@ -32,6 +33,28 @@ def _token_pattern(token: str) -> str:
     if singular == token:
         return re.escape(token)
     return f"(?:{re.escape(token)}|{re.escape(singular)})"
+
+
+# Filters without a structured field in the migrated documents: handled as
+# evidence (accommodation, experience) or ranking signals by the service.
+SOFT_FILTER_KEYS = {"salary_min", "salary_currency", "experience", "accommodation"}
+# Schema facts that define WHAT a record is (supplier companies, supplier
+# industries, supplier categories): a record without them never matches.
+HARD_CONCEPT_KEYS = {"is_supplier", "industry_context", "supplier_category"}
+# Date fields per module (jobs/articles store ISO strings in metadata).
+DATE_PATHS = ("created_at", "dates.created_at", "metadata.created_at", "start_datetime", "award_date")
+
+
+def _parse_date(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and len(value) >= 10:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
 
 
 def _object_id(value: str) -> Any:
@@ -161,54 +184,13 @@ class SearchDocumentsRepository:
 
     @staticmethod
     def _location_fields(entity: str | None, kind: str) -> list[str]:
-        """Return authoritative location fields for an entity type.
+        """Authoritative location paths per entity (schema_map.py).
 
-        For jobs/professionals, the document's own location is authoritative.
-        A company's or author's location must not make a job appear to be in
-        that city. Other entities may expose a root location, while companies
-        may also keep location under company.*.
+        Each module stores its own location: a job's location never comes
+        from its company, an award's city is the `location` string and its
+        country is top-level, articles only carry countries.
         """
-        entity = (entity or "").casefold()
-        if entity in {"job", "professional", "event", "award", "faq", "article"}:
-            if kind == "city":
-                fields = [
-                    "location.city", "location.current_location", "location.prime_city",
-                ]
-                if entity == "professional":
-                    fields += [
-                        "professional.city", "professional.current_location",
-                        "professional.location.city",
-                    ]
-                return fields
-            fields = [
-                "location.country.name", "location.country.ac_name",
-                "location.country.code", "location.countries.name",
-                "location.countries.code",
-            ]
-            if entity == "professional":
-                fields += [
-                    "professional.country.name", "professional.country.ac_name",
-                    "professional.country.code", "professional.location.country.name",
-                    "professional.location.country.ac_name", "professional.location.country.code",
-                ]
-            return fields
-        if entity == "company":
-            if kind == "city":
-                return ["location.city", "location.current_location", "company.city"]
-            return [
-                "location.country.name", "location.country.ac_name",
-                "location.country.code", "company.country.name",
-                "company.country.ac_name", "company.country.code",
-            ]
-        # Products can be associated with a supplier/company, so allow both.
-        if kind == "city":
-            return ["location.city", "location.current_location", "location.prime_city", "company.city"]
-        return [
-            "location.country.name", "location.country.ac_name",
-            "location.country.code", "location.countries.name",
-            "location.countries.code", "company.country.name",
-            "company.country.ac_name", "company.country.code",
-        ]
+        return list(schema_map.location_paths(entity, kind))
 
     @staticmethod
     def _nested_values(doc: dict[str, Any], path: str) -> list[Any]:
@@ -250,16 +232,15 @@ class SearchDocumentsRepository:
             })
 
         if is_live is not None:
-            clauses.append({
-                "$or": [
-                    {
-                        "is_live": is_live,
-                    },
-                    {
-                        "metadata.is_live": is_live,
-                    },
-                ]
-            })
+            # Awards store liveness as is_active; FAQs only as status=active.
+            live_clauses: list[dict[str, Any]] = [
+                {"is_live": is_live},
+                {"metadata.is_live": is_live},
+                {"$and": [{"entity_type": "award"}, {"is_active": is_live}]},
+            ]
+            if is_live:
+                live_clauses.append({"$and": [{"entity_type": "faq"}, {"status": "active"}]})
+            clauses.append({"$or": live_clauses})
 
             if is_live is True:
                 clauses.append({
@@ -329,54 +310,29 @@ class SearchDocumentsRepository:
 
         structured = structured or {}
 
-        # Structured Phase 2 filters are expressed as ORs across the known
-        # document shapes. Missing fields are intentionally not treated as
-        # mismatches here; the defensive post-filter below applies only when
-        # a field is actually present.
-        field_aliases = {
-            "level": [
-                "professional.job_level.name", "job.level.name",
-                "job.job_level.name", "job_level.name", "metadata.job_level",
-            ],
-            "department": [
-                "professional.department.name", "job.department.name",
-                "department.name", "metadata.department",
-            ],
-            "industry": [
-                "professional.industries.name", "job.industry.name",
-                "industry.name", "company.industry.name", "metadata.industry",
-            ],
-            "category": [
-                "category.name", "category", "job.category.name",
-                "product.category.name", "metadata.category",
-            ],
-            "employment_type": [
-                "job.employment_type", "employment_type", "metadata.employment_type",
-            ],
-        }
+        # Structured filters use the exact paths written by the migration
+        # scripts. Boolean schema facts (company.is_supplier) are equality
+        # checks; names are case-insensitive substring matches.
         for key, value in structured.items():
-            if value is None or key in {"salary_min", "salary_currency", "experience", "verified", "featured", "currently_working"}:
+            if value is None or key in SOFT_FILTER_KEYS:
                 continue
-            paths = field_aliases.get(key, [])
-            if not paths:
-                continue
-            pattern = re.escape(normalize(str(value)))
-            clauses.append({
-                "$or": [
-                    {path: {"$regex": pattern, "$options": "i"}}
-                    for path in paths
-                ]
-            })
+            clause = SearchDocumentsRepository._structured_clause(entity, key, value)
+            if clause:
+                clauses.append(clause)
 
         if date_from or date_to:
             date_clauses = []
-            for path in ("created_at", "dates.start", "start_datetime", "award_date"):
+            for path in DATE_PATHS:
                 condition: dict[str, Any] = {}
+                text_condition: dict[str, Any] = {}
                 if date_from:
                     condition["$gte"] = date_from
+                    text_condition["$gte"] = date_from.date().isoformat()
                 if date_to:
                     condition["$lt"] = date_to
+                    text_condition["$lt"] = date_to.date().isoformat()
                 date_clauses.append({path: condition})
+                date_clauses.append({path: text_condition})
             clauses.append({"$or": date_clauses})
 
         if not clauses:
@@ -387,83 +343,40 @@ class SearchDocumentsRepository:
         }
 
     @staticmethod
+    def _structured_clause(entity: str | None, key: str, value: Any) -> dict[str, Any] | None:
+        paths = schema_map.filter_paths(entity, key)
+        if not paths:
+            return None
+        if isinstance(value, bool):
+            return {"$or": [{path: value} for path in paths]}
+        pattern = re.escape(normalize(str(value)))
+        if key == "industry_context":
+            pattern = f"^{pattern}$"
+        return {"$or": [{path: {"$regex": pattern, "$options": "i"}} for path in paths]}
+
+    @staticmethod
     def _projection() -> dict[str, Any]:
+        """Exclude only heavy/irrelevant fields.
+
+        The migrated documents carry many module-specific top-level fields
+        (summary, sub_title, content, seller, categories, pricing, dates,
+        flags, country, year, website, ...). An inclusion list silently
+        dropped several of them, so exclude what search never needs instead.
+
+        IMPORTANT: textScore ($meta) is added only to $text queries.
         """
-        Common projection.
-
-        IMPORTANT:
-        Do NOT include:
-            {"$meta": "textScore"}
-
-        here.
-
-        This projection is also used by regex queries. MongoDB only allows
-        textScore metadata when the query itself contains a $text operator.
-        """
-
         return {
-            "_id": 1,
-
-            "entity_type": 1,
-
-            "title": 1,
-            "short_title": 1,
-            "subtitle": 1,
-
-            "description": 1,
-            "question": 1,
-            "answer": 1,
-
-            "ai_search_text": 1,
-
-            "search_aliases": 1,
-            "search_keywords": 1,
-            "keywords": 1,
-
-            "location": 1,
-            "country": 1,
-
-            "category": 1,
-            "company": 1,
-            "author": 1,
-            "user": 1,
-            "professional": 1,
-            "job": 1,
-
-            "media": 1,
-
-            "profile_image": 1,
-            "cover_image": 1,
-
-            "slug": 1,
-            "url": 1,
-            "links": 1,
-
-            "source": 1,
-
-            "status": 1,
-            "is_live": 1,
-
-            "metadata": 1,
-
-            "created_at": 1,
-            "expires_at": 1,
-
-            # Benefit / compensation fields used for evidence and comparison.
-            # Projecting a field that does not exist is harmless.
-            "accommodation": 1,
-            "benefits": 1,
-            "salary": 1,
-            "salary_min": 1,
-            "salary_max": 1,
-            "employment_type": 1,
-            "experience": 1,
-            "company_name": 1,
-
-            "dates": 1,
-            "start_datetime": 1,
-            "end_datetime": 1,
-            "award_date": 1,
+            "embedding": 0,
+            "migration": 0,
+            "filter_questions": 0,
+            "testimonials": 0,
+            "education": 0,
+            "certifications": 0,
+            "package": 0,
+            "posted_by": 0,
+            "walk_in": 0,
+            "coordinates": 0,
+            "engagement": 0,
         }
 
     def _exact_candidates(
@@ -503,6 +416,12 @@ class SearchDocumentsRepository:
             {
                 "search_keywords": {
                     "$regex": f"^{phrase}$",
+                    "$options": "i",
+                }
+            },
+            {
+                "question": {
+                    "$regex": f"^{phrase}\\??$",
                     "$options": "i",
                 }
             },
@@ -701,6 +620,10 @@ class SearchDocumentsRepository:
 
         if is_live is not None:
             live_values = [doc.get("is_live"), metadata.get("is_live")]
+            if doc.get("entity_type") == "award":
+                live_values.append(doc.get("is_active"))
+            if doc.get("entity_type") == "faq" and "is_live" not in doc:
+                live_values.append(doc.get("status") == "active")
             if not any(value is is_live for value in live_values):
                 return False
             if is_live is True:
@@ -714,10 +637,12 @@ class SearchDocumentsRepository:
             if not any(isinstance(value, str) and normalize(value) == wanted for value in statuses):
                 return False
 
+        doc_entity = entity or str(doc.get("entity_type") or "") or None
+
         if city:
             wanted = normalize(city)
             values: list[Any] = []
-            for path in SearchDocumentsRepository._location_fields(entity, "city"):
+            for path in SearchDocumentsRepository._location_fields(doc_entity, "city"):
                 values.extend(SearchDocumentsRepository._nested_values(doc, path))
             if not any(isinstance(value, str) and wanted in normalize(value) for value in values):
                 return False
@@ -725,11 +650,13 @@ class SearchDocumentsRepository:
         if country:
             wanted_terms = [normalize(term) for term in SearchDocumentsRepository._country_terms(country)]
             values = []
-            for path in SearchDocumentsRepository._location_fields(entity, "country"):
+            for path in SearchDocumentsRepository._location_fields(doc_entity, "country"):
                 values.extend(SearchDocumentsRepository._nested_values(doc, path))
             normalized_values = [normalize(value) for value in values if isinstance(value, str)]
+            # Short codes ("in", "ae") must match exactly; substring matching
+            # would let "IN" (India) satisfy "Argentina".
             if not any(
-                term == value or term in value or value in term
+                term == value or (len(value) > 3 and len(term) > 3 and (term in value or value in term))
                 for term in wanted_terms
                 for value in normalized_values
             ):
@@ -751,33 +678,26 @@ class SearchDocumentsRepository:
                 current = nxt
             return [v for v in current if v is not None]
 
-        aliases = {
-            "level": ["professional.job_level.name", "job.level.name", "job.job_level.name", "job_level.name", "metadata.job_level"],
-            "department": ["professional.department.name", "job.department.name", "department.name", "metadata.department"],
-            "industry": ["professional.industries.name", "job.industry.name", "industry.name", "company.industry.name", "metadata.industry"],
-            "category": ["category.name", "category", "job.category.name", "product.category.name", "metadata.category"],
-            "employment_type": ["job.employment_type", "employment_type", "metadata.employment_type"],
-            "accommodation": [
-                "job.accommodation", "job.provides_accommodation",
-                "accommodation", "provides_accommodation",
-                "metadata.accommodation", "metadata.provides_accommodation",
-            ],
-        }
         for key, wanted in structured.items():
-            if key in {"salary_min", "salary_currency", "experience", "verified", "featured", "currently_working"}:
+            if wanted is None or key in SOFT_FILTER_KEYS:
+                continue
+            paths = schema_map.filter_paths(doc_entity, key)
+            if not paths:
                 continue
             present = []
-            for path in aliases.get(key, []):
+            for path in paths:
                 present.extend(nested_values(doc, path))
-            if key == "accommodation" and bool(wanted):
-                if present and not any(
-                    value is True
-                    or (isinstance(value, str) and normalize(value) in {"true", "yes", "provided", "available", "included"})
-                    for value in present
-                ):
+            if not present:
+                if key in HARD_CONCEPT_KEYS:
                     return False
                 continue
-            if present and not any(normalize(str(wanted)) in normalize(str(v)) for v in present):
+            if isinstance(wanted, bool):
+                if wanted not in [bool(v) for v in present]:
+                    return False
+            elif key == "industry_context":
+                if normalize(str(wanted)) not in {normalize(str(v)) for v in present}:
+                    return False
+            elif not any(normalize(str(wanted)) in normalize(str(v)) for v in present):
                 return False
 
         def numeric_values(paths: tuple[str, ...]) -> list[float]:
@@ -792,40 +712,11 @@ class SearchDocumentsRepository:
                             out.append(float(m.group(0)))
             return out
 
-        exp = structured.get("experience")
-        if exp is not None:
-            vals = numeric_values((
-                "professional.experience_years", "professional.years_experience",
-                "professional.experience", "job.experience_years", "job.years_experience",
-                "job.experience", "experience_years", "experience", "metadata.experience_years",
-                "metadata.experience",
-            ))
-            if vals and max(vals) < float(exp):
-                return False
-
-        for key, path in (
-            ("verified", "metadata.verified"),
-            ("featured", "metadata.is_featured"),
-            ("currently_working", "professional.currently_working"),
-        ):
-            if key in structured:
-                vals = nested_values(doc, path)
-                if vals and bool(structured[key]) not in [bool(v) for v in vals]:
-                    return False
-
-        if "salary_min" in structured:
-            vals = numeric_values((
-                "job.salary_min", "job.salary.min", "salary_min", "salary.min",
-                "metadata.salary_min", "metadata.salary.min"
-            ))
-            if vals and max(vals) < float(structured["salary_min"]):
-                return False
-
         if date_from or date_to:
             date_values = []
-            for path in ("created_at", "dates.start", "start_datetime", "award_date"):
+            for path in DATE_PATHS:
                 date_values.extend(nested_values(doc, path))
-            date_values = [v for v in date_values if isinstance(v, datetime)]
+            date_values = [d for d in (_parse_date(v) for v in date_values) if d]
             if date_values:
                 chosen = max(date_values)
                 if date_from and chosen < date_from:
@@ -893,7 +784,7 @@ class SearchDocumentsRepository:
             with timed("mongo_ms"):
                 docs = list(
                     self.collection.find(filters, self._projection())
-                    .sort([("created_at", -1), ("_id", 1)])
+                    .sort([(path, -1) for path in (schema_map.schema(entity).created if schema_map.schema(entity) else ("created_at",))] + [("_id", 1)])
                     .limit(min(limit, 100))
                     .max_time_ms(settings.mongodb_max_time_ms)
                 )
@@ -914,6 +805,46 @@ class SearchDocumentsRepository:
                 date_to=date_to,
             )
         ]
+
+    def facet_values(
+        self,
+        *,
+        entity: str,
+        path: str,
+        extra: dict[str, Any] | None = None,
+        city: str | None = None,
+        country: str | None = None,
+        limit: int = 25,
+    ) -> list[dict[str, Any]]:
+        """Distinct values (with record counts) of a concept stored inside
+        documents, e.g. company.supplier_categories.name. Database-backed:
+        only values that exist on real records are returned."""
+        extra = extra or {}
+        unwind = path.rsplit(".", 1)[0]
+        base = self._filter(entity=entity, city=city, country=country, status=None, is_live=None)
+        doc_match = [base] if base else []
+        doc_match += [{key: value} for key, value in extra.items()]
+        element_match = {key: value for key, value in extra.items() if key.startswith(unwind + ".")}
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"$and": doc_match} if doc_match else {}},
+            {"$project": {"_id": 1, unwind: 1}},
+            {"$unwind": f"${unwind}"},
+        ]
+        if element_match:
+            pipeline.append({"$match": element_match})
+        pipeline += [
+            {"$group": {"_id": f"${path}", "count": {"$sum": 1}}},
+            {"$match": {"_id": {"$nin": [None, ""]}}},
+            {"$sort": {"count": -1, "_id": 1}},
+            {"$limit": limit},
+        ]
+        try:
+            with timed("mongo_ms"):
+                rows = list(self.collection.aggregate(pipeline, maxTimeMS=settings.mongodb_max_time_ms))
+        except TypeError:  # test doubles without maxTimeMS support
+            with timed("mongo_ms"):
+                rows = list(self.collection.aggregate(pipeline))
+        return [{"name": str(r["_id"]), "count": int(r["count"])} for r in rows if isinstance(r.get("_id"), str)]
 
     def find_by_titles(self, entity: str, titles: list[str], limit: int = 5) -> list[dict[str, Any]]:
         """Exact (case-insensitive) title lookup, e.g. company profiles by name."""
@@ -1065,26 +996,13 @@ class SearchDocumentsRepository:
 
                 pattern = _token_pattern(token)
 
+                # Fields per module from the migration: professionals have no
+                # keywords/aliases (role, resume title, skills instead); FAQs
+                # have question/answer instead of a title.
                 token_clauses.append({
                     "$or": [
-                        {
-                            "title": {
-                                "$regex": pattern,
-                                "$options": "i",
-                            }
-                        },
-                        {
-                            "search_aliases": {
-                                "$regex": pattern,
-                                "$options": "i",
-                            }
-                        },
-                        {
-                            "search_keywords": {
-                                "$regex": pattern,
-                                "$options": "i",
-                            }
-                        },
+                        {field: {"$regex": pattern, "$options": "i"}}
+                        for field in schema_map.search_fields(entity)
                     ]
                 })
 
@@ -1127,11 +1045,12 @@ class SearchDocumentsRepository:
             # for natural-language queries. Emulate $text's OR semantics; the
             # ranker orders candidates by token coverage. Only used on $text
             # failure so healthy production traffic never pays for this scan.
-            if text_failed and len(q_tokens) > 1 and len(docs) < 5:
+            if text_failed and len(docs) < 5:
+                # $text indexes ai_search_text, so the emulation must too.
                 any_filter: dict[str, Any] = {"$or": [
                     {field: {"$regex": _token_pattern(token), "$options": "i"}}
                     for token in q_tokens[:8]
-                    for field in ("title", "search_aliases", "search_keywords")
+                    for field in (*schema_map.search_fields(entity), "ai_search_text")
                 ]}
                 if filters:
                     any_filter = {"$and": [filters, any_filter]}

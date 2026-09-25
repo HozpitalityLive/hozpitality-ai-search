@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .normalization import normalize, tokens
+from .intent import RECORDS_QUESTION_RE, classify
+from .schema_map import filter_applies
 from .query_understanding import (
     CITIES,
     CITY_COUNTRY,
@@ -80,18 +82,6 @@ WEAK_ENTITY_TERMS = {
     "recognition",
 }
 
-# Filters that only make sense for a given entity. On an explicit entity
-# change, filters that do not apply to the new entity are dropped.
-FILTER_ENTITIES: dict[str, set[str]] = {
-    "accommodation": {"job"},
-    "salary_min": {"job"},
-    "salary_currency": {"job"},
-    "employment_type": {"job"},
-    "level": {"job", "professional"},
-    "experience": {"job", "professional"},
-    "department": {"job", "professional"},
-    "currently_working": {"professional"},
-}
 
 FILTER_LABELS = {
     "level": "level",
@@ -322,6 +312,13 @@ SEARCH_VERB = re.compile(
     r"are\s+there|any)\b"
 )
 
+STRONG_SOURCES = {"text", "concept", "intent"}
+CONCEPT_FILTERS = {"is_supplier", "industry_context", "supplier_category"}
+SWITCH_RE = re.compile(
+    r"\b(?:instead|rather|switch(?:\s+it)?\s+to|what\s+about|how\s+about|same\s+for|"
+    r"change\s+(?:it|that|this)\s+to|actually)\b"
+)
+
 ORDINALS = {
     "first": 1,
     "1st": 1,
@@ -371,6 +368,9 @@ class TurnIntent:
     fresh: bool = False
     smalltalk: str | None = None
     plan: SearchPlan | None = None
+    # Conversation-state transition for search turns (see TRANSITIONS).
+    transition: str | None = None
+    transition_reason: str = ""
 
     def changes_search(self) -> bool:
         return bool(
@@ -400,6 +400,8 @@ class TurnIntent:
             "strict_filters": self.strict_filters,
             "clear_filters": self.clear_filters,
             "fresh": self.fresh,
+            "transition": self.transition,
+            "transition_reason": self.transition_reason,
         }
 
 
@@ -830,6 +832,22 @@ def interpret(message: str, state: dict[str, Any] | None = None) -> TurnIntent:
         # "more professionals" while searching jobs -> entity change;
         # "more senior" -> a refinement. Both are handled as searches.
 
+    # Information questions ("How do I apply for a job?") are answered from
+    # FAQ records - never turned into a job search or a clarification.
+    classification = classify(text)
+    if classification.kind == "faq":
+        intent.action = "faq"
+        intent.transition = "faq"
+        intent.transition_reason = classification.reason
+        intent.plan = understand(text)
+        return intent
+    if classification.kind == "facet":
+        intent.action = "facet"
+        intent.transition = "facet"
+        intent.transition_reason = classification.reason
+        intent.plan = understand(text)
+        return intent
+
     return _interpret_search(text, low, state, intent, has_search)
 
 
@@ -858,17 +876,17 @@ def _interpret_search(
     intent.plan = plan
 
     # ---- entity -------------------------------------------------------------
+    # Priority: explicit module noun / schema concept / job-intent word >
+    # generic noun > role word. Role words ("chef") and generic nouns
+    # ("positions") never change an existing entity.
+    explicit_entity = plan.entity if plan.entity_source in STRONG_SOURCES else None
     if plan.entity:
-        weak = (plan.entity_term or "").casefold() in WEAK_ENTITY_TERMS
-        if plan.entity_source == "role":
-            # A role word never changes an existing entity; it only seeds a
-            # brand-new conversation ("find senior chefs in Dubai").
+        if plan.entity_source in {"role", "weak"}:
             if not state_entity:
                 intent.set_entity = plan.entity
         elif plan.entity != state_entity:
-            if not state_entity or not weak:
-                intent.set_entity = plan.entity
-                intent.entity_changed = bool(state_entity)
+            intent.set_entity = plan.entity
+            intent.entity_changed = bool(state_entity)
 
     # ---- location -------------------------------------------------------------
     if plan.city or plan.country:
@@ -909,10 +927,21 @@ def _interpret_search(
         filters["category"] = plan.category
     for key in removed:
         filters.pop(key, None)
+    # Filter lifetime (schema_map): a filter that the target entity does not
+    # have is never applied ("kitchen" department on a company search).
+    target_entity = intent.set_entity or state_entity or plan.entity
+    demoted_topics: list[str] = []
+    if target_entity:
+        for key in [k for k in filters if not filter_applies(target_entity, k)]:
+            value = filters.pop(key)
+            if key in {"industry", "department", "category"} and isinstance(value, str):
+                # Not a structured field of this entity, but still the user's
+                # topic ("hospitality awards"): search it as a keyword.
+                demoted_topics.append(value)
     intent.set_filters = filters
 
     # ---- keywords ----------------------------------------------------------------
-    keyword_source = list(plan.keywords)
+    keyword_source = list(plan.keywords) + demoted_topics
     if intent.set_location and intent.set_location.get("raw"):
         place_tokens = set(tokens(intent.set_location["raw"]))
         keyword_source = [k for k in keyword_source if k not in place_tokens]
@@ -951,15 +980,42 @@ def _interpret_search(
         else:
             intent.set_keywords = keywords
 
-    # A complete new request ("find sous chef jobs in Mumbai") starts a fresh
-    # set of filters; a fragment ("only management positions") refines.
-    intent.fresh = bool(
-        has_search
-        and SEARCH_VERB.match(residual_text or low)
-        and intent.set_keywords
-        and (plan.entity_source in {"text", "intent"})
-        and not refinement
+    # ---- transition ----------------------------------------------------------
+    complete_request = bool(
+        SEARCH_VERB.match(residual_text or low) or RECORDS_QUESTION_RE.search(low)
     )
+    switch_phrase = bool(SWITCH_RE.search(low))
+    own_topic = bool(keywords or set(plan.filters or {}) & CONCEPT_FILTERS)
+    if not has_search:
+        intent.transition, why = "new_search", "no active search"
+    elif explicit_entity and explicit_entity != state_entity:
+        if switch_phrase and not own_topic and not refinement:
+            intent.transition = "entity_switch"
+            why = f"'{plan.entity_term}' switches {state_entity} -> {explicit_entity} keeping compatible context"
+        else:
+            intent.transition = "new_search"
+            why = f"explicit new domain '{plan.entity_term}' ({state_entity} -> {explicit_entity})"
+    elif pending.get("field") and not complete_request:
+        intent.transition, why = (
+            "clarification_answer",
+            f"answers pending {pending.get('field')} question",
+        )
+    elif (
+        explicit_entity
+        and complete_request
+        and not refinement
+        and (own_topic or intent.set_location)
+    ):
+        intent.transition, why = "new_search", f"complete new {explicit_entity} request"
+    elif intent.changes_search():
+        intent.transition, why = "modification", "refines the current search"
+    else:
+        intent.transition, why = "continuation", "no explicit change"
+    intent.transition_reason = why
+    intent.fresh = intent.transition == "new_search" and has_search
+    if intent.transition == "new_search" and not intent.set_entity:
+        # A new search always states its own entity (it may equal the old one).
+        intent.set_entity = explicit_entity or plan.entity or state_entity
 
     # Strict filters: explicitly required constraints.
     strict: list[str] = []
@@ -973,4 +1029,5 @@ def _interpret_search(
 
     if not intent.changes_search() and not has_search:
         intent.action = "clarify"
+        intent.transition = "clarification"
     return intent

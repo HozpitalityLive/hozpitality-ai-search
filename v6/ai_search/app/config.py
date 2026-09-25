@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +32,40 @@ def _bool(name: str, default: bool) -> bool:
 def _list(name: str, default: str = "") -> tuple[str, ...]:
     raw = os.getenv(name, default)
     return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+URL_TEMPLATE_ENTITIES = (
+    "job",
+    "professional",
+    "company",
+    "product",
+    "article",
+    "event",
+    "award",
+    "faq",
+)
+
+
+def _url_templates() -> dict[str, str]:
+    templates: dict[str, str] = {}
+    raw = os.getenv("PUBLIC_URL_TEMPLATES", "").strip()
+    if raw:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("PUBLIC_URL_TEMPLATES must be a JSON object")
+        templates.update({str(k): str(v) for k, v in parsed.items() if v})
+    for entity in URL_TEMPLATE_ENTITIES:
+        value = os.getenv(f"URL_TEMPLATE_{entity.upper()}", "").strip()
+        if value:
+            templates[entity] = value
+    for entity, template in templates.items():
+        if entity not in URL_TEMPLATE_ENTITIES or not template.startswith(
+            ("https://", "http://")
+        ):
+            raise ValueError(
+                f"Invalid URL template for {entity!r}: must be an absolute http(s) URL"
+            )
+    return templates
 
 
 @dataclass(frozen=True)
@@ -97,6 +132,13 @@ class Settings:
     # Optional base URL used to absolutize site-relative result links such as
     # "/jobs/123". Slugs are never turned into URLs.
     public_site_base_url: str = os.getenv("PUBLIC_SITE_BASE_URL", "").rstrip("/")
+
+    # Public page routes per module, e.g. {"job": "https://www.hozpitality.com/<route>/{slug}"}.
+    # The migration stores slugs (and ids) but not the site's route patterns,
+    # so they must be configured; placeholders: {slug}, {id}. A module without
+    # a template gets url=null (never guessed). Awards use their real
+    # links.detail URL regardless.
+    url_templates: dict[str, str] = field(default_factory=lambda: _url_templates())
 
     # --- Ollama / Qwen3 -----------------------------------------------------
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")

@@ -288,12 +288,20 @@ def test_tell_me_more_about_the_first_one(chat):
     assert r["results"][0]["url"] == r1["results"][0]["url"]
 
 
-def test_open_the_second_one(chat):
+def test_open_the_second_one(chat, url_templates):
     r1 = say(chat, "Find chef jobs in Dubai")
     r = say(chat, "Open the second one")
     assert r["action"] == "detail"
     assert job_ids(r) == job_ids(r1)[1:2]
-    assert r["results"][0]["url"].startswith("https://www.hozpitality.com/jobs/")
+    assert r["results"][0]["url"] == r1["results"][1]["url"]
+    assert r["results"][0]["url"].startswith("https://www.hozpitality.com/test-jobs/")
+
+
+def test_open_without_url_says_so(chat):
+    say(chat, "Find chef jobs in Dubai")
+    r = say(chat, "Open the second one")
+    assert r["results"][0]["url"] is None
+    assert "doesn't have a link" in r["answer"]
 
 
 def test_what_company_is_the_first_job_from(chat):
@@ -306,7 +314,7 @@ def test_what_company_is_the_first_job_from(chat):
 
 
 def test_reference_beyond_list_is_refused_not_guessed(chat):
-    say(chat, "hotel companies in Dubai")  # 3 results
+    say(chat, "Find chef jobs in Abu Dhabi")  # 2 results
     r = say(chat, "Tell me more about the fifth one")
     assert r["action"] == "detail"
     assert r["results"] == []
@@ -386,14 +394,15 @@ def test_which_one_has_more_experience(chat):
 
 
 def test_compare_salary_and_location_uses_only_real_values(chat):
-    say(chat, "Find chef jobs in Dubai")
+    say(chat, "Find executive chef jobs in Dubai")
     r = say(chat, "Compare salary and location")
     keys = [f["key"] for f in r["comparison"]["fields"]]
     assert keys == ["location", "salary"]
     salaries = {
         item["title"]: item["values"]["salary"] for item in r["comparison"]["items"]
     }
-    assert salaries["Executive Chef"] == "AED 15000–18000"
+    # job.salary.description exactly as migrated
+    assert salaries["Executive Chef"] == "AED 15,000 - 18,000 per month"
     assert all(
         v == "Not specified" for t, v in salaries.items() if t != "Executive Chef"
     )

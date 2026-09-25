@@ -57,11 +57,11 @@ def test_find_senior_chefs_in_dubai_is_professional(container):
 def test_hotel_companies_in_dubai(container):
     result = container.search.search(query="hotel companies in Dubai")
     assert result["understanding"]["entity"] == "company"
-    assert {r["title"] for r in result["results"]} == {
-        "ABC Hospitality",
-        "XYZ Hotels",
-        "Marina Resorts",
-    }
+    titles = [r["title"] for r in result["results"]]
+    assert {r["entity_type"] for r in result["results"]} == {"company"}
+    assert all(r["location"]["city"] == "Dubai" for r in result["results"])
+    # Companies whose industries say "Hotels" rank before description matches.
+    assert set(titles[:2]) == {"ABC Hospitality", "XYZ Hotels"}
 
 
 def test_articles_about_hotel_technology(container):
@@ -75,7 +75,10 @@ def test_articles_about_hotel_technology(container):
 
 def test_hotel_products_in_dubai(container):
     result = container.search.search(query="hotel products in Dubai")
-    assert [r["title"] for r in result["results"]] == ["Hotel Linen Supplies"]
+    titles = [r["title"] for r in result["results"]]
+    assert titles[0] == "Hotel Linen Supplies"
+    assert {r["entity_type"] for r in result["results"]} == {"product"}
+    assert all(r["location"]["city"] == "Dubai" for r in result["results"])
 
 
 def test_quantum_chef_jobs_in_antarctica(container):
@@ -100,7 +103,9 @@ def test_long_natural_language_professional_query(container):
     assert {"executive", "chef"} <= set(plan.keywords)
     assert "am" not in plan.keywords and "who" not in plan.keywords
     result = container.search.search(query=query)
-    assert result["results"][0]["title"] == "Ahmed K. - Executive Chef"
+    top = result["results"][0]
+    assert top["title"] == "Ahmed Khan"  # professional titles are names
+    assert top["metadata"]["role"] == "Executive Chef"
 
 
 def test_bare_keyword_is_not_blocked_by_clarification():

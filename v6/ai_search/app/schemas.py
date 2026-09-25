@@ -35,18 +35,35 @@ class SearchRequest(BaseModel):
     limit: int = Field(default=5, ge=1, le=5)
 
 
+class CompanyRef(BaseModel):
+    id: Any = None
+    name: str | None = None
+    slug: str | None = None
+    url: str | None = None
+
+
 class SearchResult(BaseModel):
+    """Normalized result (results.py). Every result is a real record."""
+
+    id: str | None = None
     entity_type: str
     entity_id: str
     doc_id: str | None = None
     title: str
+    slug: str | None = None
+    url: str | None = None
+    url_source: Literal["record", "template"] | None = None
     description: str | None = None
     snippet: str | None = None
     company: str | None = None
+    company_ref: CompanyRef | None = None
     location: dict[str, Any] = Field(default_factory=dict)
     category: str | None = None
-    url: str | None = None
+    external_url: str | None = None
+    external_label: str | None = None
     image: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    match_type: str | None = None
     score: float
     matched_by: list[str] = Field(default_factory=list)
     corrected_query: str | None = None
@@ -57,6 +74,11 @@ class SearchResult(BaseModel):
 class SearchUnderstanding(BaseModel):
     intent: str = "search"
     entity: str | None = None
+    entity_reason: str | None = None
+    is_faq: bool = False
+    facet: str | None = None
+    related: str | None = None
+    notes: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
     city: str | None = None
     country: str | None = None
@@ -86,6 +108,7 @@ class SearchResponse(BaseModel):
     results: list[SearchResult]
     message: str | None = None
     related_results: list[SearchResult] = Field(default_factory=list)
+    facets: list[dict[str, Any]] = Field(default_factory=list)
     understanding: SearchUnderstanding | None = None
 
 
@@ -101,8 +124,16 @@ class ChatRequest(BaseModel):
 
 
 ChatAction = Literal[
-    "search", "clarify", "more", "compare", "reset",
-    "detail", "related_entity", "smalltalk",
+    "search",
+    "clarify",
+    "more",
+    "compare",
+    "reset",
+    "detail",
+    "related_entity",
+    "smalltalk",
+    "faq",
+    "facet",
 ]
 
 
@@ -136,6 +167,7 @@ class ChatResponse(BaseModel):
     comparison: Comparison | None = None
     detail: dict[str, Any] | None = None
     suggestions: list[str] = Field(default_factory=list)
+    facets: list[dict[str, Any]] = Field(default_factory=list)
     llm: dict[str, Any] | None = None
     request_id: str | None = None
 

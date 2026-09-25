@@ -103,22 +103,104 @@ IDs, URLs or which result "the second one" is. Those are deterministic.
 Bounds: `messages` ≤ `CHAT_MAX_MESSAGES` (20), `result_history`/`current_list` ≤ 50,
 `shown` ≤ 100. Documents expire after `CHAT_TTL_DAYS` of inactivity (TTL index).
 
+### Schema
+
+All retrieval, filters, field extraction and URLs follow the real
+`search_documents` schema written by the migration scripts — see
+[`docs/AI_SEARCH_SCHEMA_MAP.md`](../docs/AI_SEARCH_SCHEMA_MAP.md) and
+`app/schema_map.py`. Tests build their corpus with the migration scripts' own
+`build_*` functions, so they exercise the production document shape.
+
+### Turn pipeline
+
+```text
+message -> normalize
+        -> information question?  -> FAQ search (faq records only, answer verbatim, no LLM)
+        -> facet request?         -> distinct values from records (e.g. supplier categories)
+        -> explicit entity/domain (nouns > schema concepts > job-intent words > generic nouns > role words)
+        -> transition: new_search | entity_switch | modification | clarification_answer | continuation
+        -> load previous search state ONLY for continuation/modification
+        -> location / filters / keywords (filters limited to fields the entity has)
+        -> entity-specific MongoDB query -> rank -> exact vs related
+        -> answer (one optional LLM call; never the source of records)
+        -> persist state + transition log
+```
+
+### Transitions (conversation state vs current search)
+
+A conversation holds several independent searches; the state describes the
+*current* one.
+
+| Transition | Example (after "chef jobs in Dubai, only management") | Result |
+|---|---|---|
+| **new_search** | "Find companies in Dubai", "Find professionals in Mumbai", "Find sous chef jobs in Abu Dhabi" | nothing inherited: keywords, location, filters come from the message only |
+| **entity_switch** | "Actually show professionals instead", "what about professionals?" | location kept; people keywords kept job<->professional only; filters kept only if the new entity has them (`accommodation` dropped); restrictions become preferences |
+| **modification** | "Only management positions", "With accommodation", "Actually Abu Dhabi", "Remove the location", "Show me chefs in Abu Dhabi" | only the fields the message changes |
+| **clarification_answer** | "chef" after "What type of job are you looking for?" | fills the pending field |
+| **continuation** | "Show me more", "Compare the first three", "Tell me about the second one" | same search |
+| **faq** | "How do I apply for a job?" | FAQ search; the previous search is not used |
+
+Every chat response carries `understanding.context` =
+`{transition, reason, is_new_search, is_context_continuation, inherited, discarded}`,
+and `GET /search/understand?q=...&conversation_id=...` shows the same for a
+message *without* saving anything (dry run).
+
+### Entity rules
+
+* Explicit module nouns win: "chef **jobs**" = job, "chef **professionals**" =
+  professional, "find a chef **position**" = job, "**professionals** who are chefs"
+  = professional. A role word alone ("chefs in Dubai") only seeds a new
+  conversation and never changes an existing entity; the LLM never overrides a
+  deterministic entity.
+* **Suppliers are companies** with `company.is_supplier` (migrate_companies.py);
+  there is no supplier module. "Find suppliers" -> company + `is_supplier`;
+  "companies in supplier industry" -> company + `industries[].context == "supplier"`;
+  "supplier categories" -> a list of real `company.supplier_categories` names;
+  "suppliers in supplier category X" -> supplier companies in that category;
+  "products"/"marketplace" -> product (marketplace product categories are a
+  different concept). A company whose industry is merely *named* "Supplier..."
+  is not a supplier. Relaxed (related) searches keep these concept filters.
+* "companies hiring chefs [in Dubai]" follows the real relationship
+  `job.company.id -> company:<id>` from matching jobs.
+
+### FAQ / information questions
+
+"How do I apply for a job?", "What is the application process?", "How can I
+reset my password?", "What is Hozpitality?", "Why can't I apply?" are
+information questions (not records requests like "Which chef jobs are
+available?"). They are answered from FAQ records only: the best FAQ's
+`answer` is returned verbatim, other matches are listed, partial matches are
+labelled related, and no match gets an honest "couldn't find an answer" — never
+an LLM-written answer.
+
 ### Merge rules
 
 * Only fields explicitly changed by the current message change. Refinements add
   (“only management positions”, “with accommodation”); nothing else resets.
-* **The entity never changes implicitly.** A role word (“chef”) cannot turn a job
-  search into a professional search. Strong module nouns (“professionals”,
-  “companies”, “jobs”) change it; weak ones (“positions”, “roles”) never switch an
-  existing entity. On a switch, filters that don't apply to the new entity are
-  dropped (e.g. accommodation) and restrictions become preferences.
 * Removals are detected first and consumed: “remove the accommodation
   requirement”, “don't restrict it to management”, “any level”, “anywhere, not
   just Dubai”, “remove the location”, “remove all filters”.
 * Location: “actually Abu Dhabi”, “change that to Mumbai”, “anywhere in UAE”
   (country, no city). Unknown places (“Antarctica”) are explicit locations: no
-  clarification, no exact results, related results only.
-* A new complete request (“find sous chef jobs in Mumbai”) resets filters.
+  clarification, no exact results, related results only (same entity).
+* Filter lifetime: a filter is applied only if the entity has that field
+  (schema_map); a descriptive term the entity has no field for (e.g. industry
+  "hospitality" on awards) is searched as a keyword instead.
+
+### Result contract and URLs
+
+Every result is a real `search_documents` record in one normalized shape:
+`id, entity_type, entity_id, title, slug, url, url_source, description,
+snippet, company, company_ref{id,name,slug,url}, location, category,
+external_url, external_label, image, metadata, match_type, score`.
+
+`url` is set only from a real record URL (awards: `links.detail`) or from a
+configured route template (`PUBLIC_URL_TEMPLATES`, placeholders `{slug}`,
+`{id}`) filled with the record's real slug/id. The migration has no route
+patterns, so **until templates are configured, only awards are clickable**;
+nothing is guessed. External pages (company website, event website, original
+listing of imported jobs) are returned separately as `external_url` with a
+label, never as the record's page.
 
 ### Hard constraints vs ranking signals
 
@@ -347,7 +429,7 @@ other and render `<HozpitalityAIChat />`. Set `NEXT_PUBLIC_AI_SEARCH_URL`.
 python -m venv .venv && .venv/Scripts/activate      # Windows; source .venv/bin/activate on Linux
 pip install -r ai_search/requirements-dev.txt
 
-python -m pytest ai_search/tests -q                  # 210 tests, no external services
+python -m pytest ai_search/tests -q                  # 286 tests, no external services
 ruff check ai_search && mypy ai_search/app --ignore-missing-imports
 
 # Run the real API against an in-memory seeded database (no production data):
@@ -357,7 +439,9 @@ python -m ai_search.scripts.dev_server --port 8086
 Test suites: `test_phase1_search_foundation.py`, `test_phase2_nlu.py`,
 `test_phase3_dialogue.py`, `test_phase3_chat.py` (includes the critical regression
 conversation), `test_phase3_llm.py`, `test_phase4_api.py` (HTTP, WebSocket, SSE),
-`test_phase5_production.py`, plus the original Phase 1/2 tests.
+`test_phase5_production.py`, `test_phase6_schema_context.py` (context transitions, FAQ intent,
+supplier/company/industry/category, database-only results, URLs), plus the original Phase 1/2 tests.
+The corpus (`tests/fixtures_data.py`) is generated by the migration scripts' own builders.
 Frontend protocol tests: `frontend/chatProtocol.test.ts` (Node test runner).
 
 ---
