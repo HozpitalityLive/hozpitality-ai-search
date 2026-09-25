@@ -1,0 +1,21 @@
+# Incremental embedding pass (ai_search_text -> 384-d vectors -> FAISS index).
+# Triggered by hozpitality-embeddings.timer; never runs inside a user request.
+[Unit]
+Description=Hozpitality AI Search embedding worker (one pass)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=dev
+WorkingDirectory=/home/dev/hozpitality-ai-search/v6
+Environment=PYTHONUNBUFFERED=1
+# Keep the GPU for Qwen3: embed on CPU (MiniLM is small); use cuda if spare.
+Environment=EMBEDDING_DEVICE=cpu
+ExecStart=/home/dev/hozpitality-ai-search/v6/.venv/bin/python -m ai_search.scripts.embedding_worker --once --prune --sleep 0.05
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/dev/hozpitality-ai-search/v6/ai_search/data

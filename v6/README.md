@@ -2,6 +2,11 @@
 
 Advanced self-hosted AI search and data assistant for Hozpitality.
 
+> **AI Search Chat** (MongoDB `search_documents` search, conversation memory,
+> streaming Qwen3 answers, `/search`, `/chat`, `/chat/ws`) lives in
+> [`ai_search/`](ai_search/README.md) and is mounted into this app. The chat UI is
+> [`frontend/HozpitalityAIChat.tsx`](frontend/HozpitalityAIChat.tsx).
+
 ## Stack
 
 - FastAPI

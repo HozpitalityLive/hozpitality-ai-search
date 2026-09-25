@@ -1,0 +1,24 @@
+# OPTIONAL: standalone AI Search/Chat service on :8086 (without the V6/Vanna
+# stack). Use this OR the routes mounted in hozpitality-ai-v6, not both behind
+# the same nginx paths.
+[Unit]
+Description=Hozpitality AI Search (standalone)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dev
+WorkingDirectory=/home/dev/hozpitality-ai-search/v6
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/dev/hozpitality-ai-search/v6/.venv/bin/uvicorn ai_search.app.main:app --host 127.0.0.1 --port 8086 --workers 2 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/dev/hozpitality-ai-search/v6/ai_search/data
+
+[Install]
+WantedBy=multi-user.target

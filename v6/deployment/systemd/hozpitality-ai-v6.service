@@ -1,0 +1,28 @@
+# V6 application (Vanna SQL agent + AI Search/Chat routes) on :8085.
+# Install: sudo cp deployment/systemd/*.service deployment/systemd/*.timer /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now hozpitality-ai-v6
+[Unit]
+Description=Hozpitality AI V6 + AI Search chat
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dev
+WorkingDirectory=/home/dev/hozpitality-ai-search/v6
+# Secrets live in the .env files (root .env and ai_search/.env), never in this unit.
+EnvironmentFile=-/home/dev/hozpitality-ai-search/v6/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/dev/hozpitality-ai-search/v6/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/dev/hozpitality-ai-search/v6/chroma_data /home/dev/hozpitality-ai-search/v6/ai_search/data
+
+[Install]
+WantedBy=multi-user.target

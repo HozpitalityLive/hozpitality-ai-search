@@ -38,8 +38,11 @@ class SearchRequest(BaseModel):
 class SearchResult(BaseModel):
     entity_type: str
     entity_id: str
+    doc_id: str | None = None
     title: str
     description: str | None = None
+    snippet: str | None = None
+    company: str | None = None
     location: dict[str, Any] = Field(default_factory=dict)
     category: str | None = None
     url: str | None = None
@@ -47,6 +50,8 @@ class SearchResult(BaseModel):
     score: float
     matched_by: list[str] = Field(default_factory=list)
     corrected_query: str | None = None
+    # Position in the list shown to the user (compare/detail responses).
+    number: int | None = None
 
 
 class SearchUnderstanding(BaseModel):
@@ -68,6 +73,10 @@ class SearchUnderstanding(BaseModel):
     corrected_keywords: list[str] = Field(default_factory=list)
     corrections: list[dict[str, Any]] = Field(default_factory=list)
     explicit_location: bool = False
+    entity_source: str | None = None
+    location_text: str | None = None
+    strict_filters: list[str] = Field(default_factory=list)
+    browse: bool = False
 
 
 class SearchResponse(BaseModel):
@@ -80,19 +89,59 @@ class SearchResponse(BaseModel):
     understanding: SearchUnderstanding | None = None
 
 
+ConversationId = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9_-]{8,128}$")
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     message: str = Field(min_length=1, max_length=2000)
-    conversation_id: str | None = Field(default=None, max_length=128)
+    conversation_id: str | None = ConversationId
     limit: int = Field(default=5, ge=1, le=5)
+
+
+ChatAction = Literal[
+    "search", "clarify", "more", "compare", "reset",
+    "detail", "related_entity", "smalltalk",
+]
+
+
+class ResultReference(BaseModel):
+    number: int
+    key: str
+    entity_type: str | None = None
+    entity_id: str | None = None
+    title: str | None = None
+    url: str | None = None
+    related: bool = False
+
+
+class Comparison(BaseModel):
+    fields: list[dict[str, str]] = Field(default_factory=list)
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[str]] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
     conversation_id: str
-    action: Literal["search", "clarify", "more", "compare", "reset"]
+    action: ChatAction
     answer: str
     results: list[SearchResult] = Field(default_factory=list)
     related_results: list[SearchResult] = Field(default_factory=list)
+    message: str | None = None
     understanding: SearchUnderstanding | dict[str, Any] | None = None
     state: dict[str, Any] = Field(default_factory=dict)
+    references: list[ResultReference] = Field(default_factory=list)
+    comparison: Comparison | None = None
+    detail: dict[str, Any] | None = None
+    suggestions: list[str] = Field(default_factory=list)
+    llm: dict[str, Any] | None = None
+    request_id: str | None = None
+
+
+class ConversationView(BaseModel):
+    conversation_id: str
+    state: dict[str, Any] = Field(default_factory=dict)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    updated_at: Any = None

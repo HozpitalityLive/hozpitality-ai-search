@@ -6,7 +6,43 @@ from typing import Any
 
 from pymongo.collection import Collection
 
+from .config import settings
 from .normalization import normalize, tokens
+from .observability import timed
+
+
+def _singular(token: str) -> str:
+    token = token.casefold()
+    if len(token) > 4 and token.endswith("ies"):
+        return token[:-3] + "y"
+    if len(token) > 4 and token.endswith(("ches", "shes", "sses", "xes")):
+        return token[:-2]
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def _token_pattern(token: str) -> str:
+    """Regex for a query token that also matches its singular form.
+
+    The $text index stems words, but the regex fallback does not: without this
+    "chefs" would never match a document titled "Executive Chef".
+    """
+    singular = _singular(token)
+    if singular == token:
+        return re.escape(token)
+    return f"(?:{re.escape(token)}|{re.escape(singular)})"
+
+
+def _object_id(value: str) -> Any:
+    try:
+        from bson import ObjectId
+
+        if len(value) == 24 and ObjectId.is_valid(value):
+            return ObjectId(value)
+    except Exception:  # pragma: no cover - bson ships with pymongo
+        return None
+    return None
 
 class SearchDocumentsRepository:
     """
@@ -400,6 +436,7 @@ class SearchDocumentsRepository:
             "cover_image": 1,
 
             "slug": 1,
+            "url": 1,
             "links": 1,
 
             "source": 1,
@@ -410,6 +447,18 @@ class SearchDocumentsRepository:
             "metadata": 1,
 
             "created_at": 1,
+            "expires_at": 1,
+
+            # Benefit / compensation fields used for evidence and comparison.
+            # Projecting a field that does not exist is harmless.
+            "accommodation": 1,
+            "benefits": 1,
+            "salary": 1,
+            "salary_min": 1,
+            "salary_max": 1,
+            "employment_type": 1,
+            "experience": 1,
+            "company_name": 1,
 
             "dates": 1,
             "start_datetime": 1,
@@ -475,12 +524,15 @@ class SearchDocumentsRepository:
                 "$or": field_clauses,
             }
 
-        return list(
-            self.collection.find(
-                query_filter,
-                self._projection(),
-            ).limit(limit)
-        )
+        with timed("mongo_ms"):
+            return list(
+                self.collection.find(
+                    query_filter,
+                    self._projection(),
+                )
+                .limit(limit)
+                .max_time_ms(settings.mongodb_max_time_ms)
+            )
 
     def vocabulary(
         self,
@@ -658,8 +710,8 @@ class SearchDocumentsRepository:
 
         if status:
             wanted = normalize(status)
-            values = [doc.get("status"), metadata.get("status"), metadata.get("job_status")]
-            if not any(isinstance(value, str) and normalize(value) == wanted for value in values):
+            statuses = [doc.get("status"), metadata.get("status"), metadata.get("job_status")]
+            if not any(isinstance(value, str) and normalize(value) == wanted for value in statuses):
                 return False
 
         if city:
@@ -672,7 +724,7 @@ class SearchDocumentsRepository:
 
         if country:
             wanted_terms = [normalize(term) for term in SearchDocumentsRepository._country_terms(country)]
-            values: list[Any] = []
+            values = []
             for path in SearchDocumentsRepository._location_fields(entity, "country"):
                 values.extend(SearchDocumentsRepository._nested_values(doc, path))
             normalized_values = [normalize(value) for value in values if isinstance(value, str)]
@@ -784,14 +836,103 @@ class SearchDocumentsRepository:
         return True
 
     def fetch_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
+        """Fetch documents by _id, preserving the requested order.
+
+        Accepts string ids; 24-hex ids are also matched as ObjectId because
+        production _id values may be either.
+        """
+        ids = [str(value) for value in ids if str(value).strip()]
         if not ids:
             return []
-        docs = list(self.collection.find(
-            {"_id": {"$in": ids}},
-            self._projection(),
-        ))
+        lookup: list[Any] = list(ids)
+        for value in ids:
+            oid = _object_id(value)
+            if oid is not None:
+                lookup.append(oid)
+        with timed("mongo_ms"):
+            docs = list(
+                self.collection.find(
+                    {"_id": {"$in": lookup}},
+                    self._projection(),
+                ).max_time_ms(settings.mongodb_max_time_ms)
+            )
         by_id = {str(doc.get("_id")): doc for doc in docs}
         return [by_id[value] for value in ids if value in by_id]
+
+    def browse(
+        self,
+        *,
+        entity: str | None,
+        city: str | None,
+        country: str | None,
+        status: str | None,
+        is_live: bool | None,
+        limit: int = 100,
+        structured: dict[str, Any] | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Filter-only retrieval ("events in Dubai"), newest first.
+
+        Requires an entity or a location so it can never become an unbounded
+        collection scan of every document type.
+        """
+        if not (entity or city or country):
+            return []
+        filters = self._filter(
+            entity=entity,
+            city=city,
+            country=country,
+            status=status,
+            is_live=is_live,
+            structured=structured,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        try:
+            with timed("mongo_ms"):
+                docs = list(
+                    self.collection.find(filters, self._projection())
+                    .sort([("created_at", -1), ("_id", 1)])
+                    .limit(min(limit, 100))
+                    .max_time_ms(settings.mongodb_max_time_ms)
+                )
+        except Exception:
+            return []
+        return [
+            doc
+            for doc in docs
+            if self._document_matches_filters(
+                doc,
+                entity=entity,
+                city=city,
+                country=country,
+                status=status,
+                is_live=is_live,
+                structured=structured,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        ]
+
+    def find_by_titles(self, entity: str, titles: list[str], limit: int = 5) -> list[dict[str, Any]]:
+        """Exact (case-insensitive) title lookup, e.g. company profiles by name."""
+        clauses = [
+            {"title": {"$regex": f"^{re.escape(title.strip())}$", "$options": "i"}}
+            for title in titles
+            if isinstance(title, str) and title.strip()
+        ]
+        if not clauses:
+            return []
+        with timed("mongo_ms"):
+            return list(
+                self.collection.find(
+                    {"$and": [{"entity_type": entity}, {"$or": clauses}]},
+                    self._projection(),
+                )
+                .limit(limit)
+                .max_time_ms(settings.mongodb_max_time_ms)
+            )
 
     def search(
         self,
@@ -848,6 +989,7 @@ class SearchDocumentsRepository:
             str(doc.get("_id"))
             for doc in docs
         }
+        text_failed = False
 
         try:
             """
@@ -880,23 +1022,16 @@ class SearchDocumentsRepository:
                     ]
                 }
 
-            text_docs = list(
-                self.collection.find(
-                    text_filter,
-                    text_projection,
+            with timed("mongo_ms"):
+                text_docs = list(
+                    self.collection.find(
+                        text_filter,
+                        text_projection,
+                    )
+                    .sort([("text_score", {"$meta": "textScore"})])
+                    .limit(candidate_limit)
+                    .max_time_ms(settings.mongodb_max_time_ms)
                 )
-                .sort(
-                    [
-                        (
-                            "text_score",
-                            {
-                                "$meta": "textScore",
-                            },
-                        )
-                    ]
-                )
-                .limit(candidate_limit)
-            )
 
             for doc in text_docs:
                 doc_id = str(
@@ -914,7 +1049,7 @@ class SearchDocumentsRepository:
 
             Exact and fallback retrieval can still return results.
             """
-            pass
+            text_failed = True
 
         q_tokens = [
             token
@@ -928,7 +1063,7 @@ class SearchDocumentsRepository:
 
             for token in q_tokens[:8]:
 
-                pattern = re.escape(token)
+                pattern = _token_pattern(token)
 
                 token_clauses.append({
                     "$or": [
@@ -966,12 +1101,15 @@ class SearchDocumentsRepository:
                 }
 
             try:
-                fallback_docs = list(
-                    self.collection.find(
-                        fallback_filter,
-                        self._projection(),
-                    ).limit(candidate_limit)
-                )
+                with timed("mongo_ms"):
+                    fallback_docs = list(
+                        self.collection.find(
+                            fallback_filter,
+                            self._projection(),
+                        )
+                        .limit(candidate_limit)
+                        .max_time_ms(settings.mongodb_max_time_ms)
+                    )
 
                 for doc in fallback_docs:
                     doc_id = str(
@@ -984,6 +1122,33 @@ class SearchDocumentsRepository:
 
             except Exception:
                 pass
+
+            # When the $text index path failed, the AND fallback is too strict
+            # for natural-language queries. Emulate $text's OR semantics; the
+            # ranker orders candidates by token coverage. Only used on $text
+            # failure so healthy production traffic never pays for this scan.
+            if text_failed and len(q_tokens) > 1 and len(docs) < 5:
+                any_filter: dict[str, Any] = {"$or": [
+                    {field: {"$regex": _token_pattern(token), "$options": "i"}}
+                    for token in q_tokens[:8]
+                    for field in ("title", "search_aliases", "search_keywords")
+                ]}
+                if filters:
+                    any_filter = {"$and": [filters, any_filter]}
+                try:
+                    with timed("mongo_ms"):
+                        any_docs = list(
+                            self.collection.find(any_filter, self._projection())
+                            .limit(candidate_limit)
+                            .max_time_ms(settings.mongodb_max_time_ms)
+                        )
+                    for doc in any_docs:
+                        doc_id = str(doc.get("_id"))
+                        if doc_id not in seen:
+                            docs.append(doc)
+                            seen.add(doc_id)
+                except Exception:
+                    pass
 
         # Defensive hard-filter after retrieval.
         docs = [

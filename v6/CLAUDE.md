@@ -71,6 +71,15 @@ Note: `tox -e mypy` only covers `tools/`, `core/`, `capabilities/`, `agents/`, `
 - Tests use pytest markers for external services (`@pytest.mark.anthropic`, `@pytest.mark.postgres`, etc.)
 - Unit tests must not require external dependencies
 
+## Hozpitality AI Search Chat (`ai_search/`)
+
+Separate from the Vanna SQL stack: MongoDB `search_documents` retrieval + conversational chat (Qwen3 via Ollama). Mounted into `main.py` via `register_mongo_search_routes`; also runnable standalone (`ai_search.app.main:app`). See `ai_search/README.md`.
+
+- Deterministic layers are authoritative: `dialogue.py` (turn interpretation) + `state.py` (merge, numbered result history, reference resolution). The LLM (`answers.py`, `ollama_client.py`) only phrases answers from retrieved records.
+- Chat searches run `SearchService.execute_plan()` on a plan built from state — never re-parse text (that caused job→professional entity flips).
+- Tests: `python -m pytest ai_search/tests -q` (mongomock + mocked Ollama; no external services). Dev API with seeded in-memory data: `python -m ai_search.scripts.dev_server`.
+- Lint/type: `ruff check ai_search`, `mypy ai_search/app --ignore-missing-imports`.
+
 ## Configuration
 
 Environment variables in `.env` (see `.env.example`). Key vars: `GOOGLE_API_KEY`, `GEMINI_MODEL`, `POSTGRES_HOST/PORT/DATABASE/USER/PASSWORD`, `BIGQUERY_PROJECT_ID`, `HOST`, `PORT`.

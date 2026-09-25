@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
+import time
 from urllib import error as urlerror
 from urllib import request as urlrequest
-import re
 
 from .config import settings
+from .observability import add_timing, log_event, metrics
 from .query_understanding import SearchPlan
 
 
@@ -20,7 +23,11 @@ class OllamaQueryInterpreter:
     def __init__(self) -> None:
         self.base_url = settings.ollama_base_url.rstrip("/")
         self.model = settings.ollama_query_model
-        self.timeout = settings.ollama_timeout_seconds
+        # Query understanding sits on the /search hot path, so it uses its own
+        # short budget rather than the chat answer timeout.
+        self.timeout = getattr(
+            settings, "ollama_query_timeout_seconds", settings.ollama_timeout_seconds
+        )
 
     @property
     def enabled(self) -> bool:
@@ -144,6 +151,7 @@ Deterministic parser result:
         }
 
         endpoint = f"{self.base_url}/api/chat"
+        started = time.perf_counter()
 
         try:
             req = urlrequest.Request(
@@ -203,12 +211,12 @@ Deterministic parser result:
             if isinstance(filters, dict):
                 query_low = query.casefold()
                 allowed_markers = {
-                    "salary_min": r"\\b(?:salary|pay|paying|compensation)\\b",
-                    "salary_currency": r"\\b(?:aed|usd|inr|gbp|eur|sar|qar)\\b",
-                    "employment_type": r"\\b(?:full[- ]time|part[- ]time|contract|temporary|remote)\\b",
-                    "verified": r"\\bverified\\b",
-                    "featured": r"\\bfeatured\\b",
-                    "currently_working": r"\\b(?:currently working|working professionals?)\\b",
+                    "salary_min": r"\b(?:salary|pay|paying|compensation)\b",
+                    "salary_currency": r"\b(?:aed|usd|inr|gbp|eur|sar|qar)\b",
+                    "employment_type": r"\b(?:full[- ]time|part[- ]time|contract|temporary|remote)\b",
+                    "verified": r"\bverified\b",
+                    "featured": r"\bfeatured\b",
+                    "currently_working": r"\b(?:currently working|working professionals?)\b",
                 }
                 for key, value in filters.items():
                     marker = allowed_markers.get(key)
@@ -225,12 +233,22 @@ Deterministic parser result:
                 base.intent = intent.strip()
 
             base.confidence = max(base.confidence, 0.82)
+            metrics.incr("llm_query_success")
 
-        except (urlerror.URLError, TimeoutError, OSError, ValueError, TypeError) as exc:
-            print(f"Ollama query understanding skipped: {exc}")
         except Exception as exc:
-            # Never make Ollama availability a dependency for MongoDB search.
-            print(f"Ollama query understanding skipped: {exc}")
+            # Never make Ollama availability a dependency for MongoDB search,
+            # but never hide the failure either.
+            timed_out = isinstance(exc, TimeoutError) or "timed out" in str(exc).casefold()
+            metrics.incr("llm_query_timeout" if timed_out else "llm_query_error")
+            metrics.incr("llm_query_fallback")
+            log_event(
+                "llm_query_fallback",
+                level=logging.WARNING,
+                reason="timeout" if timed_out else type(exc).__name__,
+                timeout_s=self.timeout,
+            )
+        finally:
+            add_timing("llm_query_ms", (time.perf_counter() - started) * 1000)
 
         return base
 

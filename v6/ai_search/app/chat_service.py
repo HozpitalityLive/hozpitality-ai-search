@@ -1,403 +1,700 @@
+"""Phase 3 conversational orchestration.
+
+User message
+  -> conversation state (MongoDB)
+  -> deterministic turn interpretation (dialogue.py)
+  -> explicit state merge (state.py)
+  -> MongoDB search from state (SearchService.execute_plan)
+  -> top 5 real results, result history update
+  -> one optional LLM call to phrase the answer (Qwen3 via Ollama)
+  -> validated answer, persisted turn
+
+The chat turn is split into prepare() / LLM / finalize() so the WebSocket
+endpoint can stream model tokens between the deterministic parts.
+"""
+
 from __future__ import annotations
 
-import json
+import copy
+import logging
 import re
+import time
+from dataclasses import dataclass, field
 from typing import Any
-from urllib import error as urlerror
-from urllib import request as urlrequest
 
+from . import answers
 from .config import settings
 from .conversation import ConversationRepository
-from .query_understanding import SearchPlan, understand
+from .dialogue import ENTITY_LABELS, TurnIntent, entity_label, interpret
+from .evidence import company_name
+from .observability import (
+    current_timings,
+    ensure_timings,
+    log_event,
+    metrics,
+    set_conversation_id,
+)
+from .ollama_client import LlmUnavailable, OllamaChatClient
+from .query_understanding import LOCATION_QUESTION, TYPE_QUESTIONS
+from .service import SearchService
+from .state import (
+    apply_intent,
+    empty_state,
+    has_location,
+    has_search,
+    history_lookup,
+    latest_page,
+    normalize_state,
+    numbered_list,
+    public_state,
+    record_results,
+    resolve_refs,
+    set_focus,
+    to_plan,
+)
+from .security import valid_conversation_id
+
+ORDINAL_WORDS = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth"}
+LOCATION_REQUIRED = {"job", "professional"}
+
+
+@dataclass
+class PreparedTurn:
+    conversation_id: str
+    version: int | None
+    user_message: str
+    action: str
+    state: dict[str, Any]
+    response: dict[str, Any]
+    fallback_answer: str
+    llm_kind: str | None = None
+    llm_messages: list[dict[str, str]] | None = None
+    max_tokens: int = 320
+    allowed_urls: set[str] = field(default_factory=set)
+    allowed_counts: set[int] = field(default_factory=set)
+    result_refs: list[str] = field(default_factory=list)
+    started: float = field(default_factory=time.perf_counter)
 
 
 class ChatService:
     """Conversational orchestration over the Phase 2 search service."""
 
-    def __init__(self, search_service, conversations: ConversationRepository):
+    def __init__(
+        self,
+        search_service: SearchService,
+        conversations: ConversationRepository,
+        llm: OllamaChatClient | None = None,
+    ):
         self.search = search_service
         self.conversations = conversations
-        self.model = settings.ollama_chat_model
-        self.base_url = settings.ollama_base_url.rstrip("/")
-        self.timeout = settings.ollama_timeout_seconds
+        self.llm = llm or OllamaChatClient()
+
+    # ------------------------------------------------------------------
+    # Compatibility helpers (used by routes and older callers)
+    # ------------------------------------------------------------------
+
+    @property
+    def model(self) -> str:
+        return self.llm.model
+
+    @property
+    def base_url(self) -> str:
+        return self.llm.base_url
 
     @staticmethod
     def _action(message: str) -> str:
-        low = message.casefold().strip()
-        if re.search(r"\b(?:compare|comparison|compare the first|compare first)\b", low):
-            return "compare"
-        if re.search(r"\b(?:show|give|list)\s+(?:me\s+)?(?:some\s+)?more\b|\bmore\s+(?:results|options)\b", low):
-            return "more"
-        if re.search(r"\b(?:start over|reset|clear|new search)\b", low):
-            return "reset"
-        return "search"
-
-    @staticmethod
-    def _state_from_plan(plan: SearchPlan, previous: dict[str, Any]) -> dict[str, Any]:
-        state = dict(previous or {})
-        state["entity"] = plan.entity or state.get("entity")
-        state["location"] = {
-            "city": plan.city or (state.get("location") or {}).get("city"),
-            "country": plan.country or (state.get("location") or {}).get("country"),
-        }
-
-        old_keywords = list(state.get("keywords") or [])
-        if plan.keywords:
-            merged = old_keywords + plan.keywords
-            state["keywords"] = list(dict.fromkeys(merged))[:12]
-        else:
-            state["keywords"] = old_keywords
-
-        filters = dict(state.get("filters") or {})
-        filters.update(plan.filters or {})
-        if plan.level:
-            filters["level"] = plan.level
-        if plan.department:
-            filters["department"] = plan.department
-        if plan.industry:
-            filters["industry"] = plan.industry
-        if plan.category:
-            filters["category"] = plan.category
-        if plan.experience is not None:
-            filters["experience"] = plan.experience
-        state["filters"] = filters
-        state["last_query"] = plan.original_query
-        return state
-
-    @staticmethod
-    def _state_query(state: dict[str, Any]) -> str:
-        terms = list(state.get("keywords") or [])
-        filters = state.get("filters") or {}
-        level = filters.get("level")
-        department = filters.get("department")
-        industry = filters.get("industry")
-        category = filters.get("category")
-
-        for value in (level, department, industry, category):
-            if value and str(value).casefold() not in {str(v).casefold() for v in terms}:
-                terms.append(str(value))
-
-        # Structured filters are passed separately to SearchService. Do not
-        # force filter-only concepts such as accommodation into Mongo text
-        # retrieval; the field may not be present in ai_search_text.
-        return " ".join(dict.fromkeys(str(v) for v in terms if str(v).strip()))
-
-    @staticmethod
-    def _location_args(state: dict[str, Any]) -> tuple[str | None, str | None]:
-        location = state.get("location") or {}
-        return location.get("city"), location.get("country")
-
-    @staticmethod
-    def _result_key(result: dict[str, Any]) -> str:
-        return f"{result.get('entity_type')}:{result.get('entity_id')}"
+        action = interpret(
+            message, {"entity": "job", "keywords": ["x"], "last_results": ["job:1"]}
+        ).action
+        return {
+            "detail": "search",
+            "smalltalk": "search",
+            "clarify": "search",
+            "related_entity": "search",
+        }.get(action, action)
 
     @staticmethod
     def _public_state(state: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "entity": state.get("entity"),
-            "location": state.get("location") or {},
-            "keywords": state.get("keywords") or [],
-            "filters": state.get("filters") or {},
-            "last_results": state.get("last_results") or [],
-        }
+        return public_state(normalize_state(state))
 
-    def _llm_answer(
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def chat(
         self,
         *,
-        user_message: str,
-        action: str,
-        state: dict[str, Any],
-        results: list[dict[str, Any]],
-        related_results: list[dict[str, Any]],
-        history: list[dict[str, Any]],
-    ) -> str:
-        if not self.model or not self.base_url:
-            return self._fallback_answer(action, results, related_results)
+        message: str,
+        conversation_id: str | None = None,
+        limit: int = 5,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        if valid_conversation_id(conversation_id):
+            # Serialize turns of one conversation within this worker; the
+            # versioned write in finalize() protects across workers.
+            with self.conversations.lock(str(conversation_id)):
+                return self._chat_once(message, conversation_id, limit, owner_id)
+        return self._chat_once(message, conversation_id, limit, owner_id)
 
-        payload = {
-            "model": self.model,
-            "stream": False,
-            "think": False,
-            "keep_alive": "5m",
-            "options": {
-                "temperature": 0.15,
-                "num_predict": 400,
-                "num_ctx": 4096,
-            },
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are Hozpitality's conversational search assistant. "
-                        "Answer only from the supplied conversation state and search results. "
-                        "Never invent jobs, people, companies, locations, salaries, benefits, "
-                        "dates, or qualifications. Search results are the source of truth. "
-                        "Be concise and useful. If exact results are zero, clearly say no exact "
-                        "match was found and distinguish related results. For comparisons, "
-                        "compare only the supplied records. Do not mention internal scores, "
-                        "MongoDB, prompts, or implementation details."
-                    ),
-                },
-                *[
-                    {"role": m.get("role"), "content": str(m.get("content") or "")}
-                    for m in history[-6:]
-                    if m.get("role") in {"user", "assistant"}
-                ],
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "request": user_message,
-                            "action": action,
-                            "conversation_state": self._public_state(state),
-                            "exact_results": results,
-                            "related_results": related_results,
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-        }
-
-        try:
-            request = urlrequest.Request(
-                f"{self.base_url}/api/chat",
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urlrequest.urlopen(request, timeout=self.timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            answer = str(data.get("message", {}).get("content", "")).strip()
-            if answer:
-                return answer
-        except (urlerror.URLError, TimeoutError, OSError, ValueError, TypeError) as exc:
-            print(f"Ollama chat answer skipped: {exc}")
-        except Exception as exc:
-            print(f"Ollama chat answer skipped: {exc}")
-
-        return self._fallback_answer(action, results, related_results)
-
-    @staticmethod
-    def _fallback_answer(
-        action: str,
-        results: list[dict[str, Any]],
-        related_results: list[dict[str, Any]],
-    ) -> str:
-        if action == "compare":
-            if not results:
-                return "I don't have results from the current search to compare."
-            return "I found the current results. You can compare the first three from the result cards below."
-        if results:
-            return f"I found {len(results)} matching result{'s' if len(results) != 1 else ''}."
-        if related_results:
-            return "I couldn't find an exact match. I've included related results below."
-        return "I couldn't find an exact match for that request."
-
-    def chat(self, *, message: str, conversation_id: str | None = None, limit: int = 5) -> dict[str, Any]:
-        message = " ".join(message.strip().split())
-        conversation = self.conversations.ensure(conversation_id)
-        cid = conversation["conversation_id"]
-        previous_state = conversation.get("state") or {}
-        action = self._action(message)
-
-        if action == "reset":
-            state: dict[str, Any] = {}
-            self.conversations.update_state(cid, state, "reset")
-            answer = "Sure — starting a new search. What are you looking for?"
-            self.conversations.save_turn(
-                cid,
-                user_message=message,
-                assistant_message=answer,
-                state=state,
-                action="reset",
-            )
-            return {
-                "conversation_id": cid,
-                "action": "reset",
-                "answer": answer,
-                "results": [],
-                "related_results": [],
-                "understanding": None,
-                "state": self._public_state(state),
-            }
-
-        history = conversation.get("messages") or []
-
-        if action == "compare":
-            result_items = list(previous_state.get("last_result_items") or [])
-            selected = result_items[:3]
-            if not selected:
-                answer = "I don't have three recent results to compare yet. Run a search first."
-            else:
-                answer = self._llm_answer(
-                    user_message=message,
-                    action="compare",
-                    state=previous_state,
-                    results=selected,
-                    related_results=[],
-                    history=history,
-                )
-            self.conversations.save_turn(
-                cid,
-                user_message=message,
-                assistant_message=answer,
-                state=previous_state,
-                action="compare",
-            )
-            return {
-                "conversation_id": cid,
-                "action": "compare",
-                "answer": answer,
-                "results": selected,
-                "related_results": [],
-                "understanding": None,
-                "state": self._public_state(previous_state),
-            }
-
-        if action == "more":
-            if not previous_state.get("entity") or not previous_state.get("keywords"):
-                answer = "Run a search first, then I can show you more results."
-                self.conversations.save_turn(
-                    cid,
-                    user_message=message,
-                    assistant_message=answer,
-                    state=previous_state,
-                    action="more",
-                )
-                return {
-                    "conversation_id": cid,
-                    "action": "more",
-                    "answer": answer,
-                    "results": [],
-                    "related_results": [],
-                    "understanding": None,
-                    "state": self._public_state(previous_state),
-                }
-
-            city, country = self._location_args(previous_state)
-            result = self.search.search(
-                query=self._state_query(previous_state),
-                entity=previous_state.get("entity"),
-                city=city,
-                country=country,
-                limit=limit,
-                structured_filters=previous_state.get("filters") or {},
-                exclude_ids=[
-                    item.split(":", 1)[1]
-                    for item in (previous_state.get("last_results") or [])
-                    if ":" in item
-                ],
-            )
-            results = result.get("results") or []
-            state = dict(previous_state)
-            state["last_results"] = [self._result_key(item) for item in results]
-            state["last_result_items"] = results
-            answer = self._llm_answer(
-                user_message=message,
-                action="more",
-                state=state,
-                results=results,
-                related_results=result.get("related_results") or [],
-                history=history,
-            )
-            self.conversations.save_turn(
-                cid,
-                user_message=message,
-                assistant_message=answer,
-                state=state,
-                action="more",
-            )
-            return {
-                "conversation_id": cid,
-                "action": "more",
-                "answer": answer,
-                "results": results,
-                "related_results": result.get("related_results") or [],
-                "understanding": result.get("understanding"),
-                "state": self._public_state(state),
-            }
-
-        # Normal search/refinement turn.
-        plan = understand(message)
-        state = self._state_from_plan(plan, previous_state)
-
-        # A follow-up can be a pure filter update. In that case inherit the
-        # previous entity, role, and location instead of asking the user to
-        # repeat them.
-        if not state.get("entity") and not state.get("keywords"):
-            answer = "What would you like me to search for?"
-            self.conversations.save_turn(
-                cid,
-                user_message=message,
-                assistant_message=answer,
-                state=state,
-                action="search",
-            )
-            return {
-                "conversation_id": cid,
-                "action": "clarify",
-                "answer": answer,
-                "results": [],
-                "related_results": [],
-                "understanding": plan.as_dict(),
-                "state": self._public_state(state),
-            }
-
-        search_query = self._state_query(state)
-        city, country = self._location_args(state)
-
-        result = self.search.search(
-            query=search_query,
-            entity=state.get("entity"),
-            city=city,
-            country=country,
+    def _chat_once(
+        self,
+        message: str,
+        conversation_id: str | None,
+        limit: int,
+        owner_id: str | None,
+    ) -> dict[str, Any]:
+        turn = self.prepare(
+            message=message,
+            conversation_id=conversation_id,
             limit=limit,
-            structured_filters=state.get("filters") or {},
+            owner_id=owner_id,
         )
-        results = result.get("results") or []
-        related = result.get("related_results") or []
+        return self.finalize(turn, self.generate(turn))
 
-        # Use the search engine's clarification only when the conversation
-        # itself cannot supply the missing context.
-        understanding = result.get("understanding") or {}
-        clarification = understanding.get("clarification")
-        if clarification and previous_state:
-            # An inherited conversation context should satisfy location/entity
-            # requirements; do not expose a stale clarification.
-            clarification = None
-            understanding["clarification"] = None
+    def generate(self, turn: PreparedTurn) -> str | None:
+        """Blocking LLM call for the non-streaming path."""
+        if not turn.llm_messages:
+            return None
+        try:
+            return self.llm.complete(turn.llm_messages, max_tokens=turn.max_tokens).text
+        except LlmUnavailable as exc:
+            self.note_fallback(turn, exc.reason)
+            return None
 
-        if clarification:
-            answer = clarification
-            action_out = "clarify"
-        else:
-            state["last_results"] = [self._result_key(item) for item in results]
-            state["last_result_items"] = results
-            answer = self._llm_answer(
-                user_message=message,
-                action="search",
-                state=state,
-                results=results,
-                related_results=related,
-                history=history,
+    def note_fallback(self, turn: PreparedTurn, reason: str) -> None:
+        metrics.incr("llm_fallback")
+        metrics.incr(f"llm_fallback_{reason}")
+        turn.response["llm"] = {"used": False, "fallback_reason": reason}
+        log_event(
+            "llm_fallback",
+            level=logging.WARNING,
+            reason=reason,
+            kind=turn.llm_kind,
+            action=turn.action,
+        )
+
+    def prepare(
+        self,
+        *,
+        message: str,
+        conversation_id: str | None = None,
+        limit: int = 5,
+        owner_id: str | None = None,
+    ) -> PreparedTurn:
+        ensure_timings()
+        message = " ".join((message or "").strip().split())[
+            : settings.chat_max_message_chars
+        ]
+        conversation = self.conversations.ensure(conversation_id, owner_id=owner_id)
+        cid = conversation["conversation_id"]
+        set_conversation_id(cid)
+        state = normalize_state(conversation.get("state"))
+        history = conversation.get("messages") or []
+        version = conversation.get("version")
+        limit = min(max(int(limit), 1), settings.max_results)
+
+        intent = interpret(message, state)
+        handler = {
+            "reset": self._reset,
+            "smalltalk": self._smalltalk,
+            "clarify": self._clarify_generic,
+            "more": self._more,
+            "compare": self._compare,
+            "detail": self._detail,
+            "related_entity": self._related_entity,
+        }.get(intent.action, self._search)
+
+        new_state = copy.deepcopy(state)
+        new_state["turn"] = int(new_state.get("turn") or 0) + 1
+        turn = PreparedTurn(
+            conversation_id=cid,
+            version=version if isinstance(version, int) else 0,
+            user_message=message,
+            action=intent.action,
+            state=new_state,
+            response={},
+            fallback_answer="",
+        )
+        handler(turn, intent, state, history, limit)
+        turn.response.setdefault("results", [])
+        turn.response.setdefault("related_results", [])
+        turn.response.setdefault("understanding", {"turn": intent.as_dict()})
+        turn.response["action"] = turn.action
+        turn.response["conversation_id"] = cid
+        turn.response["state"] = public_state(turn.state)
+        turn.response["references"] = self._references(turn.state)
+        turn.response.setdefault("suggestions", self._suggestions(turn))
+        turn.result_refs = list(turn.state.get("last_results") or [])
+        if turn.llm_messages and not self.llm.enabled:
+            # Deterministic-only mode (CHAT_LLM_ENABLED=false or no Ollama
+            # configured) is a configuration, not a failure.
+            turn.llm_messages = None
+            turn.response["llm"] = {"used": False, "fallback_reason": "disabled"}
+            metrics.incr("llm_disabled_answers")
+        return turn
+
+    def finalize(self, turn: PreparedTurn, llm_text: str | None) -> dict[str, Any]:
+        answer = None
+        if llm_text is not None:
+            answer = answers.validate_answer(
+                llm_text,
+                allowed_urls=turn.allowed_urls,
+                allowed_counts=turn.allowed_counts,
             )
-            action_out = "search"
+            if answer is None:
+                self.note_fallback(turn, "invalid_output")
+            else:
+                turn.response["llm"] = {"used": True}
+        elif turn.llm_messages and "llm" not in turn.response:
+            self.note_fallback(turn, "no_output")
+        answer = answer or turn.fallback_answer
+        turn.response["answer"] = answer
 
         self.conversations.save_turn(
-            cid,
-            user_message=message,
+            turn.conversation_id,
+            user_message=turn.user_message,
             assistant_message=answer,
-            state=state,
-            action=action_out,
+            state=turn.state,
+            action=turn.action,
+            expected_version=turn.version,
+            result_refs=turn.result_refs,
+        )
+        total_ms = round((time.perf_counter() - turn.started) * 1000, 1)
+        timings = current_timings()
+        metrics.incr("chat_turns")
+        metrics.incr(f"chat_action_{turn.action}")
+        metrics.observe("chat_ms", total_ms)
+        fields: dict[str, Any] = {
+            "action": turn.action,
+            "results": len(turn.response.get("results") or []),
+            "related": len(turn.response.get("related_results") or []),
+            "message_chars": len(turn.user_message),
+            "llm_used": bool((turn.response.get("llm") or {}).get("used")),
+            "fallback_reason": (turn.response.get("llm") or {}).get("fallback_reason"),
+            "total_ms": total_ms,
+            **timings,
+        }
+        log_event("chat_turn", **fields)
+        return turn.response
+
+    # ------------------------------------------------------------------
+    # Handlers
+    # ------------------------------------------------------------------
+
+    def _reset(
+        self, turn: PreparedTurn, intent: TurnIntent, state, history, limit
+    ) -> None:
+        turn.state = empty_state()
+        turn.fallback_answer = "Sure — starting a new search. What are you looking for?"
+
+    def _smalltalk(
+        self, turn: PreparedTurn, intent: TurnIntent, state, history, limit
+    ) -> None:
+        turn.fallback_answer = answers.smalltalk_answer(intent.smalltalk)
+
+    def _clarify_generic(
+        self, turn: PreparedTurn, intent: TurnIntent, state, history, limit
+    ) -> None:
+        turn.action = "clarify"
+        turn.fallback_answer = (
+            "What would you like me to search for? You can ask for jobs, professionals, companies, "
+            'products, articles, events, awards or FAQs — for example "Find chef jobs in Dubai".'
         )
 
-        return {
-            "conversation_id": cid,
-            "action": action_out,
-            "answer": answer,
-            "results": results,
-            "related_results": related,
-            "understanding": understanding,
-            "state": self._public_state(state),
+    def _clarification(
+        self, state: dict[str, Any], intent: TurnIntent
+    ) -> tuple[str | None, str | None]:
+        """Return (question, pending field) when the merged state is under-specified."""
+        entity = state.get("entity")
+        filters = state.get("filters") or {}
+        topic = bool(
+            state.get("keywords")
+            or filters.get("department")
+            or filters.get("industry")
+            or filters.get("category")
+        )
+        if not has_search(state):
+            return None, None
+        if entity and not topic:
+            if entity in LOCATION_REQUIRED or not has_location(state):
+                return TYPE_QUESTIONS.get(entity), "keywords"
+        if (
+            entity in LOCATION_REQUIRED
+            and not has_location(state)
+            and not state.get("location_any")
+            and not state.get("location_asked")
+            and state.get("entity_source") in {"text", "intent"}
+        ):
+            return LOCATION_QUESTION, "location"
+        return None, None
+
+    def _search(
+        self, turn: PreparedTurn, intent: TurnIntent, state, history, limit
+    ) -> None:
+        new_state = apply_intent(turn.state, intent)
+        if intent.set_entity and intent.plan is not None:
+            new_state["entity_source"] = intent.plan.entity_source or "text"
+            new_state["location_asked"] = False
+        turn.state = new_state
+
+        if not has_search(new_state):
+            self._clarify_generic(turn, intent, state, history, limit)
+            return
+
+        question, pending = self._clarification(new_state, intent)
+        if question:
+            turn.action = "clarify"
+            new_state["pending"] = {"field": pending}
+            if pending == "location":
+                new_state["location_asked"] = True
+            turn.fallback_answer = question
+            turn.response["understanding"] = {
+                "turn": intent.as_dict(),
+                "clarification": question,
+            }
+            return
+
+        plan = to_plan(new_state)
+        result = self.search.execute_plan(
+            plan, original=plan.original_query, limit=limit, clarify=False
+        )
+        self._present_search(turn, intent, result, more=False, history=history)
+
+    def _more(
+        self, turn: PreparedTurn, intent: TurnIntent, state, history, limit
+    ) -> None:
+        if not has_search(state):
+            turn.action = "more"
+            turn.fallback_answer = (
+                "Run a search first, then I can show you more results."
+            )
+            return
+        plan = to_plan(turn.state)
+        result = self.search.execute_plan(
+            plan,
+            original=plan.original_query,
+            limit=limit,
+            exclude_ids=list(turn.state.get("shown") or []),
+            clarify=False,
+        )
+        self._present_search(turn, intent, result, more=True, history=history)
+
+    def _present_search(
+        self,
+        turn: PreparedTurn,
+        intent: TurnIntent,
+        result: dict,
+        *,
+        more: bool,
+        history,
+    ) -> None:
+        results = result.get("results") or []
+        related = result.get("related_results") or []
+        state = turn.state
+        entries: list[dict[str, Any]] = []
+        if results:
+            entries = record_results(state, results, append=more)
+        elif related:
+            entries = record_results(state, related, related=True, append=more)
+        elif not more:
+            state["last_results"] = []
+            state["current_list"] = []
+        state["pending"] = None
+        numbers = {entry["key"]: entry["position"] for entry in entries}
+        for item in (*results, *related):
+            item["number"] = numbers.get(
+                f"{item.get('entity_type')}:{item.get('entity_id')}"
+            )
+
+        summary = answers.search_answer(
+            state, results, related, more=more, corrected=result.get("corrected_query")
+        )
+        turn.fallback_answer = summary
+        turn.response.update(
+            {
+                "results": results,
+                "related_results": related,
+                "message": result.get("message"),
+                "understanding": {
+                    **(result.get("understanding") or {}),
+                    "turn": intent.as_dict(),
+                },
+            }
+        )
+        shown = results or related
+        turn.allowed_urls = {r["url"] for r in shown if r.get("url")}
+        turn.allowed_counts = set(range(0, max(len(results), len(related)) + 1))
+        if shown:
+            turn.llm_kind = "more" if more else "search"
+            turn.llm_messages = answers.build_messages(
+                turn.llm_kind,
+                user_message=turn.user_message,
+                data=answers.search_llm_data(
+                    public_state(state), summary, results, related
+                ),
+                history=history,
+            )
+            turn.max_tokens = settings.ollama_max_answer_tokens
+
+    def _entries_for_compare(
+        self, state: dict[str, Any], intent: TurnIntent
+    ) -> tuple[list[dict], str | None]:
+        latest = numbered_list(state)
+        if intent.ref_mode in {"ordinal", "last"} and intent.refs:
+            entries = resolve_refs(state, intent)
+            if entries:
+                return entries, None
+            # Asked for more records than the latest list holds.
+            if (
+                len(latest) >= 2
+                and intent.ref_mode == "ordinal"
+                and intent.refs == list(range(len(intent.refs)))
+            ):
+                return latest, (
+                    f"The current list only has {len(latest)} results, so here is a comparison of those."
+                )
+            return [], None
+        if intent.ref_mode in {"focus", "previous"}:
+            return resolve_refs(state, intent), None
+        return latest_page(state)[:5], None
+
+    def _compare(
+        self, turn: PreparedTurn, intent: TurnIntent, state, history, limit
+    ) -> None:
+        entries, note = self._entries_for_compare(state, intent)
+        requested = intent.requested_count or len(intent.refs) or 2
+        if len(entries) < 2:
+            count_word = {2: "two", 3: "three", 4: "four", 5: "five"}.get(
+                requested, str(requested)
+            )
+            if not state.get("last_results"):
+                turn.fallback_answer = f"I don't have {count_word} recent results to compare yet. Run a search first."
+            else:
+                turn.fallback_answer = (
+                    f"I don't have {count_word} results in the current list to compare. "
+                    'Try "compare the first two" or run a broader search.'
+                )
+            return
+
+        docs = self.search.repository.fetch_by_ids(
+            [e["doc_id"] for e in entries if e.get("doc_id")]
+        )
+        by_id = {str(d.get("_id")): d for d in docs}
+        pairs = [(e, by_id[e["doc_id"]]) for e in entries if e.get("doc_id") in by_id]
+        missing = len(entries) - len(pairs)
+        if len(pairs) < 2:
+            turn.fallback_answer = "Those records are no longer available, so I can't compare them. Try running the search again."
+            return
+        if missing:
+            extra = f"{missing} of the requested records are no longer available."
+            note = f"{note} {extra}" if note else extra
+
+        entries_ok = [p[0] for p in pairs]
+        docs_ok = [p[1] for p in pairs]
+        comparison = answers.build_comparison(
+            entries_ok, docs_ok, intent.compare_fields
+        )
+        results = [
+            {
+                **SearchService._result_payload(doc, 0.0, ["compared"]),
+                "number": entry.get("position"),
+            }
+            for entry, doc in pairs
+        ]
+        turn.response.update(
+            {"results": results, "comparison": comparison, "message": note}
+        )
+        turn.fallback_answer = answers.comparison_answer(
+            comparison, intent.compare_fields, note
+        )
+        turn.allowed_urls = {r["url"] for r in results if r.get("url")}
+        turn.allowed_counts = set(range(0, len(results) + 1))
+        turn.llm_kind = "compare"
+        turn.llm_messages = answers.build_messages(
+            "compare",
+            user_message=turn.user_message,
+            data=answers.comparison_llm_data(comparison, intent.compare_fields),
+            history=history,
+        )
+        turn.max_tokens = settings.ollama_max_compare_tokens
+
+    def _detail(
+        self, turn: PreparedTurn, intent: TurnIntent, state, history, limit
+    ) -> None:
+        entries = resolve_refs(state, intent)
+        if not entries:
+            if intent.refs and intent.refs[0] >= 0:
+                word = ORDINAL_WORDS.get(intent.refs[0] + 1, f"#{intent.refs[0] + 1}")
+                available = len(numbered_list(state))
+                turn.fallback_answer = (
+                    f"I don't have a {word} result in the current list"
+                    + (
+                        f" (it has {available})."
+                        if available
+                        else ". Run a search first."
+                    )
+                )
+            else:
+                turn.fallback_answer = "I'm not sure which result you mean. Run a search first, then refer to a result by its number."
+            return
+        entry = entries[0]
+        docs = (
+            self.search.repository.fetch_by_ids([entry["doc_id"]])
+            if entry.get("doc_id")
+            else []
+        )
+        if not docs:
+            turn.fallback_answer = (
+                f"{entry.get('title') or 'That record'} is no longer available."
+            )
+            return
+        doc = docs[0]
+        detail = answers.detail_fields(doc, entry)
+        set_focus(turn.state, entry["key"])
+        result = {
+            **SearchService._result_payload(doc, 0.0, ["referenced"]),
+            "number": entry.get("position"),
         }
+        results = [result]
+        company_profile = None
+        low = turn.user_message.casefold()
+        if (
+            intent.question_field == "company"
+            and doc.get("entity_type") != "company"
+            and detail.get("company")
+            and re.search(r"\b(?:tell|about|profile|more|details?|show|who)\b", low)
+        ):
+            profiles = self.search.repository.find_by_titles(
+                "company", [detail["company"]], limit=1
+            )
+            if profiles:
+                company_profile = SearchService._result_payload(
+                    profiles[0], 0.0, ["company_profile"]
+                )
+                results.append(company_profile)
+
+        turn.response.update({"results": results, "detail": detail})
+        answer = answers.detail_answer(detail, intent.question_field, intent.open_link)
+        if intent.question_field == "company" and detail.get("company"):
+            answer += " I found their company profile below." if company_profile else ""
+        turn.fallback_answer = answer
+        turn.allowed_urls = {r["url"] for r in results if r.get("url")}
+        turn.allowed_counts = {0, 1}
+        # Field questions and "open" are answered exactly and instantly; the
+        # LLM only summarizes a record when the user asked for more about it.
+        if (
+            intent.question_field is None
+            and not intent.open_link
+            and detail.get("description")
+        ):
+            turn.llm_kind = "detail"
+            turn.llm_messages = answers.build_messages(
+                "detail",
+                user_message=turn.user_message,
+                data=answers.detail_llm_data(detail, intent.question_field),
+                history=history,
+            )
+            turn.max_tokens = settings.ollama_max_answer_tokens
+
+    def _related_entity(
+        self, turn: PreparedTurn, intent: TurnIntent, state, history, limit
+    ) -> None:
+        entries = (
+            resolve_refs(state, intent)
+            if intent.ref_mode not in {None, "all"}
+            else resolve_refs(state, TurnIntent(ref_mode="all"))
+        )
+        docs = self.search.repository.fetch_by_ids(
+            [e["doc_id"] for e in entries if e.get("doc_id")]
+        )
+        names: list[str] = []
+        for doc in docs:
+            name = company_name(doc)
+            if name and name not in names:
+                names.append(name)
+        if not names:
+            turn.fallback_answer = "The latest results don't include company information, so I can't tell which companies are behind them."
+            return
+        profiles = self.search.repository.find_by_titles("company", names, limit=limit)
+        results = [
+            SearchService._result_payload(p, 0.0, ["company_profile"]) for p in profiles
+        ]
+        listed = ", ".join(names[:5])
+        if results:
+            for entry, item in zip(
+                record_results(turn.state, results, mark_shown=False), results
+            ):
+                item["number"] = entry["position"]
+            answer = (
+                f"The latest results are from {listed}. "
+                f"I found {len(results)} matching company profile{'s' if len(results) != 1 else ''}."
+            )
+        else:
+            answer = f"The latest results are from {listed}. I couldn't find company profiles for them."
+        turn.response.update({"results": results})
+        turn.fallback_answer = answer
+
+    # ------------------------------------------------------------------
+    # Presentation helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _references(state: dict[str, Any]) -> list[dict[str, Any]]:
+        refs = []
+        for key in state.get("last_results") or []:
+            entry = history_lookup(state, key)
+            if entry:
+                refs.append(
+                    {
+                        "number": entry.get("position"),
+                        "key": key,
+                        "entity_type": entry.get("entity_type"),
+                        "entity_id": entry.get("entity_id"),
+                        "title": entry.get("title"),
+                        "url": entry.get("url"),
+                        "related": entry.get("related", False),
+                    }
+                )
+        return refs
+
+    @staticmethod
+    def _suggestions(turn: PreparedTurn) -> list[str]:
+        action = turn.action
+        state = turn.state
+        results = turn.response.get("results") or []
+        if action == "clarify":
+            pending = (state.get("pending") or {}).get("field")
+            if pending == "location":
+                return ["Dubai", "Abu Dhabi", "Anywhere"]
+            return []
+        if action in {"search", "more"} and results:
+            out = ["Show me more"]
+            if len(results) >= 2:
+                out.append(
+                    f"Compare the first {min(3, len(results))}"
+                    if len(results) >= 3
+                    else "Compare the first two"
+                )
+            out.append("Tell me more about the first one")
+            if state.get("entity") == "job" and "level" not in (
+                state.get("filters") or {}
+            ):
+                out.append("Only management positions")
+            return out[:4]
+        if action in {"search", "more"} and not results:
+            out = []
+            if has_location(state):
+                out.append("Anywhere")
+            if state.get("filters"):
+                out.append("Remove all filters")
+            return out
+        if action == "reset":
+            return [
+                "Find chef jobs in Dubai",
+                "Hotel companies in Dubai",
+                "Articles about hotel technology",
+            ]
+        return []
+
+
+__all__ = ["ChatService", "PreparedTurn", "ENTITY_LABELS", "entity_label"]

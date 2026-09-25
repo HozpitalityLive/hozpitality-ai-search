@@ -28,6 +28,17 @@ class SearchPlan:
     clarification_options: list[str] = field(default_factory=list)
     original_query: str = ""
     explicit_location: bool = False
+    # How the entity was determined: "text" (explicit module noun such as
+    # "jobs"), "intent" (hiring/vacancy words), "role" (inferred from a role
+    # word such as "chef"), "api" (request parameter) or "state" (conversation).
+    entity_source: str | None = None
+    entity_term: str | None = None
+    # Raw "in <place>" text, kept even when the place is not a known city or
+    # country so the conversation layer can treat it as an explicit location.
+    location_text: str | None = None
+    # Filters the user explicitly required ("only management positions").
+    # Evidence-checked by the search service instead of ranking-only.
+    strict_filters: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +61,9 @@ class SearchPlan:
             "clarification": self.clarification,
             "clarification_options": self.clarification_options,
             "explicit_location": self.explicit_location,
+            "entity_source": self.entity_source,
+            "location_text": self.location_text,
+            "strict_filters": list(self.strict_filters),
         }
 
 
@@ -143,6 +157,25 @@ CITIES = {
     "tokyo": "Tokyo", "hong kong": "Hong Kong",
 }
 
+# Country implied by a known city. Used to describe conversation state; search
+# passes the city alone so documents that only carry a country code are not
+# lost to an unnecessary second constraint.
+CITY_COUNTRY = {
+    "Dubai": "United Arab Emirates", "Abu Dhabi": "United Arab Emirates",
+    "Sharjah": "United Arab Emirates", "Ajman": "United Arab Emirates",
+    "Ras Al Khaimah": "United Arab Emirates",
+    "Mumbai": "India", "Delhi": "India", "New Delhi": "India",
+    "Gurugram": "India", "Bengaluru": "India", "Hyderabad": "India",
+    "Chennai": "India", "Kolkata": "India", "Pune": "India", "Goa": "India",
+    "Jaipur": "India", "Lucknow": "India",
+    "Singapore": "Singapore", "London": "United Kingdom",
+    "New York": "United States", "Los Angeles": "United States",
+    "Toronto": "Canada", "Melbourne": "Australia", "Sydney": "Australia",
+    "Riyadh": "Saudi Arabia", "Doha": "Qatar", "Muscat": "Oman",
+    "Manama": "Bahrain", "Kuwait City": "Kuwait", "Paris": "France",
+    "Berlin": "Germany", "Amsterdam": "Netherlands", "Tokyo": "Japan",
+}
+
 CATEGORY_MARKERS = r"\b(?:category|type|section|topic)\s+(?:is\s+)?([a-z][a-z0-9 &/'-]{2,60})"
 
 
@@ -158,17 +191,23 @@ def _phrase_in(text: str, phrases: list[str]) -> str | None:
     return None
 
 
-def _entity(text: str) -> str | None:
+def _entity_match(text: str) -> tuple[str | None, str | None]:
+    """Return (entity, matched noun) for the first explicit module noun."""
     low = text.casefold()
-    found: list[tuple[int, str]] = []
+    found: list[tuple[int, str, str]] = []
     for entity, pattern in ENTITY_PATTERNS.items():
         m = re.search(pattern, low)
         if m:
-            found.append((m.start(), entity))
+            found.append((m.start(), entity, m.group(0)))
     if not found:
-        return None
+        return None, None
     # First explicit module noun wins; job/professional role phrases are handled below.
-    return sorted(found)[0][1]
+    _, entity, term = sorted(found)[0]
+    return entity, term
+
+
+def _entity(text: str) -> str | None:
+    return _entity_match(text)[0]
 
 
 def _experience(text: str) -> int | None:
@@ -249,18 +288,25 @@ def understand(query: str) -> SearchPlan:
     low = original.casefold()
     plan = SearchPlan(original_query=original)
 
-    entity = _entity(original)
+    entity, entity_term = _entity_match(original)
+    entity_source = "text" if entity else None
 
     # Explicit module nouns always take precedence. A role by itself
     # ("find senior chefs in Dubai") is a professional search; adding an
     # explicit job noun ("chef jobs") switches it to jobs.
     if not entity:
-        if re.search(r"\b(?:hire|hiring|vacancy|vacancies|salary|paying|opening|openings)\b", low):
-            entity = "job"
-        elif any(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", low) for term in PROFESSIONAL_ROLE_TERMS):
-            entity = "professional"
+        intent = re.search(r"\b(?:hire|hiring|vacancy|vacancies|salary|paying|opening|openings)\b", low)
+        if intent:
+            entity, entity_term, entity_source = "job", intent.group(0), "intent"
+        else:
+            for term in PROFESSIONAL_ROLE_TERMS:
+                if re.search(rf"(?<!\w){re.escape(term)}(?!\w)", low):
+                    entity, entity_term, entity_source = "professional", term, "role"
+                    break
 
     plan.entity = entity
+    plan.entity_term = entity_term
+    plan.entity_source = entity_source
     plan.experience = _experience(original)
 
     for level, values in LEVELS.items():
@@ -294,6 +340,7 @@ def understand(query: str) -> SearchPlan:
     if m and not plan.city and not plan.country:
         candidate = normalize(m.group(1))
         plan.explicit_location = True
+        plan.location_text = m.group(1).strip(" .,'-")
         if candidate in CITIES:
             plan.city = CITIES[candidate]
         elif candidate in COUNTRIES:
@@ -344,55 +391,79 @@ def understand(query: str) -> SearchPlan:
     plan.keywords = list(dict.fromkeys(role_keywords + extracted_keywords))[:12]
 
     confidence = 0.2
-    if entity: confidence += 0.25
-    if plan.keywords: confidence += 0.2
-    if plan.city or plan.country: confidence += 0.15
-    if plan.experience is not None or plan.level or plan.department or plan.industry: confidence += 0.15
-    if plan.category: confidence += 0.05
+    if entity:
+        confidence += 0.25
+    if plan.keywords:
+        confidence += 0.2
+    if plan.city or plan.country:
+        confidence += 0.15
+    if plan.experience is not None or plan.level or plan.department or plan.industry:
+        confidence += 0.15
+    if plan.category:
+        confidence += 0.05
     plan.confidence = min(confidence, 0.98)
 
     return plan
 
 
+TYPE_QUESTIONS = {
+    "job": "What type of job are you looking for?",
+    "professional": "What type of professional or skill are you looking for?",
+    "company": "What type of company or hospitality business are you looking for?",
+    "product": "What type of product or supplier are you looking for?",
+    "article": "What topic or category would you like me to search for in the articles?",
+    "event": "What type of event are you looking for?",
+    "award": "What type of award are you looking for?",
+    "faq": "What topic or question should I search for?",
+}
+
+LOCATION_QUESTION = "Which location would you prefer?"
+
+# Entities where a location is essential to a useful result list.
+LOCATION_REQUIRED_ENTITIES = {"job", "professional"}
+
+
+def has_location(plan: SearchPlan) -> bool:
+    return bool(plan.city or plan.country or plan.explicit_location)
+
+
+def has_topic(plan: SearchPlan) -> bool:
+    """A searchable subject beyond the entity noun itself."""
+    return bool(plan.keywords or plan.category or plan.department or plan.industry)
+
+
 def clarification_for(plan: SearchPlan) -> str | None:
-    if plan.intent != "search":
+    """Ask only when a search would be genuinely under-specified.
+
+    - "Find me a job"      -> ask for the type of job.
+    - "Find chef jobs"     -> ask for the location (jobs/professionals only).
+    - "chef jobs in Mars"  -> search: an unknown but explicit location is still
+                              a location and must not trigger clarification.
+    - "chef" / "restaurant suppliers" / "events in Dubai" -> search directly.
+
+    Location is requested only when the user explicitly asked for a module
+    ("jobs", "hiring", "professionals"); an entity inferred from a bare role
+    word ("chef") or supplied by an API parameter never blocks the search.
+    """
+    if plan.intent != "search" or not plan.entity:
         return None
 
-    if plan.entity == "job":
-        if not plan.keywords:
-            return "What type of job are you looking for?"
-        if not plan.city and not plan.country and not plan.explicit_location:
-            return "Which location would you prefer?"
-    elif plan.entity == "professional":
-        if not plan.keywords:
-            return "What type of professional or skill are you looking for?"
-        if not plan.city and not plan.country and not plan.explicit_location:
-            return "Which location would you prefer?"
-    elif plan.entity == "company":
-        if not plan.keywords:
-            return "What type of company or hospitality business are you looking for?"
-        if not plan.city and not plan.country and not plan.explicit_location:
-            return "Which location would you prefer?"
-    elif plan.entity == "product":
-        if not plan.keywords:
-            return "What type of product or supplier are you looking for?"
-        if not plan.city and not plan.country and not plan.explicit_location:
-            return "Which location would you prefer?"
-    elif plan.entity == "article":
-        if not plan.keywords and not plan.category:
-            return "What topic or category would you like me to search for in the articles?"
-    elif plan.entity == "event":
-        if not plan.keywords and not plan.category:
-            return "What type of event are you looking for?"
-        if not plan.city and not plan.country and not plan.explicit_location:
-            return "Which location would you prefer?"
-    elif plan.entity == "award":
-        if not plan.keywords and not plan.category:
-            return "What type of award are you looking for?"
-        if not plan.city and not plan.country and not plan.explicit_location:
-            return "Which location would you prefer?"
-    elif plan.entity == "faq":
-        if not plan.keywords and not plan.category:
-            return "What topic or question should I search for?"
+    question = TYPE_QUESTIONS.get(plan.entity)
+    if question is None:
+        return None
+
+    if plan.entity in LOCATION_REQUIRED_ENTITIES:
+        if not has_topic(plan):
+            return question
+    elif not has_topic(plan) and not has_location(plan) and not (plan.date_from or plan.date_to):
+        return question
+
+    explicit_request = plan.entity_source in {None, "text", "intent"}
+    if (
+        plan.entity in LOCATION_REQUIRED_ENTITIES
+        and explicit_request
+        and not has_location(plan)
+    ):
+        return LOCATION_QUESTION
 
     return None

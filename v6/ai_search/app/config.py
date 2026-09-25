@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -15,6 +15,22 @@ load_dotenv(ENV_FILE)
 
 def _int(name: str, default: int) -> int:
     return int(os.getenv(name, str(default)))
+
+
+def _float(name: str, default: float) -> float:
+    return float(os.getenv(name, str(default)))
+
+
+def _bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _list(name: str, default: str = "") -> tuple[str, ...]:
+    raw = os.getenv(name, default)
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
 @dataclass(frozen=True)
@@ -59,6 +75,10 @@ class Settings:
         5000,
     )
 
+    # Bounds every individual MongoDB query so a pathological regex can never
+    # hold a worker thread indefinitely.
+    mongodb_max_time_ms: int = _int("MONGODB_MAX_TIME_MS", 4000)
+
     max_results: int = min(
         _int("SEARCH_MAX_RESULTS", 5),
         5,
@@ -74,12 +94,66 @@ class Settings:
         3,
     )
 
+    # Optional base URL used to absolutize site-relative result links such as
+    # "/jobs/123". Slugs are never turned into URLs.
+    public_site_base_url: str = os.getenv("PUBLIC_SITE_BASE_URL", "").rstrip("/")
+
+    # --- Ollama / Qwen3 -----------------------------------------------------
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     ollama_query_model: str = os.getenv("OLLAMA_QUERY_MODEL", "qwen3:8b")
     ollama_chat_model: str = os.getenv("OLLAMA_CHAT_MODEL", "qwen3:8b")
-    ollama_timeout_seconds: float = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "20"))
-    semantic_search_enabled: bool = os.getenv("SEMANTIC_SEARCH_ENABLED", "false").casefold() == "true"
-    semantic_model: str = os.getenv("SEMANTIC_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    # Chat answer generation timeout (whole request, including streaming).
+    ollama_timeout_seconds: float = _float("OLLAMA_TIMEOUT_SECONDS", 60)
+    # Query-understanding fallback is on the /search hot path, so it gets a
+    # much shorter budget than answer generation.
+    ollama_query_timeout_seconds: float = _float("OLLAMA_QUERY_TIMEOUT_SECONDS", 8)
+    ollama_connect_timeout_seconds: float = _float("OLLAMA_CONNECT_TIMEOUT_SECONDS", 3)
+    ollama_keep_alive: str = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
+    ollama_num_ctx: int = _int("OLLAMA_NUM_CTX", 4096)
+    ollama_temperature: float = _float("OLLAMA_TEMPERATURE", 0.1)
+    ollama_max_answer_tokens: int = _int("OLLAMA_MAX_ANSWER_TOKENS", 320)
+    ollama_max_compare_tokens: int = _int("OLLAMA_MAX_COMPARE_TOKENS", 480)
+    # Circuit breaker: after N consecutive failures, skip the LLM for a while
+    # and answer deterministically instead of making every user wait.
+    ollama_failure_threshold: int = _int("OLLAMA_FAILURE_THRESHOLD", 3)
+    ollama_circuit_reset_seconds: float = _float("OLLAMA_CIRCUIT_RESET_SECONDS", 30)
+    chat_llm_enabled: bool = _bool("CHAT_LLM_ENABLED", True)
+
+    # --- Semantic search ------------------------------------------------------
+    semantic_search_enabled: bool = (
+        os.getenv("SEMANTIC_SEARCH_ENABLED", "false").casefold() == "true"
+    )
+    semantic_model: str = os.getenv(
+        "SEMANTIC_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+    )
+    embeddings_collection: str = os.getenv(
+        "EMBEDDINGS_COLLECTION", "ai_search_embeddings"
+    )
+
+    # --- Conversation memory ---------------------------------------------------
+    chat_ttl_days: int = _int("CHAT_TTL_DAYS", 30)
+    chat_max_messages: int = _int("CHAT_MAX_MESSAGES", 20)
+    chat_max_history: int = _int("CHAT_MAX_RESULT_HISTORY", 50)
+    chat_max_shown: int = _int("CHAT_MAX_SHOWN_IDS", 100)
+    chat_max_message_chars: int = _int("CHAT_MAX_MESSAGE_CHARS", 1000)
+
+    # --- Production hardening -------------------------------------------------
+    # Comma-separated API keys. Empty = open API (backwards compatible).
+    api_keys: tuple[str, ...] = field(
+        default_factory=lambda: _list("AI_SEARCH_API_KEYS")
+    )
+    # Only trust X-User-Id when a trusted proxy/auth gateway sets it.
+    trust_user_header: bool = _bool("TRUST_USER_HEADER", False)
+    rate_limit_chat_per_minute: int = _int("RATE_LIMIT_CHAT_PER_MINUTE", 30)
+    rate_limit_search_per_minute: int = _int("RATE_LIMIT_SEARCH_PER_MINUTE", 120)
+    cors_allow_origins: tuple[str, ...] = field(
+        default_factory=lambda: _list(
+            "CORS_ALLOW_ORIGINS",
+            "http://localhost:3000,http://127.0.0.1:3000",
+        )
+    )
+    log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    log_json: bool = _bool("LOG_JSON", True)
 
 
 settings = Settings()
