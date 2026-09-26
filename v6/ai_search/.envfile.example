@@ -24,14 +24,7 @@ SEARCH_FUZZY_MIN_TOKEN_LENGTH=3
 # Example (replace the paths with the real routes):
 # PUBLIC_URL_TEMPLATES={"job": "https://www.hozpitality.com/<job-route>/{slug}", "company": "https://www.hozpitality.com/<company-route>/{slug}"}
 PUBLIC_SITE_BASE_URL=https://www.hozpitality.com
-PUBLIC_URL_TEMPLATES={
-    "job":"https://www.hozpitality.com/jobs/details/{slug}",
-    "company":"https://www.hozpitality.com/company/{slug}",
-    "professional":"https://www.hozpitality.com/professional/{slug}",
-    "product":"https://www.hozpitality.com/marketplace/product-details/{slug}",
-    "event":"https://www.hozpitality.com/events/details/{slug}",
-    "article":"https://www.hozpitality.com/articles/details/{slug}",
-    }
+PUBLIC_URL_TEMPLATES={"job":"https://www.hozpitality.com/jobs/details/{slug}","company":"https://www.hozpitality.com/company/{slug}","professional":"https://www.hozpitality.com/professional/{slug}","product":"https://www.hozpitality.com/marketplace/product-details/{slug}","event":"https://www.hozpitality.com/events/details/{slug}","article":"https://www.hozpitality.com/articles/details/{slug}"}
 # Alternatively one variable per module: URL_TEMPLATE_JOB, URL_TEMPLATE_COMPANY,
 # URL_TEMPLATE_PROFESSIONAL, URL_TEMPLATE_PRODUCT, URL_TEMPLATE_ARTICLE,
 # URL_TEMPLATE_EVENT, URL_TEMPLATE_AWARD, URL_TEMPLATE_FAQ
