@@ -8,6 +8,7 @@ from structured results, so the model never needs to reproduce URLs or IDs.
 from __future__ import annotations
 
 import json
+import random
 import re
 from typing import Any
 
@@ -16,9 +17,15 @@ from .dialogue import FILTER_LABELS, entity_label
 from .security import clean_untrusted_text, contains_injection, strip_unknown_urls
 
 SYSTEM_PROMPT = (
-    "You are the Hozpitality AI search assistant. You write short, friendly, factual answers "
-    "about search results from the Hozpitality platform (jobs, professionals, companies, "
-    "products, articles, events, awards, FAQs).\n"
+    "You are Hozpitality AI, the search and information assistant for Hozpitality. "
+    "You help hospitality professionals, job seekers, employers/recruiters, suppliers, "
+    "and people exploring Hozpitality find relevant information. Your role is to understand "
+    "a user's request, find relevant Hozpitality data, and answer FAQ/information questions "
+    "when the answer is available in Hozpitality's data. You are not a human recruiter, "
+    "employer, career adviser, or general-purpose authority, and you should not claim to "
+    "take actions such as applying for jobs, contacting employers, or guaranteeing outcomes.\n"
+    "You write short, friendly, factual answers about search results from the Hozpitality "
+    "platform (jobs, professionals, companies, products, articles, events, awards, FAQs).\n"
     "Rules:\n"
     "1. Use ONLY facts inside <search_data>. If a fact is not there, say it is not specified. "
     "Never invent jobs, people, companies, salaries, benefits, dates, requirements, URLs or counts.\n"
@@ -501,15 +508,26 @@ def detail_llm_data(
     return {"question_focus": question_field, "record": data}
 
 
+GREETING_RESPONSES = (
+    "Hi! I’m Hozpitality AI. I help you find relevant Hozpitality information across jobs, professionals, companies, products, articles, events, awards and FAQs. What would you like to explore?",
+    "Hello! I’m Hozpitality AI, built to help you search and understand hospitality information on Hozpitality. Ask me for a job, professional, company, article, event, award or an FAQ answer.",
+    "Welcome! I’m Hozpitality AI. I can turn natural-language questions into relevant Hozpitality results and answer supported FAQ questions. What are you looking for?",
+    "Hi there! I’m Hozpitality AI — your Hozpitality search assistant. I help job seekers, hospitality professionals, employers, recruiters and suppliers find relevant information from the platform.",
+    "Hello! I’m Hozpitality AI. My job is to help you find relevant Hozpitality data and answer questions from available Hozpitality information. Ask me anything related to the platform.",
+)
+
+HELP_RESPONSE = (
+    "I’m Hozpitality AI, the search and information assistant for Hozpitality. "
+    "I’m useful for job seekers, hospitality professionals, employers/recruiters, suppliers and anyone exploring the platform. "
+    "I can find relevant jobs, professionals, companies, products, articles, events and awards, and I can answer supported FAQs from Hozpitality data. "
+    "I work from the information available to me, so I don’t invent missing details and I may not have every current fact; I also don’t apply for jobs, contact people, or guarantee outcomes."
+)
+
 def smalltalk_answer(kind: str | None) -> str:
     if kind == "thanks":
-        return "You're welcome! Let me know if you'd like to refine the search or look for something else."
+        return "You’re welcome! If you want, ask me to search, refine a result, show more, or compare results."
     if kind == "ack":
-        return (
-            "Great. You can ask me to show more, compare results, or refine the search."
-        )
-    return (
-        "Hi! I can search Hozpitality jobs, professionals, companies, products, articles, events, "
-        'awards and FAQs. Try "Find chef jobs in Dubai", then refine with "only management '
-        'positions", "show me more" or "compare the first three".'
-    )
+        return "Sure. Tell me what you’d like to search or ask, and I’ll work from the available Hozpitality information."
+    if kind == "help":
+        return HELP_RESPONSE
+    return random.choice(GREETING_RESPONSES)
