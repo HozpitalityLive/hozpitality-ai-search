@@ -1,0 +1,88 @@
+# Hozpitality AI Search - environment template.
+# Copy to ai_search/.env and fill in. NEVER commit real credentials.
+
+# --- MongoDB (source of truth) ---------------------------------------------------
+MONGODB_URI=mongodb://USERNAME:PASSWORD@HOST:27017/mongoAdmin?authSource=admin
+MONGODB_DATABASE=mongoAdmin
+MONGODB_COLLECTION=search_documents
+MONGODB_MAX_POOL_SIZE=100
+MONGODB_MIN_POOL_SIZE=5
+MONGODB_SERVER_SELECTION_TIMEOUT_MS=5000
+MONGODB_CONNECT_TIMEOUT_MS=5000
+# Upper bound for any single search query.
+MONGODB_MAX_TIME_MS=4000
+
+# --- Search ---------------------------------------------------------------------------
+SEARCH_MAX_RESULTS=5
+SEARCH_FUZZY_THRESHOLD=82
+SEARCH_FUZZY_MIN_TOKEN_LENGTH=3
+# Absolutizes site-relative links present in records (e.g. award_detail_url "/awards/x").
+# Public page routes per module. The migration stores slugs but NOT the site's
+# route patterns, so fill these in with the real Hozpitality routes. Placeholders:
+# {slug} (record slug) and {id} (PostgreSQL id). Modules without a template return
+# url=null (never guessed). Awards always use their own links.detail URL.
+# Example (replace the paths with the real routes):
+# PUBLIC_URL_TEMPLATES={"job": "https://www.hozpitality.com/<job-route>/{slug}", "company": "https://www.hozpitality.com/<company-route>/{slug}"}
+PUBLIC_SITE_BASE_URL=https://www.hozpitality.com
+PUBLIC_URL_TEMPLATES={
+    "job":"https://www.hozpitality.com/jobs/details/{slug}",
+    "company":"https://www.hozpitality.com/company/{slug}",
+    "professional":"https://www.hozpitality.com/professional/{slug}",
+    "product":"https://www.hozpitality.com/marketplace/product-details/{slug}",
+    "event":"https://www.hozpitality.com/events/details/{slug}",
+    "article":"https://www.hozpitality.com/articles/details/{slug}",
+    }
+# Alternatively one variable per module: URL_TEMPLATE_JOB, URL_TEMPLATE_COMPANY,
+# URL_TEMPLATE_PROFESSIONAL, URL_TEMPLATE_PRODUCT, URL_TEMPLATE_ARTICLE,
+# URL_TEMPLATE_EVENT, URL_TEMPLATE_AWARD, URL_TEMPLATE_FAQ
+
+# --- Conversation memory (MongoDB) ---------------------------------------------------
+CHAT_COLLECTION=ai_search_conversations
+CHAT_TTL_DAYS=30
+CHAT_MAX_MESSAGES=20
+CHAT_MAX_RESULT_HISTORY=50
+CHAT_MAX_SHOWN_IDS=100
+CHAT_MAX_MESSAGE_CHARS=1000
+
+# --- Ollama / Qwen3 8B (Tesla T4) ------------------------------------------------------
+# ollama pull qwen3:8b
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_CHAT_MODEL=qwen3:8b
+# Query-understanding fallback for ambiguous /search queries (empty = disabled).
+OLLAMA_QUERY_MODEL=qwen3:8b
+CHAT_LLM_ENABLED=true
+# Whole answer budget (including streaming).
+OLLAMA_TIMEOUT_SECONDS=60
+# /search hot path budget for the query-understanding fallback.
+OLLAMA_QUERY_TIMEOUT_SECONDS=8
+OLLAMA_CONNECT_TIMEOUT_SECONDS=3
+OLLAMA_KEEP_ALIVE=30m
+OLLAMA_NUM_CTX=4096
+OLLAMA_TEMPERATURE=0.1
+OLLAMA_MAX_ANSWER_TOKENS=320
+OLLAMA_MAX_COMPARE_TOKENS=480
+# Circuit breaker: skip the LLM for N seconds after N consecutive failures.
+OLLAMA_FAILURE_THRESHOLD=3
+OLLAMA_CIRCUIT_RESET_SECONDS=30
+
+# --- Semantic / vector search (optional) ---------------------------------------------
+SEMANTIC_SEARCH_ENABLED=false
+SEMANTIC_MODEL=sentence-transformers/all-MiniLM-L6-v2
+SEMANTIC_INDEX_PATH=ai_search/data/search.faiss
+SEMANTIC_IDS_PATH=ai_search/data/search_ids.json
+SEMANTIC_BUILD_BATCH_SIZE=256
+EMBEDDINGS_COLLECTION=ai_search_embeddings
+EMBEDDING_DIM=384
+EMBEDDING_DEVICE=cpu
+
+# --- Security / production -----------------------------------------------------------
+# Comma-separated API keys for server-to-server clients. Empty = open API.
+# Browser traffic should be authenticated at the gateway, not with a public key.
+AI_SEARCH_API_KEYS=
+# Honour X-User-Id only when a trusted auth proxy sets it (binds conversations to users).
+TRUST_USER_HEADER=false
+RATE_LIMIT_CHAT_PER_MINUTE=30
+RATE_LIMIT_SEARCH_PER_MINUTE=120
+CORS_ALLOW_ORIGINS=https://www.hozpitality.com,http://localhost:3000
+LOG_LEVEL=INFO
+LOG_JSON=true
