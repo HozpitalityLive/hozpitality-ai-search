@@ -734,18 +734,28 @@ class ChatService:
                 f"{item.get('entity_type')}:{item.get('entity_id')}"
             )
         if results:
+            # FAQ responses are answer-only. The UI should not turn an information
+            # question into a list of FAQ links/cards or append a secondary FAQ CTA.
             top = results[0]
-            answer = top["metadata"].get("answer") or top.get("description") or ""
-            turn.fallback_answer = f"{top['title']}\n{answer}".strip()
-            if len(results) > 1:
-                turn.fallback_answer += "\n\nOther FAQs that may help are listed below."
-        elif related:
-            turn.fallback_answer = "I couldn't find an FAQ that answers exactly that. These FAQs may be related."
+            answer = (top["metadata"].get("answer") or top.get("description") or "").strip()
+            turn.fallback_answer = answer
         else:
-            turn.fallback_answer = (
-                "I couldn't find an answer to that in the Hozpitality FAQs. "
-                "Try rephrasing the question or ask about a specific topic."
-            )
+            # A question can be useful even when no FAQ record matches exactly.
+            # Fall back to deterministic platform guidance rather than inventing
+            # database facts or exposing loosely related FAQ records.
+            guidance = answers.generic_guidance_answer(turn.user_message)
+            if guidance:
+                turn.fallback_answer = guidance
+            elif related:
+                turn.fallback_answer = (
+                    "I couldn't find an exact FAQ answer for that. "
+                    "If you tell me what you want to do on Hozpitality, I can guide you from the available platform information."
+                )
+            else:
+                turn.fallback_answer = (
+                    "I couldn't find an answer to that in the Hozpitality information available to me. "
+                    "Try rephrasing the question or tell me what you want to do on the platform."
+                )
         turn.response.update(
             {
                 "results": results,

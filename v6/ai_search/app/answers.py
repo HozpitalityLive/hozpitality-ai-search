@@ -514,6 +514,11 @@ GREETING_RESPONSES = (
     "Welcome! I’m Hozpitality AI. I can turn natural-language questions into relevant Hozpitality results and answer supported FAQ questions. What are you looking for?",
     "Hi there! I’m Hozpitality AI — your Hozpitality search assistant. I help job seekers, hospitality professionals, employers, recruiters and suppliers find relevant information from the platform.",
     "Hello! I’m Hozpitality AI. My job is to help you find relevant Hozpitality data and answer questions from available Hozpitality information. Ask me anything related to the platform.",
+    "Hi! I’m Hozpitality AI. I can help you find relevant hospitality information and answer questions about using Hozpitality.",
+    "Hello! I’m Hozpitality AI. Tell me what you’re looking for — jobs, professionals, companies, suppliers, products, articles, events or awards.",
+    "Welcome! I’m Hozpitality AI, your search and information assistant. Ask me a question or tell me what you want to find.",
+    "Hi there! I’m Hozpitality AI. I can search Hozpitality data, refine results and explain how to use the platform.",
+    "Hello! I’m Hozpitality AI. I’m here to help you discover relevant Hozpitality information and answer platform-related questions.",
 )
 
 HELP_RESPONSE = (
@@ -521,13 +526,79 @@ HELP_RESPONSE = (
     "I’m useful for job seekers, hospitality professionals, employers/recruiters, suppliers and anyone exploring the platform. "
     "I can find relevant jobs, professionals, companies, products, articles, events and awards, and I can answer supported FAQs from Hozpitality data. "
     "I work from the information available to me, so I don’t invent missing details and I may not have every current fact; I also don’t apply for jobs, contact people, or guarantee outcomes."
+    "I help job seekers, hospitality professionals, employers and recruiters, suppliers, and other Hozpitality users find relevant information across the platform. "
+    "I can search jobs, professionals, companies, suppliers, products, articles, events and awards, answer supported FAQ questions, and explain common platform workflows. "
+    "I work from Hozpitality information available to me and platform guidance, so I don’t invent missing details; I also don’t apply for jobs, contact people, or guarantee outcomes."
 )
 
+_GUIDANCE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"\b(?:apply|application|applying)\b.*\b(?:job|jobs|role|roles|position|positions)\b|\b(?:job|jobs|role|roles|position|positions)\b.*\b(?:apply|application|applying)\b", re.I),
+        "To apply for a job, find a relevant job listing on Hozpitality, open the listing, and select the Apply option. Complete your professional profile and answer any application questions requested. If a listing has additional instructions, follow those instructions before submitting.",
+    ),
+    (
+        re.compile(r"\b(?:find|search|look for|browse|show)\b.*\bjobs?\b|\bjobs?\b.*\b(?:find|search|browse)\b", re.I),
+        "To find a job, search Hozpitality using the role, location and filters you want. Open a relevant listing to review the details, requirements and application option.",
+    ),
+    (
+        re.compile(r"\b(?:register|sign up|create)\b.*\b(?:professional|profile|account)\b|\b(?:professional|profile)\b.*\b(?:register|sign up|create)\b", re.I),
+        "To create a professional presence on Hozpitality, sign up as a professional and complete your profile. Keep your experience, skills and other relevant information up to date so employers can understand your profile.",
+    ),
+    (
+        re.compile(r"\b(?:post|create|publish)\b.*\bjob\b|\bjob\b.*\b(?:post|create|publish)\b", re.I),
+        "For employers, create or use your company account, open the job-posting workflow, enter the role details and publish the vacancy. If the workflow asks for credits, payment or additional information, complete those steps before publishing.",
+    ),
+    (
+        re.compile(r"\b(?:find|search|browse|view|open)\b.*\b(?:professionals?|candidates?|talent)\b", re.I),
+        "To find hospitality professionals, search the Professionals area using the role, skills or location you need. Open a profile to review the available professional information and use the actions provided on that profile.",
+    ),
+    (
+        re.compile(r"\b(?:find|search|browse|view|open)\b.*\b(?:companies?|employers?|hotels?)\b", re.I),
+        "To find a company or employer, search the Companies area using the company name, location or relevant category. Open the company profile to review the available information and related opportunities.",
+    ),
+    (
+        re.compile(r"\b(?:find|search|browse|view|open)\b.*\b(?:suppliers?|vendors?)\b", re.I),
+        "To find a supplier, search the supplier/company listings using the supplier name, category, industry or location. Open the relevant company profile to review the available supplier information and contact or enquiry options shown there.",
+    ),
+    (
+        re.compile(r"\b(?:find|search|browse|view|open)\b.*\b(?:products?|marketplace)\b", re.I),
+        "To find a product, search the Marketplace using the product name, category or supplier. Open the product listing to review the available details and use any contact or enquiry option provided on the listing.",
+    ),
+    (
+        re.compile(r"\b(?:find|search|browse|view|open|read)\b.*\b(?:articles?|news|blogs?|stories)\b", re.I),
+        "To find an article, search Hozpitality using the topic or keywords you want. Open the relevant article to read the full content and any information provided with it.",
+    ),
+    (
+        re.compile(r"\b(?:find|search|browse|view|open)\b.*\b(?:events?|conferences?|exhibitions?|summits?|expos?)\b", re.I),
+        "To find an event, search the Events area using the event name, topic or location. Open the event details and follow the registration or participation instructions shown for that event.",
+    ),
+    (
+        re.compile(r"\b(?:find|search|browse|view|open)\b.*\bawards?\b", re.I),
+        "To explore awards, search the Awards area using the award name, category or relevant hospitality topic. Open the award details and follow any nomination, participation or other instructions shown there.",
+    ),
+)
+
+def generic_guidance_answer(message: str) -> str | None:
+    """Return safe platform guidance when no exact FAQ record is available."""
+    text = " ".join((message or "").split())
+    for pattern, answer in _GUIDANCE_RULES:
+        if pattern.search(text):
+            return answer
+    return None
+
+_last_greeting_index: int | None = None
+
 def smalltalk_answer(kind: str | None) -> str:
+    global _last_greeting_index
     if kind == "thanks":
         return "You’re welcome! If you want, ask me to search, refine a result, show more, or compare results."
     if kind == "ack":
         return "Sure. Tell me what you’d like to search or ask, and I’ll work from the available Hozpitality information."
     if kind == "help":
         return HELP_RESPONSE
-    return random.choice(GREETING_RESPONSES)
+    if len(GREETING_RESPONSES) == 1:
+        return GREETING_RESPONSES[0]
+    choices = [i for i in range(len(GREETING_RESPONSES)) if i != _last_greeting_index]
+    index = random.SystemRandom().choice(choices)
+    _last_greeting_index = index
+    return GREETING_RESPONSES[index]

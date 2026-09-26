@@ -116,6 +116,9 @@ INFO_QUESTION_RES = [
         rf"^how\s+(?:do|can|could|should|would|to|does|did|is|are|will|long|much)\b(?!\s+many\b)"
     ),
     re.compile(
+        rf"^(?:(?:give|show|tell)\s+(?:me\s+)?(?:the\s+)?(?:steps?|process|procedure)\b|(?:steps?|process|procedure)\s+to\b)"
+    ),
+    re.compile(
         rf"^what\s+(?:is|are|does|do|was|were|'s)\s+(?:the\s+|a\s+|an\s+|my\s+|your\s+)?(?:\w+\s+){{0,3}}?(?:{INFO_TERMS})\b"
     ),
     re.compile(
@@ -168,6 +171,11 @@ def is_information_question(text: str) -> tuple[bool, str]:
         return False, "empty"
     if RECORDS_QUESTION_RE.search(low):
         return False, "asks which/what records exist"
+    # Imperative help requests such as "give me steps to apply for a job"
+    # are information questions even though they begin with a search-command
+    # verb like "give" or "show".
+    if re.search(r"^(?:give|show|tell)\s+(?:me\s+)?(?:the\s+)?(?:steps?|process|procedure)\b", low):
+        return True, "information question: asks for steps/process"
     if SEARCH_COMMAND_RE.search(low):
         # "Find FAQs about passwords" is a search of the FAQ module (explicit
         # noun), handled by entity classification, not a question.

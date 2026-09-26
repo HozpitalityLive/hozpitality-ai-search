@@ -586,3 +586,20 @@ def test_information_reasons_are_readable():
         is_information_question("How to apply for a job?")[1]
         == "information question: how-to question"
     )
+
+
+def test_generic_platform_guidance_for_missing_faq(chat):
+    r = say(chat, "give me steps to apply for job")
+    assert r["action"] == "faq"
+    assert r["results"] == []
+    assert "find a relevant job listing" in r["answer"]
+    assert "Apply option" in r["answer"]
+    assert "application questions" in r["answer"]
+    assert "Other FAQs" not in r["answer"]
+
+
+def test_exact_faq_is_answer_only(chat):
+    r = say(chat, "How do I apply for a job?")
+    assert r["action"] == "faq"
+    assert "Open the job listing and click Apply Now." in r["answer"]
+    assert "Other FAQs that may help are listed below." not in r["answer"]
