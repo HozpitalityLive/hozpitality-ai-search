@@ -29,6 +29,24 @@ ALLOWED_POST_TYPES = {
     "appreciation",
 }
 
+def build_default_post_prompt(
+    *,
+    post_type: str,
+    post_title: str,
+    post_description: str,
+) -> str:
+    if post_type == "introduction":
+        return (
+            "Write a warm, professional introduction that helps the "
+            "Hozpitality community understand who I am and what I do."
+        )
+
+    if post_description:
+        return f"Create a {post_title.lower() or post_type} post. {post_description}."
+
+    return f"Create a professional {post_title.lower() or post_type} post."
+
+
 def build_post_prompt(
     *,
     post_type: str,
@@ -87,6 +105,12 @@ async def generate_post(data: dict[str, Any]):
         post_title = str(data.get("post_title") or "").strip()
         post_description = str(data.get("post_description") or "").strip()
         user_prompt = str(data.get("prompt") or "").strip()
+        if not user_prompt:
+            user_prompt = build_default_post_prompt(
+                post_type=post_type,
+                post_title=post_title,
+                post_description=post_description,
+            )
         profile = data.get("profile") or {}
 
         if post_type not in ALLOWED_POST_TYPES:
@@ -99,12 +123,6 @@ async def generate_post(data: dict[str, Any]):
             raise HTTPException(
                 status_code=422,
                 detail="Profile must be an object.",
-            )
-
-        if not user_prompt:
-            raise HTTPException(
-                status_code=422,
-                detail="Please provide a prompt.",
             )
 
         if len(user_prompt) > 1500:
@@ -168,14 +186,14 @@ If information is missing, omit it.
 Every statement must be directly supported by the profile.
 """,
                 "prompt": prompt,
-                
                 "stream": False,
+                "think": False,
                 "keep_alive": 0,
                 "options": {
                     "temperature": 0.2,
                     "top_p": 0.8,
                     "repeat_penalty": 1.2,
-                    "num_predict": 220,
+                    "num_predict": 350,
                     "num_ctx": 4096,
                 },
             }
@@ -183,7 +201,22 @@ Every statement must be directly supported by the profile.
 
         response.raise_for_status()
 
-        return response.json()["response"].strip()
+        payload = response.json()
+        content = str(payload.get("response") or "").strip()
+
+        if not content:
+            logger.error(
+                "Ollama returned an empty response: done=%s done_reason=%s thinking=%s",
+                payload.get("done"),
+                payload.get("done_reason"),
+                bool(payload.get("thinking")),
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="The AI service returned an empty response. Please try again.",
+            )
+
+        return content
 
 
 def build_profile(profile: dict) -> str:
