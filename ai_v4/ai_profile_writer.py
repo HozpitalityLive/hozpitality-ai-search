@@ -93,6 +93,8 @@ CONTENT REQUIREMENTS:
 - Do not include explanations before or after the post.
 - Target approximately 500-900 characters unless the user's prompt clearly
   requests a shorter or longer post.
+- Always place hashtags on a separate new line after the main post content.
+- Do not include hashtags within the main body of the post.
 
 Return ONLY the final post.
 """.strip()
