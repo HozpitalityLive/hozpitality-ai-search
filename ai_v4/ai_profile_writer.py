@@ -2,6 +2,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from ai_v4.config.settings import settings
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +12,143 @@ router = APIRouter()
 OLLAMA_URL = f"{settings.OLLAMA_URL}/api/generate"
 MODEL = "qwen3:8b"
 
+ALLOWED_POST_TYPES = {
+    "job_search",
+    "career_update",
+    "hiring",
+    "achievement",
+    "introduction",
+    "industry_insight",
+    "career_tip",
+    "community_question",
+    "poll",
+    "event",
+    "article",
+    "award",
+    "networking",
+    "appreciation",
+}
+
+def build_post_prompt(
+    *,
+    post_type: str,
+    post_title: str,
+    post_description: str,
+    user_prompt: str,
+    profile: dict[str, Any],
+) -> str:
+    profile_text = build_profile(profile)
+
+    return f"""
+Create one Hozpitality timeline post.
+
+POST TYPE:
+{post_type}
+
+POST TYPE TITLE:
+{post_title}
+
+POST TYPE DESCRIPTION:
+{post_description or "No additional description provided."}
+
+USER PROMPT:
+{user_prompt}
+
+PROFILE DATA:
+{profile_text or "No profile data was provided."}
+
+CONTENT REQUIREMENTS:
+- Follow the user's requested intent and tone.
+- Use the post type and its description as additional guidance.
+- Use the profile data to personalize the post.
+- The profile data is the only factual source.
+- If the user asks for something that cannot be supported by the profile,
+  do not invent it.
+- Keep the post natural for a professional hospitality social network.
+- Prefer concise paragraphs that are easy to read on mobile.
+- Use first-person language for professional/personal posts when appropriate.
+- For company-oriented posts, use company language when the profile is a company.
+- Include relevant hashtags only when they are supported by the post topic;
+  hashtags may describe the post type or broad hospitality topic, but must not
+  introduce unsupported personal/company facts.
+- Do not include a title unless the user specifically asks for one.
+- Do not include explanations before or after the post.
+- Target approximately 500-900 characters unless the user's prompt clearly
+  requests a shorter or longer post.
+
+Return ONLY the final post.
+""".strip()
+
+
+@router.post("/generate-post")
+async def generate_post(data: dict[str, Any]):
+    try:
+        post_type = str(data.get("post_type") or "").strip().lower()
+        post_title = str(data.get("post_title") or "").strip()
+        post_description = str(data.get("post_description") or "").strip()
+        user_prompt = str(data.get("prompt") or "").strip()
+        profile = data.get("profile") or {}
+
+        if post_type not in ALLOWED_POST_TYPES:
+            raise HTTPException(
+                status_code=422,
+                detail="Unsupported post type.",
+            )
+
+        if not isinstance(profile, dict):
+            raise HTTPException(
+                status_code=422,
+                detail="Profile must be an object.",
+            )
+
+        if not user_prompt:
+            raise HTTPException(
+                status_code=422,
+                detail="Please provide a prompt.",
+            )
+
+        if len(user_prompt) > 1500:
+            raise HTTPException(
+                status_code=422,
+                detail="Prompt cannot exceed 1500 characters.",
+            )
+
+        prompt = build_post_prompt(
+            post_type=post_type,
+            post_title=post_title,
+            post_description=post_description,
+            user_prompt=user_prompt,
+            profile=profile,
+        )
+
+        logger.info(
+            "Generating AI post: type=%s profile_type=%s",
+            post_type,
+            profile.get("profile_type", "professional"),
+        )
+
+        content = await _generate(prompt)
+
+        return {
+            "success": True,
+            "content": content,
+            "post_type": post_type,
+        }
+
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        logger.exception("Ollama request failed")
+        raise HTTPException(
+            status_code=502,
+            detail="The AI service is currently unavailable.",
+        ) from exc
+    except Exception as exc:
+        logger.exception("AI post generation failed")
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        ) from exc
 
 async def _generate(prompt: str) -> str:
     async with httpx.AsyncClient(timeout=90) as client:
