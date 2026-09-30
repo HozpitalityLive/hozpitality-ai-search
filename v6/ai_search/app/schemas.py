@@ -154,10 +154,28 @@ class Comparison(BaseModel):
     rows: list[list[str]] = Field(default_factory=list)
 
 
+class AnswerSection(BaseModel):
+    title: str
+    description: str = ""
+    bullets: list[str] = Field(default_factory=list)
+
+
+class AnswerPresentation(BaseModel):
+    format: Literal[
+        "paragraph",
+        "bullets",
+        "numbered",
+        "sections",
+        "comparison",
+    ] = "paragraph"
+    sections: list[AnswerSection] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     conversation_id: str
     action: ChatAction
     answer: str
+    answer_presentation: AnswerPresentation = Field(default_factory=AnswerPresentation)
     results: list[SearchResult] = Field(default_factory=list)
     related_results: list[SearchResult] = Field(default_factory=list)
     message: str | None = None

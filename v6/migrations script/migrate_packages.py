@@ -1,3 +1,11 @@
+# copy from dev to opt
+# sudo cp ~/hozpitality-mongo-migration/migrate_packages.py /opt/hozpitality-mongo-migration/migrate_packages.py
+
+# sudo -u postgres env MONGO_URI='mongodb://mongoAdmin:MongoAdmin2026I@127.0.0.1:27017/?authSource=admin' \
+# /opt/hozpitality-mongo-migration/.venv/bin/python \
+# /opt/hozpitality-mongo-migration/migrate_packages.py 
+
+
 from __future__ import annotations
 
 import argparse
