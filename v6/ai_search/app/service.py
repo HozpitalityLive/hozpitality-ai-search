@@ -672,10 +672,27 @@ class SearchService:
         understanding["browse"] = browse_mode
         understanding["notes"] = notes
 
+        # `results` is the ranked page (normally top 5). `total` is the
+        # authoritative lexical match count, independent of the page limit.
+        # This lets the assistant distinguish "240 matches" from "top 5".
+        total_matches = self.repository.count_search_matches(
+            retrieval_query,
+            entity=plan.entity,
+            city=plan.city,
+            country=plan.country,
+            status=status,
+            is_live=is_live,
+            structured=structured,
+            date_from=plan.date_from,
+            date_to=plan.date_to,
+        )
+        if not total_matches and results:
+            total_matches = len(results)
+
         return {
             "query": original,
             "corrected_query": correction,
-            "total": len(results),
+            "total": total_matches,
             "results": results,
             "message": related_label,
             "related_results": related_results,

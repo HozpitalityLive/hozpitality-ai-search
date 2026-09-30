@@ -865,6 +865,95 @@ class SearchDocumentsRepository:
                 .max_time_ms(settings.mongodb_max_time_ms)
             )
 
+    def count_search_matches(
+        self,
+        query: str,
+        *,
+        entity: str | None,
+        city: str | None,
+        country: str | None,
+        status: str | None,
+        is_live: bool | None,
+        structured: dict[str, Any] | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> int:
+        """Count records matching the lexical search query and hard filters.
+
+        This count is intentionally independent of the UI result limit. The
+        search endpoint returns only the top page, while the assistant needs
+        the total number of matching records for statements such as:
+        "I found 240 waiter jobs. Here are the top 5."
+
+        The count uses MongoDB's existing text index so it does not require
+        loading every matching document into Python. If the text index path
+        fails, fall back to the same token-regex semantics used by search().
+        """
+        query = str(query or '').strip()
+        if not query or not tokens(query):
+            return 0
+
+        filters = self._filter(
+            entity=entity,
+            city=city,
+            country=country,
+            status=status,
+            is_live=is_live,
+            structured=structured,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+        text_filter: dict[str, Any] = {
+            "$text": {"$search": query}
+        }
+        if filters:
+            text_filter = {"$and": [text_filter, filters]}
+
+        try:
+            with timed("mongo_ms"):
+                return int(
+                    self.collection.count_documents(
+                        text_filter,
+                        maxTimeMS=settings.mongodb_max_time_ms,
+                    )
+                )
+        except Exception:
+            pass
+
+        # Fallback for environments where the text index is unavailable or
+        # MongoDB rejects the particular text expression. This mirrors the
+        # token fallback used by search(), but counts instead of limiting to
+        # the first 100 documents.
+        q_tokens = [t for t in tokens(query) if len(t) >= 3]
+        if not q_tokens:
+            return 0
+
+        token_clauses: list[dict[str, Any]] = []
+        for token in q_tokens[:8]:
+            pattern = _token_pattern(token)
+            token_clauses.append({
+                "$or": [
+                    {field: {"$regex": pattern, "$options": "i"}}
+                    for field in schema_map.search_fields(entity)
+                ]
+            })
+
+        fallback_filter: dict[str, Any] = {"$and": token_clauses}
+        if filters:
+            fallback_filter = {"$and": [filters, fallback_filter]}
+
+        try:
+            with timed("mongo_ms"):
+                return int(
+                    self.collection.count_documents(
+                        fallback_filter,
+                        maxTimeMS=settings.mongodb_max_time_ms,
+                    )
+                )
+        except Exception:
+            return 0
+
     def search(
         self,
         query: str,

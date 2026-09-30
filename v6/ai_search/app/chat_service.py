@@ -478,12 +478,19 @@ class ChatService:
                 f"{item.get('entity_type')}:{item.get('entity_id')}"
             )
 
+        total_matches = int(result.get("total") or len(results))
         summary = answers.search_answer(
-            state, results, related, more=more, corrected=result.get("corrected_query")
+            state,
+            results,
+            related,
+            total_matches=total_matches,
+            more=more,
+            corrected=result.get("corrected_query"),
         )
         turn.fallback_answer = summary
         turn.response.update(
             {
+                "total": total_matches,
                 "results": results,
                 "related_results": related,
                 "message": result.get("message"),
@@ -494,14 +501,21 @@ class ChatService:
         )
         shown = results or related
         turn.allowed_urls = {r["url"] for r in shown if r.get("url")}
+        # Count validation must allow the authoritative total (e.g. 240) as
+        # well as the visible result positions/counts (e.g. 5).
         turn.allowed_counts = set(range(0, max(len(results), len(related)) + 1))
+        turn.allowed_counts.add(total_matches)
         if shown:
             turn.llm_kind = "more" if more else "search"
             turn.llm_messages = answers.build_messages(
                 turn.llm_kind,
                 user_message=turn.user_message,
                 data=answers.search_llm_data(
-                    public_state(state), summary, results, related
+                    public_state(state),
+                    summary,
+                    results,
+                    related,
+                    total_matches=total_matches,
                 ),
                 history=history,
             )

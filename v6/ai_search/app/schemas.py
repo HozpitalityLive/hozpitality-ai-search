@@ -175,6 +175,9 @@ class ChatResponse(BaseModel):
     conversation_id: str
     action: ChatAction
     answer: str
+    # Total records matching the search criteria, independent of the visible
+    # result page (normally top 5).
+    total: int = 0
     answer_presentation: AnswerPresentation = Field(default_factory=AnswerPresentation)
     results: list[SearchResult] = Field(default_factory=list)
     related_results: list[SearchResult] = Field(default_factory=list)
